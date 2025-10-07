@@ -5,7 +5,7 @@ require('dotenv').config({ path: './.env' });
 const express = require('express');
 const cors = require('cors'); 
 const { Pool } = require('pg');
-const os = require('os');
+//const os = require('os');
 const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session); 
 
@@ -51,10 +51,12 @@ const corsOptions = {
     credentials: true // CLAVE: Permite el envío de cookies/sesiones
 };
 
-app.use(cors(corsOptions));
+// **DEJA ESTO:** El middleware cors manejará todas las solicitudes,
+// incluyendo las preflight OPTIONS, para las rutas definidas.
+app.use(cors(corsOptions)); 
 
-// El manejo de OPTIONS es CRÍTICO para CORS.
-app.options('*', cors(corsOptions)); 
+// **ELIMINA O COMENTA ESTA LÍNEA** para resolver el PathError:
+// app.options('*', cors(corsOptions)); 
 
 // Middleware para procesar JSON
 app.use(express.json());
