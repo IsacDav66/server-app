@@ -10,7 +10,7 @@ const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session); 
 
 const app = express();
-const PORT = 3000; // Puerto interno de Node.js
+const PORT = 3001; // Puerto interno de Node.js
 const INTERNAL_HOST = '0.0.0.0'; // Escuchar en todas las interfaces internas
 
 // ====================================================
