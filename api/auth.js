@@ -1,14 +1,14 @@
+// Archivo: /server/api/auth.js
 const express = require('express');
 const bcrypt = require('bcryptjs');
-// const jwt = require('jsonwebtoken'); // !!! JWT ELIMINADO !!!
+const jwt = require('jsonwebtoken'); // <-- AÑADIDO
 
-// La función principal exportada toma el pool de PostgreSQL
-// Nota: Ya no necesita el JWT_SECRET
-module.exports = (pool) => {
+// La función principal exportada toma el pool y el JWT_SECRET
+module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
     
     // ----------------------------------------------------
-    // RUTA DE REGISTRO (/api/auth/register)
+    // RUTA DE REGISTRO (/api/auth/register) - CON JWT
     // ----------------------------------------------------
     router.post('/register', async (req, res) => {
         const { email, password } = req.body;
@@ -28,14 +28,15 @@ module.exports = (pool) => {
 
             const userId = result.rows[0].id;
             
-            // 3. Crear sesión inmediatamente después del registro (para iniciar sesión automáticamente)
-            req.session.userId = userId;
+            // 3. Crear TOKEN para iniciar sesión automáticamente
+            const token = jwt.sign({ userId: userId }, JWT_SECRET, { expiresIn: '30d' });
 
-            // 4. Respuesta
+            // 4. Respuesta (Devuelve el token)
             res.status(201).json({ 
                 success: true, 
                 message: 'Usuario registrado con éxito e iniciado sesión.',
-                userId: userId
+                userId: userId,
+                token: token // <-- DEVOLVER EL TOKEN
             });
 
         } catch (error) {
@@ -49,7 +50,7 @@ module.exports = (pool) => {
 
 
     // ----------------------------------------------------
-    // RUTA DE LOGIN (/api/auth/login) - CON SESIONES
+    // RUTA DE LOGIN (/api/auth/login) - CON JWT
     // ----------------------------------------------------
     router.post('/login', async (req, res) => {
         const { email, password } = req.body;
@@ -76,14 +77,15 @@ module.exports = (pool) => {
                 return res.status(401).json({ success: false, message: 'Credenciales inválidas.' });
             }
 
-            // 3. CREAR SESIÓN (Guarda la cookie de sesión)
-            req.session.userId = user.id; // Guarda el ID en la sesión
+            // 3. CREAR TOKEN
+            const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '30d' });
             
-            // 4. Respuesta de éxito (sin token)
+            // 4. Respuesta de éxito (Devuelve el token)
             res.status(200).json({ 
                 success: true, 
                 message: 'Inicio de sesión exitoso.', 
-                userId: user.id
+                userId: user.id,
+                token: token // <-- DEVOLVER EL TOKEN
             });
 
         } catch (error) {

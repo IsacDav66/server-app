@@ -3,32 +3,31 @@
 const express = require('express');
 const { protect } = require('../middleware/auth'); 
 
-module.exports = (pool) => {
+module.exports = (pool, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
     const router = express.Router();
 
     // ----------------------------------------------------
     // RUTA PROTEGIDA: Manejo explícito del OPTIONS de CORS
-    // El navegador lo envía antes de GET/POST.
+    // Se deja, ya que es buena práctica
     // ----------------------------------------------------
     router.options('/me', (req, res) => {
-        // El navegador espera una respuesta 200 o 204 para saber que puede enviar el GET
         res.sendStatus(200); 
     });
 
     // ----------------------------------------------------
     // RUTA PROTEGIDA: Obtener datos del usuario (requiere token)
     // ----------------------------------------------------
-    router.get('/me', protect, async (req, res) => { // <-- ¡APLICAR EL PROTECT AQUÍ!
+    // Se usa una función anónima para inyectar JWT_SECRET a 'protect'
+    router.get('/me', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => { 
         
-        // Si llegamos aquí, el middleware 'protect' verificó la cookie y cargó req.user.userId
+        // Si llegamos aquí, el middleware 'protect' verificó el token y cargó req.user.userId
         
         try {
-            // Buscamos el email para la respuesta usando el ID que la sesión nos dio
+            // Buscamos el email para la respuesta usando el ID que el token nos dio
             const query = 'SELECT email FROM usersapp WHERE id = $1';
             const result = await pool.query(query, [req.user.userId]);
 
             if (result.rows.length === 0) {
-                 // Esto no debería suceder si la sesión es válida, pero es una buena práctica
                 return res.status(404).json({ success: false, message: 'Usuario no encontrado en DB.' });
             }
 
@@ -44,7 +43,6 @@ module.exports = (pool) => {
             console.error(error.stack);
             res.status(500).json({ success: false, message: 'Error al obtener datos del usuario.' });
         }
-        // ... (Tu lógica de obtención de usuario) ...
     });
 
     return router;

@@ -1,33 +1,37 @@
 // Archivo: /server/middleware/auth.js
 
-// Nota: Eliminamos el require('jsonwebtoken') ya que no se usa.
-// Tampoco necesitamos inyectar el JWT_SECRET.
+const jwt = require('jsonwebtoken'); // <-- AÑADIDO
 
 /**
- * Middleware para proteger rutas basado en la sesión activa.
- * 
- * Verifica si el req.session.userId existe, lo que indica que una sesión de usuario válida está activa.
+ * Middleware para proteger rutas basado en la verificación de un Token JWT.
  */
-const protect = (req, res, next) => {
+const protect = (req, res, next, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
     
-    // El objeto de sesión (req.session) es poblado automáticamente por el middleware 'express-session'
-    // si se encuentra una cookie de sesión válida.
-    
-    // 1. Verificar si la sesión tiene un ID de usuario
-    if (req.session && req.session.userId) {
+    // 1. Obtener el token de la cabecera "Authorization: Bearer <token>"
+    let token;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+        token = req.headers.authorization.split(' ')[1];
+    }
+
+    if (!token) {
+        return res.status(401).json({ success: false, message: 'No autorizado. Token no encontrado.' });
+    }
+
+    try {
+        // 2. Verificar el token
+        const decoded = jwt.verify(token, JWT_SECRET);
         
-        // 2. Adjuntamos el userId al objeto req para que el controlador lo use
-        // NOTA: En este sistema, la cookie se envía AUTOMÁTICAMENTE por el WebView.
-        req.user = { userId: req.session.userId }; 
+        // 3. Adjuntar el userId decodificado al objeto req
+        req.user = { userId: decoded.userId }; 
         
-        next(); // Sesión válida: Continúa a la ruta (ej. /api/user/me)
+        next(); // Token válido: Continúa
         
-    } else {
-        // 3. No hay sesión válida: Devuelve 401
-        console.log('❌ Sesión de usuario no encontrada. Bloqueando acceso a ruta protegida.');
+    } catch (error) {
+        // Token inválido, expirado, etc.
+        console.log('❌ Error de verificación de Token:', error.message);
         res.status(401).json({ 
             success: false, 
-            message: 'No autorizado. La sesión ha expirado o no ha iniciado sesión.' 
+            message: 'No autorizado. Token inválido o expirado.' 
         });
     }
 };

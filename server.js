@@ -6,12 +6,16 @@ const express = require('express');
 const cors = require('cors'); 
 const { Pool } = require('pg');
 //const os = require('os');
-const session = require('express-session');
-const pgSession = require('connect-pg-simple')(session); 
+// const session = require('express-session'); // <-- ELIMINADO
+// const pgSession = require('connect-pg-simple')(session); // <-- ELIMINADO
 
 const app = express();
-const PORT = 3001; // Puerto interno de Node.js
+const PORT = 3001; // Puerto interno de Node.js (CAMBIO)
 const INTERNAL_HOST = '0.0.0.0'; // Escuchar en todas las interfaces internas
+
+// CLAVE SECRETA DE JWT (¡REEMPLAZAR CON process.env.JWT_SECRET!)
+// Por simplicidad, se define aquí, pero DEBE ser una variable de entorno.
+const JWT_SECRET = 'TuSuperClaveSecretaJWT9876543210'; 
 
 // ====================================================
 // CONFIGURACIÓN DE BASE DE DATOS (POSTGRESQL - USANDO URL)
@@ -45,52 +49,26 @@ const PRODUCTION_API_URL = 'https://davcenter.servequake.com';
 
 const corsOptions = {
     // Permitir acceso desde la app (HTTPS) y localhost (para depuración)
+    // Se mantiene 'credentials: true' en CORS por si acaso, aunque ya no enviamos la cookie de sesión
     origin: [PRODUCTION_API_URL, 'https://localhost', 'http://localhost'], 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
-    credentials: true // CLAVE: Permite el envío de cookies/sesiones
+    allowedHeaders: ['Content-Type', 'Authorization'], // <-- Authorization AÑADIDO
+    credentials: true 
 };
 
-// **DEJA ESTO:** El middleware cors manejará todas las solicitudes,
-// incluyendo las preflight OPTIONS, para las rutas definidas.
 app.use(cors(corsOptions)); 
-
-// **ELIMINA O COMENTA ESTA LÍNEA** para resolver el PathError:
-// app.options('*', cors(corsOptions)); 
 
 // Middleware para procesar JSON
 app.use(express.json());
 
 // ====================================================
-// CONFIGURACIÓN DE SESIÓN (Middleware)
+// CONFIGURACIÓN DE SESIÓN (ELIMINADA - USANDO JWT)
 // ====================================================
-
-const SESSION_SECRET = 'EstaEsUnaClaveSuperSecretaParaSesionesDeExpress12345'; 
-
-const sessionStore = new pgSession({
-    pool: pool, 
-    tableName: 'user_sessions', 
-    createTableIfMissing: true
-});
-
-app.use(session({
-    // ...
-    store: sessionStore,
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false, 
-    cookie: { 
-        maxAge: 30 * 24 * 60 * 60 * 1000, 
-        secure: false, // <-- CAMBIO 1: Desactiva el requisito de HTTPS (peligroso)
-        httpOnly: false, // <-- Correcto
-        sameSite: 'Lax' // <-- CAMBIO 2: Cambiar a 'Lax' o dejarlo por defecto (a veces 'None' es el problema)
-    }
-}));
+// Bloque de sesión ELIMINADO
 
 // ====================================================
 // INICIALIZACIÓN DE TABLAS y RUTAS
 // ====================================================
-// ... (Tu función createUsersTable) ...
 
 async function createUsersTable() {
     const query = `
@@ -113,8 +91,9 @@ createUsersTable();
 // Rutas
 const authRoutes = require('./api/auth');
 const userRoutes = require('./api/user'); 
-app.use('/api/auth', authRoutes(pool)); 
-app.use('/api/user', userRoutes(pool)); 
+// Pasamos el pool y el JWT_SECRET
+app.use('/api/auth', authRoutes(pool, JWT_SECRET)); 
+app.use('/api/user', userRoutes(pool, JWT_SECRET)); 
 
 // Manejador de Errores Final (Evita devolver HTML)
 app.use((err, req, res, next) => {
