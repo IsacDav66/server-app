@@ -80,9 +80,9 @@ app.use(session({
     saveUninitialized: false, 
     cookie: { 
         maxAge: 30 * 24 * 60 * 60 * 1000, 
-        secure: true, // CLAVE: Debe ser TRUE para HTTPS (el dominio)
-        httpOnly: true, // CRÍTICO: Debe ser TRUE (por seguridad), pero false para el WebView. Usaremos 'false' por compatibilidad con el WebView.
-        sameSite: 'None' // CLAVE para solicitudes cross-site (la app)
+        secure: true, 
+        httpOnly: false, // <--- CAMBIO CLAVE: Usa 'false' para máxima compatibilidad con Capacitor/WebView
+        sameSite: 'None' 
     }
 }));
 
