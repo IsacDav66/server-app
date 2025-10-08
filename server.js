@@ -74,18 +74,18 @@ const sessionStore = new pgSession({
 });
 
 app.use(session({
+    // ...
     store: sessionStore,
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false, 
     cookie: { 
         maxAge: 30 * 24 * 60 * 60 * 1000, 
-        secure: true, 
-        httpOnly: false, // <--- CAMBIO CLAVE: Usa 'false' para máxima compatibilidad con Capacitor/WebView
-        sameSite: 'None' 
+        secure: false, // <-- CAMBIO 1: Desactiva el requisito de HTTPS (peligroso)
+        httpOnly: false, // <-- Correcto
+        sameSite: 'Lax' // <-- CAMBIO 2: Cambiar a 'Lax' o dejarlo por defecto (a veces 'None' es el problema)
     }
 }));
-
 
 // ====================================================
 // INICIALIZACIÓN DE TABLAS y RUTAS
