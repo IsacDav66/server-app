@@ -70,12 +70,12 @@ module.exports = (pool, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
         let query;
         let values;
         
-        // Si se envió una nueva URL de foto de perfil
+       // Si se envió una nueva URL de foto de perfil
         if (profilePicUrl) {
             query = `
                 UPDATE usersapp 
                 SET username = $1, age = $2, gender = $3, profile_pic_url = $4
-                WHERE id = $5 AND (username IS NULL OR username = $1)
+                WHERE id = $5 
                 RETURNING id;
             `;
             values = [username, age, gender, profilePicUrl, userId];
@@ -84,7 +84,7 @@ module.exports = (pool, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
             query = `
                 UPDATE usersapp 
                 SET username = $1, age = $2, gender = $3 
-                WHERE id = $4 AND (username IS NULL OR username = $1)
+                WHERE id = $4
                 RETURNING id;
             `;
             values = [username, age, gender, userId];
@@ -93,8 +93,11 @@ module.exports = (pool, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
         try {
             const result = await pool.query(query, values);
 
+            // Ahora solo necesitamos el rowCount = 1 (el usuario existe), 
+            // el error 409 de unicidad lo maneja el catch.
             if (result.rowCount === 0) {
-                 return res.status(409).json({ success: false, message: 'El nombre de usuario ya está en uso.' });
+                 // Esto solo ocurriría si el userId no existe, lo cual es casi imposible con el protect
+                 return res.status(404).json({ success: false, message: 'Usuario no encontrado.' });
             }
 
             res.status(200).json({ 
@@ -103,11 +106,11 @@ module.exports = (pool, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
             });
 
         } catch (error) {
-            if (error.code === '23505') { // Error de violación de unicidad
+            if (error.code === '23505') { // <--- ESTE ES EL ERROR DE NOMBRE DUPLICADO
                 return res.status(409).json({ success: false, message: 'El nombre de usuario ya está en uso.' });
             }
             console.error(error.stack);
-            res.status(500).json({ success: false, message: 'Error al actualizar el perfil.' });
+            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
         }
     });
 
