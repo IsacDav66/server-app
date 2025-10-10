@@ -95,5 +95,43 @@ module.exports = (pool, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
         }
     });
 
+    
+
+   // ----------------------------------------------------
+    // NUEVA RUTA: Subir Foto de Perfil (/api/user/upload-profile-pic)
+    // ----------------------------------------------------
+    router.post('/upload-profile-pic', 
+        (req, res, next) => protect(req, res, next, JWT_SECRET), // 1. Verificar JWT
+        uploadMiddleware, // 2. Subir el archivo con Multer
+        async (req, res) => {
+        
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: 'No se subió ningún archivo.' });
+        }
+        
+        const userId = req.user.userId;
+        
+        // 1. Obtener la ruta de acceso pública al archivo
+        // NOTA: 'uploads' es la carpeta pública que Nginx/Express debe servir estáticamente
+        const publicPath = `/uploads/${req.file.filename}`; 
+
+        try {
+            // 2. Guardar la ruta en la base de datos
+            const query = 'UPDATE usersapp SET profile_pic_url = $1 WHERE id = $2';
+            await pool.query(query, [publicPath, userId]);
+
+            res.status(200).json({ 
+                success: true, 
+                message: 'Foto de perfil actualizada con éxito.',
+                profilePicUrl: publicPath
+            });
+
+        } catch (error) {
+            console.error(error.stack);
+            res.status(500).json({ success: false, message: 'Error al guardar la URL del perfil.' });
+        }
+    });
+
     return router;
+
 };
