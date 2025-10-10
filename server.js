@@ -5,22 +5,17 @@ require('dotenv').config({ path: './.env' });
 const express = require('express');
 const cors = require('cors'); 
 const { Pool } = require('pg');
-const path = require('path'); // <-- CLAVE: AÑADIR ESTA LÍNEA
-
-//const os = require('os');
-// const session = require('express-session'); // <-- ELIMINADO
-// const pgSession = require('connect-pg-simple')(session); // <-- ELIMINADO
+const path = require('path'); // <-- CLAVE: Módulo Path
 
 const app = express();
-const PORT = 3001; // Puerto interno de Node.js (CAMBIO)
-const INTERNAL_HOST = '0.0.0.0'; // Escuchar en todas las interfaces internas
+const PORT = 3001;
+const INTERNAL_HOST = '0.0.0.0'; 
 
-// CLAVE SECRETA DE JWT (¡REEMPLAZAR CON process.env.JWT_SECRET!)
-// Por simplicidad, se define aquí, pero DEBE ser una variable de entorno.
+// CLAVE SECRETA DE JWT (¡USAR .ENV EN PRODUCCIÓN!)
 const JWT_SECRET = 'TuSuperClaveSecretaJWT9876543210'; 
 
 // ====================================================
-// CONFIGURACIÓN DE BASE DE DATOS (POSTGRESQL - USANDO URL)
+// CONFIGURACIÓN DE BASE DE DATOS (POSTGRESQL)
 // ====================================================
 if (!process.env.DATABASE_URL) {
     console.error('❌ Error: DATABASE_URL no está definido en el archivo .env');
@@ -30,7 +25,7 @@ if (!process.env.DATABASE_URL) {
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
-        rejectUnauthorized: false // Para desarrollo, necesario con certificados Aiven
+        rejectUnauthorized: false
     }
 });
 
@@ -45,16 +40,14 @@ pool.connect()
     });
 
 // ====================================================
-// CONFIGURACIÓN CORS (Para Dominio HTTPS Real)
+// CONFIGURACIÓN CORS
 // ====================================================
 const PRODUCTION_API_URL = 'https://davcenter.servequake.com';
 
 const corsOptions = {
-    // Permitir acceso desde la app (HTTPS) y localhost (para depuración)
-    // Se mantiene 'credentials: true' en CORS por si acaso, aunque ya no enviamos la cookie de sesión
     origin: [PRODUCTION_API_URL, 'https://localhost', 'http://localhost', 'http://127.0.0.1:3000','http://127.0.0.1:5500'], 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'], // <-- Authorization AÑADIDO
+    allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true 
 };
 
@@ -63,47 +56,103 @@ app.use(cors(corsOptions));
 // Middleware para procesar JSON
 app.use(express.json());
 
-// NUEVO: Servir archivos estáticos (las imágenes de perfil)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); // <-- AÑADIR
-// ====================================================
-// CONFIGURACIÓN DE SESIÓN (ELIMINADA - USANDO JWT)
-// ====================================================
-// Bloque de sesión ELIMINADO
+// Servir archivos estáticos (las imágenes de perfil y posts)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); 
 
 // ====================================================
-// INICIALIZACIÓN DE TABLAS y RUTAS
+// INICIALIZACIÓN DE TABLAS
 // ====================================================
 
-async function createUsersTable() {
-    const query = `
+async function initDatabase() {
+    // 1. TABLA PRINCIPAL DE USUARIOS (usersapp)
+    const usersQuery = `
         CREATE TABLE IF NOT EXISTS usersapp (
             id SERIAL PRIMARY KEY,
             email VARCHAR(100) UNIQUE NOT NULL,
             password_hash VARCHAR(255) NOT NULL,
             created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            
-            -- CAMPOS NUEVOS:
-            username VARCHAR(50) UNIQUE,           -- <-- CLAVE: UNIQUE y puede ser NULL al inicio
+            username VARCHAR(50) UNIQUE,           
             age INTEGER,
             gender VARCHAR(10),
-            profile_pic_url VARCHAR(255)           -- URL de la imagen (dejar NULL)
+            profile_pic_url VARCHAR(255)
         );
     `;
+
+    // 2. TABLA DE PUBLICACIONES (postapp)
+    const postQuery = `
+        CREATE TABLE IF NOT EXISTS postapp (
+            post_id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
+            content TEXT,
+            image_url VARCHAR(255),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
+
+    // 3. TABLA DE REACCIONES (post_reactionapp)
+    const reactionQuery = `
+        CREATE TABLE IF NOT EXISTS post_reactionapp (
+            reaction_id SERIAL PRIMARY KEY,
+            post_id INTEGER REFERENCES postapp(post_id) ON DELETE CASCADE NOT NULL,
+            user_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
+            reaction_type VARCHAR(10) NOT NULL, -- Ej: 'like', 'love', 'haha'
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (post_id, user_id)
+        );
+    `;
+
+    // 4. TABLA DE POSTS GUARDADOS (saved_postsapp)
+    const savedQuery = `
+        CREATE TABLE IF NOT EXISTS saved_postsapp (
+            saved_post_id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
+            post_id INTEGER REFERENCES postapp(post_id) ON DELETE CASCADE NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (user_id, post_id)
+        );
+    `;
+
+    // 5. TABLA DE COMENTARIOS (commentsapp)
+    const commentsQuery = `
+        CREATE TABLE IF NOT EXISTS commentsapp (
+            comment_id SERIAL PRIMARY KEY,
+            post_id INTEGER REFERENCES postapp(post_id) ON DELETE CASCADE NOT NULL,
+            user_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
+            parent_comment_id INTEGER REFERENCES commentsapp(comment_id) ON DELETE CASCADE,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
+
     try {
-        await pool.query(query);
-        console.log('✅ Tabla "usersapp" verificada o creada con campos de perfil.'); // Mensaje actualizado
+        await pool.query(usersQuery);
+        console.log('✅ Tabla "usersapp" verificada/creada.');
+        await pool.query(postQuery);
+        console.log('✅ Tabla "postapp" verificada/creada.');
+        await pool.query(reactionQuery);
+        console.log('✅ Tabla "post_reactionapp" verificada/creada.');
+        await pool.query(savedQuery);
+        console.log('✅ Tabla "saved_postsapp" verificada/creada.');
+        await pool.query(commentsQuery);
+        console.log('✅ Tabla "commentsapp" verificada/creada.');
     } catch (err) {
-        console.error('❌ Error al crear la tabla "usersapp":', err.stack); 
+        console.error('❌ Error al inicializar la base de datos:', err.stack);
+        // NO HACEMOS process.exit(1) si es un error al crear, ya que puede que la tabla ya exista.
+        // Si tienes problemas, ejecuta un DROP TABLE si estás en desarrollo.
     }
 }
-createUsersTable(); 
+initDatabase(); // <-- LLAMAR A LA FUNCIÓN
 
 // Rutas
 const authRoutes = require('./api/auth');
 const userRoutes = require('./api/user'); 
+const postRoutes = require('./api/post'); // <-- NUEVA RUTA DE POSTS
 // Pasamos el pool y el JWT_SECRET
 app.use('/api/auth', authRoutes(pool, JWT_SECRET)); 
 app.use('/api/user', userRoutes(pool, JWT_SECRET)); 
+app.use('/api/posts', postRoutes(pool, JWT_SECRET)); // <-- RUTA BASE PARA PUBLICACIONES
 
 // Manejador de Errores Final (Evita devolver HTML)
 app.use((err, req, res, next) => {
