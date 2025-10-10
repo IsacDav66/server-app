@@ -10,11 +10,13 @@ const storage = multer.diskStorage({
         cb(null, path.join(__dirname, '../uploads/')); 
     },
     filename: (req, file, cb) => {
-        // Nombra el archivo usando el ID del usuario y la fecha, con su extensión original
         const ext = path.extname(file.originalname);
-        // Usamos el ID de usuario para asegurar que cada usuario solo tiene una foto de perfil
         const userId = req.user.userId; 
-        cb(null, `profile_${userId}${ext}`); 
+        const timestamp = Date.now(); // <-- CLAVE: Obtener el timestamp actual
+        
+        // Nombra el archivo como: profile_<userId>_<timestamp>.<ext>
+        // Ejemplo: profile_3_1730910000000.jpg
+        cb(null, `profile_${userId}_${timestamp}${ext}`); // <-- NUEVO FORMATO
     }
 });
 
