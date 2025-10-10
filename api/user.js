@@ -2,6 +2,9 @@
 
 const express = require('express');
 const { protect } = require('../middleware/auth'); 
+const uploadMiddleware = require('../middleware/upload'); // <-- AÑADIDO
+const path = require('path'); // <-- AÑADIDO
+
 
 module.exports = (pool, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
     const router = express.Router();

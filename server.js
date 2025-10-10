@@ -61,6 +61,8 @@ app.use(cors(corsOptions));
 // Middleware para procesar JSON
 app.use(express.json());
 
+// NUEVO: Servir archivos estáticos (las imágenes de perfil)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); // <-- AÑADIR
 // ====================================================
 // CONFIGURACIÓN DE SESIÓN (ELIMINADA - USANDO JWT)
 // ====================================================
