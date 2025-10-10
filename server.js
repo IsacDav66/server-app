@@ -5,6 +5,8 @@ require('dotenv').config({ path: './.env' });
 const express = require('express');
 const cors = require('cors'); 
 const { Pool } = require('pg');
+const path = require('path'); // <-- CLAVE: AÑADIR ESTA LÍNEA
+
 //const os = require('os');
 // const session = require('express-session'); // <-- ELIMINADO
 // const pgSession = require('connect-pg-simple')(session); // <-- ELIMINADO
