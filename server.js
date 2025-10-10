@@ -50,7 +50,7 @@ const PRODUCTION_API_URL = 'https://davcenter.servequake.com';
 const corsOptions = {
     // Permitir acceso desde la app (HTTPS) y localhost (para depuración)
     // Se mantiene 'credentials: true' en CORS por si acaso, aunque ya no enviamos la cookie de sesión
-    origin: [PRODUCTION_API_URL, 'https://localhost', 'http://localhost'], 
+    origin: [PRODUCTION_API_URL, 'https://localhost', 'http://localhost', 'http://127.0.0.1:3000'], 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'], // <-- Authorization AÑADIDO
     credentials: true 
