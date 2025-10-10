@@ -56,28 +56,44 @@ module.exports = (pool, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
     });
 
     // ----------------------------------------------------
-    // NUEVA RUTA: Actualizar Perfil (/api/user/complete-profile)
+    // RUTA: Actualizar Perfil (/api/user/complete-profile)
     // ----------------------------------------------------
     router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const { username, age, gender } = req.body;
+        // CLAVE: Recibir profilePicUrl
+        const { username, age, gender, profilePicUrl } = req.body; 
         const userId = req.user.userId;
 
         if (!username || !age || !gender) {
             return res.status(400).json({ success: false, message: 'Faltan campos obligatorios: username, edad, o género.' });
         }
-
-        try {
-            const query = `
+        
+        let query;
+        let values;
+        
+        // Si se envió una nueva URL de foto de perfil
+        if (profilePicUrl) {
+            query = `
+                UPDATE usersapp 
+                SET username = $1, age = $2, gender = $3, profile_pic_url = $4
+                WHERE id = $5 AND (username IS NULL OR username = $1)
+                RETURNING id;
+            `;
+            values = [username, age, gender, profilePicUrl, userId];
+        } else {
+            // Si NO se envió, solo actualiza los datos de perfil
+            query = `
                 UPDATE usersapp 
                 SET username = $1, age = $2, gender = $3 
                 WHERE id = $4 AND (username IS NULL OR username = $1)
                 RETURNING id;
             `;
-            const result = await pool.query(query, [username, age, gender, userId]);
+            values = [username, age, gender, userId];
+        }
+
+        try {
+            const result = await pool.query(query, values);
 
             if (result.rowCount === 0) {
-                 // Si falla, puede ser por username duplicado (aunque el where lo evita, el UNIQUE constraint saltaría)
-                 // O el usuario no existe.
                  return res.status(409).json({ success: false, message: 'El nombre de usuario ya está en uso.' });
             }
 
@@ -95,7 +111,6 @@ module.exports = (pool, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
         }
     });
 
-    
 
    // ----------------------------------------------------
     // NUEVA RUTA: Subir Foto de Perfil (/api/user/upload-profile-pic)
