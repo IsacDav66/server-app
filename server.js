@@ -76,12 +76,18 @@ async function createUsersTable() {
             id SERIAL PRIMARY KEY,
             email VARCHAR(100) UNIQUE NOT NULL,
             password_hash VARCHAR(255) NOT NULL,
-            created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            
+            -- CAMPOS NUEVOS:
+            username VARCHAR(50) UNIQUE,           -- <-- CLAVE: UNIQUE y puede ser NULL al inicio
+            age INTEGER,
+            gender VARCHAR(10),
+            profile_pic_url VARCHAR(255)           -- URL de la imagen (dejar NULL)
         );
     `;
     try {
         await pool.query(query);
-        console.log('✅ Tabla "usersapp" verificada o creada.'); 
+        console.log('✅ Tabla "usersapp" verificada o creada con campos de perfil.'); // Mensaje actualizado
     } catch (err) {
         console.error('❌ Error al crear la tabla "usersapp":', err.stack); 
     }

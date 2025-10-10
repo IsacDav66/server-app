@@ -15,33 +15,80 @@ module.exports = (pool, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
     });
 
     // ----------------------------------------------------
-    // RUTA PROTEGIDA: Obtener datos del usuario (requiere token)
+    // RUTA PROTEGIDA: Obtener datos del usuario (y checkear perfil)
     // ----------------------------------------------------
-    // Se usa una función anónima para inyectar JWT_SECRET a 'protect'
     router.get('/me', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => { 
         
-        // Si llegamos aquí, el middleware 'protect' verificó el token y cargó req.user.userId
-        
         try {
-            // Buscamos el email para la respuesta usando el ID que el token nos dio
-            const query = 'SELECT email FROM usersapp WHERE id = $1';
+            // Buscamos todos los campos de perfil
+            const query = 'SELECT email, username, age, gender, profile_pic_url FROM usersapp WHERE id = $1';
             const result = await pool.query(query, [req.user.userId]);
 
             if (result.rows.length === 0) {
                 return res.status(404).json({ success: false, message: 'Usuario no encontrado en DB.' });
             }
-
+            
+            const user = result.rows[0];
+            
+            // Checkear si el perfil está completo
+            const isProfileComplete = !!user.username && user.age !== null && user.gender !== null;
+            
             res.status(200).json({
                 success: true,
                 message: 'Acceso a la ruta protegida concedido.',
                 data: {
                     userId: req.user.userId,
-                    email: result.rows[0].email,
+                    email: user.email,
+                    username: user.username,
+                    isProfileComplete: isProfileComplete, // <-- CLAVE: Estado del perfil
+                    age: user.age,
+                    gender: user.gender,
+                    profilePicUrl: user.profile_pic_url
                 }
             });
         } catch (error) {
             console.error(error.stack);
             res.status(500).json({ success: false, message: 'Error al obtener datos del usuario.' });
+        }
+    });
+
+    // ----------------------------------------------------
+    // NUEVA RUTA: Actualizar Perfil (/api/user/complete-profile)
+    // ----------------------------------------------------
+    router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const { username, age, gender } = req.body;
+        const userId = req.user.userId;
+
+        if (!username || !age || !gender) {
+            return res.status(400).json({ success: false, message: 'Faltan campos obligatorios: username, edad, o género.' });
+        }
+
+        try {
+            const query = `
+                UPDATE usersapp 
+                SET username = $1, age = $2, gender = $3 
+                WHERE id = $4 AND (username IS NULL OR username = $1)
+                RETURNING id;
+            `;
+            const result = await pool.query(query, [username, age, gender, userId]);
+
+            if (result.rowCount === 0) {
+                 // Si falla, puede ser por username duplicado (aunque el where lo evita, el UNIQUE constraint saltaría)
+                 // O el usuario no existe.
+                 return res.status(409).json({ success: false, message: 'El nombre de usuario ya está en uso.' });
+            }
+
+            res.status(200).json({ 
+                success: true, 
+                message: 'Perfil completado con éxito.' 
+            });
+
+        } catch (error) {
+            if (error.code === '23505') { // Error de violación de unicidad
+                return res.status(409).json({ success: false, message: 'El nombre de usuario ya está en uso.' });
+            }
+            console.error(error.stack);
+            res.status(500).json({ success: false, message: 'Error al actualizar el perfil.' });
         }
     });
 
