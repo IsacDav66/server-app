@@ -264,11 +264,11 @@ router.post('/react/:postId',
 
         try {
             const query = `
-                INSERT INTO commentsapp (post_id, user_id, content, parent_comment_id)
-                VALUES ($1, $2, $3, $4)
-                RETURNING comment_id, created_at;
-            `;
-            const result = await pool.query(query, [postId, userId, content, parent_comment_id || null]);
+            INSERT INTO commentsapp (post_id, user_id, content, parent_comment_id)
+            VALUES ($1, $2, $3, $4)
+            RETURNING comment_id, created_at;
+        `;
+        const result = await pool.query(query, [postId, userId, content, parent_comment_id || null]); // <-- INSERTA correctamente
 
             res.status(201).json({
                 success: true,
