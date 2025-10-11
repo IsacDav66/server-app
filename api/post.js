@@ -56,8 +56,9 @@ module.exports = (pool, JWT_SECRET) => {
     // ----------------------------------------------------
     // NUEVA RUTA: Obtener UN solo Post (/api/posts/:postId)
     // ----------------------------------------------------
-    router.get('/:postId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+     router.get('/:postId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const postId = parseInt(req.params.postId);
+        const currentUserId = req.user.userId; // CLAVE: Obtener el ID del usuario actual
 
         if (isNaN(postId)) {
             return res.status(400).json({ success: false, message: 'ID de publicación inválido.' });
@@ -71,12 +72,23 @@ module.exports = (pool, JWT_SECRET) => {
                     p.image_url, 
                     p.created_at,
                     u.username,
-                    u.profile_pic_url
+                    u.profile_pic_url,
+                    -- CLAVE: Contar el número total de likes
+                    COALESCE(COUNT(r_all.reaction_id), 0) AS total_likes,
+                    -- CLAVE: Contar el número total de comentarios
+                    COALESCE(COUNT(c_all.comment_id), 0) AS total_comments,
+                    -- CLAVE: Chequear si el usuario actual ya dio like
+                    MAX(CASE WHEN r_user.user_id = $2 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user
                 FROM postapp p
                 JOIN usersapp u ON p.user_id = u.id
-                WHERE p.post_id = $1;
+                -- Joins para los contadores y estado de like
+                LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
+                LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $2 AND r_user.reaction_type = 'like'
+                LEFT JOIN commentsapp c_all ON p.post_id = c_all.post_id
+                WHERE p.post_id = $1
+                GROUP BY p.post_id, u.username, u.profile_pic_url;
             `;
-            const result = await pool.query(query, [postId]);
+            const result = await pool.query(query, [postId, currentUserId]); // CLAVE: Pasar el currentUserId como $2
 
             if (result.rows.length === 0) {
                 return res.status(404).json({ success: false, message: 'Publicación no encontrada.' });
@@ -84,7 +96,7 @@ module.exports = (pool, JWT_SECRET) => {
 
             res.status(200).json({
                 success: true,
-                post: result.rows[0]
+                post: result.rows[0] // Devolvemos el post con los contadores
             });
 
         } catch (error) {
@@ -93,7 +105,7 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-    
+
 
     // ----------------------------------------------------
     // RUTA: Crear nueva publicación (/api/posts/create)
