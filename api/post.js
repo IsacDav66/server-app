@@ -14,7 +14,7 @@ module.exports = (pool, JWT_SECRET) => {
     // ----------------------------------------------------
     // Por simplicidad, obtiene todos los posts con el nombre de usuario del autor.
     router.get('/', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const currentUserId = req.user.userId; // <-- CLAVE: Obtener el ID del usuario actual
+        const currentUserId = req.user.userId;
 
         try {
             const query = `
@@ -25,18 +25,20 @@ module.exports = (pool, JWT_SECRET) => {
                     p.created_at,
                     u.username,
                     u.profile_pic_url,
-                    -- 1. Contar el número total de likes (COALESCE maneja el caso de 0 likes)
                     COALESCE(COUNT(r_all.reaction_id), 0) AS total_likes,
-                    -- 2. CLAVE: Chequear si el usuario actual ya dio like: MAX(1) si hay like, MAX(0) si no.
-                    MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user
+                    MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
+                    -- CLAVE: Contar el número total de comentarios
+                    COALESCE(COUNT(c.comment_id), 0) AS total_comments
                 FROM postapp p
                 JOIN usersapp u ON p.user_id = u.id
                 LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
                 LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1 AND r_user.reaction_type = 'like'
+                -- CLAVE: JOIN para el conteo de comentarios
+                LEFT JOIN commentsapp c ON p.post_id = c.post_id
                 GROUP BY p.post_id, u.username, u.profile_pic_url
                 ORDER BY p.created_at DESC;
             `;
-            const result = await pool.query(query, [currentUserId]); // <-- Usar el ID aquí
+            const result = await pool.query(query, [currentUserId]); 
 
             res.status(200).json({
                 success: true,
@@ -156,5 +158,70 @@ router.post('/react/:postId',
     }
 });
     
+
+
+
+ // ----------------------------------------------------
+    // NUEVA RUTA: Obtener Comentarios de un Post (/api/posts/:postId/comments)
+    // ----------------------------------------------------
+    router.get('/:postId/comments', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const postId = parseInt(req.params.postId);
+
+        try {
+            // Obtiene todos los comentarios (y subcomentarios) para un post, con info del autor
+            const query = `
+                SELECT 
+                    c.comment_id, c.content, c.created_at,
+                    u.username, u.profile_pic_url
+                FROM commentsapp c
+                JOIN usersapp u ON c.user_id = u.id
+                WHERE c.post_id = $1
+                ORDER BY c.created_at ASC;
+            `;
+            const result = await pool.query(query, [postId]);
+
+            res.status(200).json({
+                success: true,
+                comments: result.rows
+            });
+
+        } catch (error) {
+            console.error('❌ Error al obtener comentarios:', error.stack);
+            res.status(500).json({ success: false, message: 'Error interno al cargar comentarios.' });
+        }
+    });
+    
+    // ----------------------------------------------------
+    // NUEVA RUTA: Añadir un Comentario (/api/posts/:postId/comment)
+    // ----------------------------------------------------
+    router.post('/:postId/comment', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const postId = parseInt(req.params.postId);
+        const userId = req.user.userId;
+        const { content, parent_comment_id } = req.body; // parent_comment_id para futuros subcomentarios
+
+        if (!content) {
+            return res.status(400).json({ success: false, message: 'El contenido del comentario no puede estar vacío.' });
+        }
+
+        try {
+            const query = `
+                INSERT INTO commentsapp (post_id, user_id, content, parent_comment_id)
+                VALUES ($1, $2, $3, $4)
+                RETURNING comment_id, created_at;
+            `;
+            const result = await pool.query(query, [postId, userId, content, parent_comment_id || null]);
+
+            res.status(201).json({
+                success: true,
+                message: 'Comentario añadido con éxito.',
+                commentId: result.rows[0].comment_id
+            });
+
+        } catch (error) {
+            console.error('❌ Error al añadir comentario:', error.stack);
+            res.status(500).json({ success: false, message: 'Error interno al añadir comentario.' });
+        }
+    });
+
     return router;
 };
