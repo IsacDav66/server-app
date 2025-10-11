@@ -14,6 +14,8 @@ module.exports = (pool, JWT_SECRET) => {
     // ----------------------------------------------------
     // Por simplicidad, obtiene todos los posts con el nombre de usuario del autor.
     router.get('/', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const currentUserId = req.user.userId; // <-- CLAVE: Obtener el ID del usuario actual
+
         try {
             const query = `
                 SELECT 
@@ -22,12 +24,19 @@ module.exports = (pool, JWT_SECRET) => {
                     p.image_url, 
                     p.created_at,
                     u.username,
-                    u.profile_pic_url
+                    u.profile_pic_url,
+                    -- CLAVE: Contar el número total de likes
+                    COALESCE(COUNT(r_all.reaction_id), 0) AS total_likes,
+                    -- CLAVE: Chequear si el usuario actual ya dio like (existe una fila)
+                    MAX(CASE WHEN r_user.user_id = $1 THEN TRUE ELSE FALSE END) AS is_liked_by_user
                 FROM postapp p
                 JOIN usersapp u ON p.user_id = u.id
+                LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
+                LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1 AND r_user.reaction_type = 'like'
+                GROUP BY p.post_id, u.username, u.profile_pic_url
                 ORDER BY p.created_at DESC;
             `;
-            const result = await pool.query(query);
+            const result = await pool.query(query, [currentUserId]); // <-- Usar el ID aquí
 
             res.status(200).json({
                 success: true,
@@ -88,12 +97,64 @@ module.exports = (pool, JWT_SECRET) => {
     });
 
 
+
+
     // ----------------------------------------------------
-    // RUTA FUTURA: Reaccionar a una publicación
-    // ----------------------------------------------------
-    // router.post('/react/:postId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-    //     // Lógica para INSERT INTO post_reactionapp ...
-    // });
+// RUTA: Alternar Reacción (Like) (/api/posts/react/:postId)
+// ----------------------------------------------------
+router.post('/react/:postId', 
+    (req, res, next) => protect(req, res, next, JWT_SECRET), 
+    async (req, res) => {
+    
+    const postId = parseInt(req.params.postId);
+    const userId = req.user.userId;
+    const reactionType = 'like'; // Usamos 'like' como tipo fijo por ahora
+
+    if (isNaN(postId)) {
+        return res.status(400).json({ success: false, message: 'ID de publicación inválido.' });
+    }
+
+    try {
+        // 1. INTENTAR ELIMINAR la reacción existente
+        const deleteQuery = `
+            DELETE FROM post_reactionapp 
+            WHERE post_id = $1 AND user_id = $2 AND reaction_type = $3
+            RETURNING reaction_id;
+        `;
+        const deleteResult = await pool.query(deleteQuery, [postId, userId, reactionType]);
+
+        if (deleteResult.rowCount > 0) {
+            // Si se eliminó una fila, el usuario estaba dando "like" y lo ha quitado
+            return res.status(200).json({ 
+                success: true, 
+                action: 'unliked', 
+                message: 'Me gusta eliminado con éxito.' 
+            });
+        }
+
+        // 2. Si no se eliminó nada, AÑADIR la nueva reacción
+        const insertQuery = `
+            INSERT INTO post_reactionapp (post_id, user_id, reaction_type) 
+            VALUES ($1, $2, $3)
+            RETURNING reaction_id;
+        `;
+        const insertResult = await pool.query(insertQuery, [postId, userId, reactionType]);
+        
+        // Si se insertó correctamente
+        if (insertResult.rowCount > 0) {
+            return res.status(201).json({ 
+                success: true, 
+                action: 'liked', 
+                message: 'Me gusta añadido con éxito.' 
+            });
+        }
+        
+    } catch (error) {
+        // En caso de un error inesperado (ej. post_id inválido o BD inaccesible)
+        console.error('❌ Error al procesar reacción:', error.stack);
+        res.status(500).json({ success: false, message: 'Error interno del servidor al procesar el "Me Gusta".' });
+    }
+});
     
     return router;
 };
