@@ -25,10 +25,10 @@ module.exports = (pool, JWT_SECRET) => {
                     p.created_at,
                     u.username,
                     u.profile_pic_url,
-                    -- CLAVE: Contar el número total de likes
+                    -- 1. Contar el número total de likes (COALESCE maneja el caso de 0 likes)
                     COALESCE(COUNT(r_all.reaction_id), 0) AS total_likes,
-                    -- CLAVE: Chequear si el usuario actual ya dio like (existe una fila)
-                    MAX(CASE WHEN r_user.user_id = $1 THEN TRUE ELSE FALSE END) AS is_liked_by_user
+                    -- 2. CLAVE: Chequear si el usuario actual ya dio like: MAX(1) si hay like, MAX(0) si no.
+                    MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user
                 FROM postapp p
                 JOIN usersapp u ON p.user_id = u.id
                 LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
