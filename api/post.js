@@ -226,8 +226,12 @@ router.post('/react/:postId',
             // Obtiene todos los comentarios (y subcomentarios) para un post, con info del autor
             const query = `
                 SELECT 
-                    c.comment_id, c.content, c.created_at,
-                    u.username, u.profile_pic_url
+                    c.comment_id, 
+                    c.content, 
+                    c.created_at,
+                    c.user_id, -- <--- CLAVE: AÑADIR EL ID DEL AUTOR DEL COMENTARIO
+                    u.username, 
+                    u.profile_pic_url
                 FROM commentsapp c
                 JOIN usersapp u ON c.user_id = u.id
                 WHERE c.post_id = $1
@@ -279,7 +283,7 @@ router.post('/react/:postId',
     });
 
 
-    
+
       // ----------------------------------------------------
     // NUEVA RUTA: Eliminar un Comentario (/api/posts/comment/:commentId)
     // ----------------------------------------------------
