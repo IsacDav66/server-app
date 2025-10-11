@@ -278,5 +278,46 @@ router.post('/react/:postId',
         }
     });
 
+
+    
+      // ----------------------------------------------------
+    // NUEVA RUTA: Eliminar un Comentario (/api/posts/comment/:commentId)
+    // ----------------------------------------------------
+    router.delete('/comment/:commentId', 
+        (req, res, next) => protect(req, res, next, JWT_SECRET), 
+        async (req, res) => {
+        
+        const commentId = parseInt(req.params.commentId);
+        const userId = req.user.userId; // ID del usuario que intenta borrar
+
+        if (isNaN(commentId)) {
+            return res.status(400).json({ success: false, message: 'ID de comentario inválido.' });
+        }
+
+        try {
+            // CLAVE: La consulta solo elimina si el user_id del comentario es igual al user_id del token.
+            const deleteQuery = `
+                DELETE FROM commentsapp 
+                WHERE comment_id = $1 AND user_id = $2
+                RETURNING comment_id;
+            `;
+            const deleteResult = await pool.query(deleteQuery, [commentId, userId]);
+
+            if (deleteResult.rowCount === 0) {
+                // Falla si el comentario no existe O si no pertenece al usuario
+                return res.status(403).json({ success: false, message: 'No tienes permiso para eliminar este comentario o no existe.' });
+            }
+
+            res.status(200).json({ 
+                success: true, 
+                message: 'Comentario eliminado con éxito.' 
+            });
+
+        } catch (error) {
+            console.error('❌ Error al eliminar comentario:', error.stack);
+            res.status(500).json({ success: false, message: 'Error interno al eliminar el comentario.' });
+        }
+    });
+
     return router;
 };
