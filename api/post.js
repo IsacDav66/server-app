@@ -52,6 +52,49 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
+
+    // ----------------------------------------------------
+    // NUEVA RUTA: Obtener UN solo Post (/api/posts/:postId)
+    // ----------------------------------------------------
+    router.get('/:postId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const postId = parseInt(req.params.postId);
+
+        if (isNaN(postId)) {
+            return res.status(400).json({ success: false, message: 'ID de publicación inválido.' });
+        }
+
+        try {
+            const query = `
+                SELECT 
+                    p.post_id, 
+                    p.content, 
+                    p.image_url, 
+                    p.created_at,
+                    u.username,
+                    u.profile_pic_url
+                FROM postapp p
+                JOIN usersapp u ON p.user_id = u.id
+                WHERE p.post_id = $1;
+            `;
+            const result = await pool.query(query, [postId]);
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Publicación no encontrada.' });
+            }
+
+            res.status(200).json({
+                success: true,
+                post: result.rows[0]
+            });
+
+        } catch (error) {
+            console.error('❌ Error al obtener post único:', error.stack);
+            res.status(500).json({ success: false, message: 'Error interno del servidor al cargar la publicación.' });
+        }
+    });
+
+    
+
     // ----------------------------------------------------
     // RUTA: Crear nueva publicación (/api/posts/create)
     // ----------------------------------------------------
