@@ -130,8 +130,9 @@ module.exports = (pool, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
         const userId = req.user.userId;
         
         // 1. Obtener la ruta de acceso pública al archivo
-        // NOTA: 'uploads' es la carpeta pública que Nginx/Express debe servir estáticamente
-        const publicPath = `/uploads/${req.file.filename}`; 
+        // NOTA: 'uploads' es la carpeta pública que Express sirve estáticamente
+        // --- LÍNEA MODIFICADA ---
+        const publicPath = `/uploads/profile_images/${req.file.filename}`; // <-- CORREGIDO
 
         try {
             // 2. Guardar la ruta en la base de datos

@@ -2,25 +2,35 @@
 
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs'); // <-- AÑADIDO: Módulo File System de Node.js
+
+
+// --- NUEVA LÓGICA DE DESTINO ---
+// 1. Definir la ruta de destino
+const profileImagesPath = path.join(__dirname, '../uploads/profile_images/');
+
+// 2. Asegurarse de que el directorio exista
+fs.mkdirSync(profileImagesPath, { recursive: true });
+// -----------------------------
+
 
 // Configuración de almacenamiento: guarda el archivo en el disco
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        // La ruta donde se guardarán los archivos
-        cb(null, path.join(__dirname, '../uploads/')); 
+        // La ruta donde se guardarán los archivos de perfil
+        cb(null, profileImagesPath); // <-- CAMBIADO
     },
     filename: (req, file, cb) => {
         const ext = path.extname(file.originalname);
         const userId = req.user.userId; 
-        const timestamp = Date.now(); // <-- CLAVE: Obtener el timestamp actual
+        const timestamp = Date.now();
         
-        // Nombra el archivo como: profile_<userId>_<timestamp>.<ext>
-        // Ejemplo: profile_3_1730910000000.jpg
-        cb(null, `profile_${userId}_${timestamp}${ext}`); // <-- NUEVO FORMATO
+        // El nombre del archivo sigue siendo el mismo formato, solo cambia su ubicación
+        cb(null, `profile_${userId}_${timestamp}${ext}`);
     }
 });
 
-// Filtro de archivos: solo permite imágenes
+// Filtro de archivos (sin cambios)
 const fileFilter = (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
         cb(null, true);
@@ -29,7 +39,7 @@ const fileFilter = (req, file, cb) => {
     }
 };
 
-// Inicializar Multer
+// Inicializar Multer (sin cambios)
 const upload = multer({ 
     storage: storage,
     limits: { 
@@ -38,6 +48,5 @@ const upload = multer({
     fileFilter: fileFilter
 });
 
-// Exporta el middleware configurado
-// El campo 'profilePic' debe coincidir con el 'name' del input file del frontend
+// Exporta el middleware configurado (sin cambios)
 module.exports = upload.single('profilePic');
