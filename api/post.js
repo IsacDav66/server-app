@@ -46,8 +46,10 @@ module.exports = (pool, JWT_SECRET) => {
     // ==========================================================
 
     // RUTA 2: Obtener los posts guardados (Específica) -> AHORA VA ANTES DE /:postId
+    // ----------------------------------------------------
+    // RUTA: Obtener los posts guardados por el usuario logueado
+    // ----------------------------------------------------
     router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        // ... (código sin cambios)
         const loggedInUserId = req.user.userId;
         try {
             const query = `
@@ -65,7 +67,7 @@ module.exports = (pool, JWT_SECRET) => {
                 LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1
                 WHERE s.user_id = $1
                 GROUP BY p.post_id, p.user_id, u.username, u.profile_pic_url
-                ORDER BY s.created_at DESC;
+                ORDER BY MAX(s.created_at) DESC; -- <-- CORRECCIÓN: Usar una función de agregación
             `;
             const result = await pool.query(query, [loggedInUserId]);
             res.status(200).json({ success: true, posts: result.rows });
