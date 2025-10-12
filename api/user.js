@@ -1,9 +1,11 @@
 // Archivo: /server/api/user.js (VERSIÓN COMPLETA Y CORREGIDA)
 
 const express = require('express');
+const sanitizeHtml = require('sanitize-html'); // <-- 1. IMPORTAR SANITIZER
 const { protect } = require('../middleware/auth');
 const uploadMiddleware = require('../middleware/upload');
-const uploadCoverMiddleware = require('../middleware/uploadCover'); // <-- 1. IMPORTAR NUEVO MIDDLEWARE
+const uploadCoverMiddleware = require('../middleware/uploadCover');
+const uploadBioImageMiddleware = require('../middleware/uploadBioImage'); // <-- 2. IMPORTAR NUEVO MIDDLEWARE
 const processImage = require('../middleware/processImage');
 const path = require('path');
 
@@ -36,7 +38,7 @@ module.exports = (pool, JWT_SECRET) => {
         try {
             const query = `
                 SELECT 
-                    u.id, u.username, u.profile_pic_url, u.bio, u.cover_pic_url, -- <-- 2. AÑADIR cover_pic_url
+                    u.id, u.username, u.profile_pic_url, u.bio, u.cover_pic_url, u.bio_bg_url, -- <-- 2. AÑADIR cover_pic_url
                     (SELECT COUNT(*) FROM postapp WHERE user_id = u.id) AS post_count,
                     (SELECT COUNT(*) FROM followersapp WHERE following_id = u.id) AS followers_count,
                     (SELECT COUNT(*) FROM followersapp WHERE follower_id = u.id) AS following_count
@@ -54,35 +56,92 @@ module.exports = (pool, JWT_SECRET) => {
     });
 
     // ----------------------------------------------------
-    // RUTA: Actualizar/Completar Perfil (MEJORADA)
-    // ----------------------------------------------------
-    router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const { username, age, gender, bio } = req.body;
-        const userId = req.user.userId;
+// RUTA: Actualizar/Completar Perfil (AHORA CON SANITIZACIÓN DE BIO)
+// ----------------------------------------------------
+router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    // Obtenemos todos los campos posibles del body
+    const { username, age, gender, bio } = req.body;
+    const userId = req.user.userId;
 
-        if (!username) {
-            return res.status(400).json({ success: false, message: 'El nombre de usuario es obligatorio.' });
-        }
-
-        try {
-            const query = `
-                UPDATE usersapp SET 
-                    username = COALESCE($1, username), 
-                    age = COALESCE($2, age), 
-                    gender = COALESCE($3, gender), 
-                    bio = COALESCE($4, bio)
-                WHERE id = $5;
-            `;
-            await pool.query(query, [username, age, gender, bio, userId]);
-            res.status(200).json({ success: true, message: 'Perfil actualizado con éxito.' });
-        } catch (error) {
-            if (error.code === '23505') {
-                return res.status(409).json({ success: false, message: 'El nombre de usuario ya está en uso.' });
+    // --- LÓGICA DE SANITIZACIÓN DE LA BIOGRAFÍA ---
+    const cleanBio = bio ? sanitizeHtml(bio, {
+        allowedTags: sanitizeHtml.defaults.allowedTags.concat(['img', 'span', 'p', 'br', 'strong', 'em', 'u', 'h1', 'h2', 'h3']),
+        allowedAttributes: {
+            ...sanitizeHtml.defaults.allowedAttributes,
+            '*': ['style'], // Permite el atributo 'style' para colores, alineación, etc.
+            'img': ['src', 'width', 'height', 'style'] // Permite atributos de imagen
+        },
+        allowedStyles: {
+            '*': {
+              'color': [/^#(0x)?[0-9a-f]+$/i, /^rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)$/],
+              'text-align': [/^left$/, /^right$/, /^center$/]
             }
-            console.error(error.stack);
-            res.status(500).json({ success: false, message: 'Error interno al actualizar el perfil.' });
         }
-    });
+    }) : null; // Si no se envía 'bio', se tratará como null
+
+    try {
+        // Consulta mejorada con COALESCE.
+        // COALESCE(valor_nuevo, valor_antiguo) -> Si el valor_nuevo es null, mantiene el valor_antiguo.
+        // Esto permite actualizar solo los campos que se envían en la petición.
+        const query = `
+            UPDATE usersapp SET 
+                username = COALESCE($1, username), 
+                age = COALESCE($2, age), 
+                gender = COALESCE($3, gender), 
+                bio = COALESCE($4, bio)
+            WHERE id = $5;
+        `;
+        // Pasamos null para los campos que no se envían
+        await pool.query(query, [
+            username || null, 
+            age || null, 
+            gender || null, 
+            cleanBio, // Ya es null si no se envió 'bio'
+            userId
+        ]);
+        
+        res.status(200).json({ success: true, message: 'Perfil actualizado con éxito.' });
+
+    } catch (error) {
+        if (error.code === '23505') { // Error de unicidad (username duplicado)
+            return res.status(409).json({ success: false, message: 'El nombre de usuario ya está en uso.' });
+        }
+        console.error("Error al actualizar perfil:", error.stack);
+        res.status(500).json({ success: false, message: 'Error interno del servidor al actualizar el perfil.' });
+    }
+});
+
+
+    // --- 5. NUEVA RUTA: Para imágenes incrustadas en la biografía ---
+    router.post('/upload-bio-image',
+        (req, res, next) => protect(req, res, next, JWT_SECRET),
+        uploadBioImageMiddleware,
+        processImage('bio'),
+        (req, res) => {
+            if (!req.file) return res.status(400).json({ success: false, message: 'No se subió archivo.' });
+            const publicPath = `/uploads/bio_images/${req.file.filename}`;
+            res.status(200).json({ success: true, url: publicPath });
+        }
+    );
+
+
+    // --- 6. NUEVA RUTA: Para la imagen de FONDO de la biografía ---
+    router.post('/upload-bio-bg',
+        (req, res, next) => protect(req, res, next, JWT_SECRET),
+        uploadBioImageMiddleware, // Reutilizamos el mismo middleware de subida
+        processImage('bio'),      // y de procesamiento
+        async (req, res) => {
+            if (!req.file) return res.status(400).json({ success: false, message: 'No se subió archivo.' });
+            const publicPath = `/uploads/bio_images/${req.file.filename}`;
+            try {
+                await pool.query('UPDATE usersapp SET bio_bg_url = $1 WHERE id = $2', [publicPath, req.user.userId]);
+                res.status(200).json({ success: true, url: publicPath });
+            } catch (error) {
+                console.error(error);
+                res.status(500).json({ success: false, message: 'Error al guardar la URL de fondo.' });
+            }
+        }
+    );
 
     // ----------------------------------------------------
     // RUTA: Subir Foto de Perfil

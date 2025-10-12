@@ -19,6 +19,7 @@ const processImage = (type) => async (req, res, next) => {
     if (type === 'profile') folder = 'profile_images';
     if (type === 'post') folder = 'post_images';
     if (type === 'cover') folder = 'cover_images'; // <-- AÑADIR ESTA LÍNEA
+    if (type === 'bio') folder = 'bio_images';
     const destinationPath = path.join(__dirname, `../uploads/${folder}/`);
 
     // 2. Asegurarse de que el directorio exista
