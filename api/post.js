@@ -216,39 +216,43 @@ router.post('/react/:postId',
 
 
 
- // ----------------------------------------------------
-    // NUEVA RUTA: Obtener Comentarios de un Post (/api/posts/:postId/comments)
-    // ----------------------------------------------------
-    router.get('/:postId/comments', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const postId = parseInt(req.params.postId);
+// ----------------------------------------------------
+// RUTA: Obtener Comentarios de un Post (/api/posts/:postId/comments) - CORREGIDA
+// ----------------------------------------------------
+router.get('/:postId/comments', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    const postId = parseInt(req.params.postId);
 
-        try {
-            // Obtiene todos los comentarios (y subcomentarios) para un post, con info del autor
-            const query = `
-                SELECT 
-                    c.comment_id, 
-                    c.content, 
-                    c.created_at,
-                    c.user_id, -- <--- CLAVE: AÑADIR EL ID DEL AUTOR DEL COMENTARIO
-                    u.username, 
-                    u.profile_pic_url
-                FROM commentsapp c
-                JOIN usersapp u ON c.user_id = u.id
-                WHERE c.post_id = $1
-                ORDER BY c.created_at ASC;
-            `;
-            const result = await pool.query(query, [postId]);
+    if (isNaN(postId)) {
+        return res.status(400).json({ success: false, message: 'ID de publicación inválido.' });
+    }
 
-            res.status(200).json({
-                success: true,
-                comments: result.rows
-            });
+    try {
+        const query = `
+            SELECT 
+                c.comment_id, 
+                c.content, 
+                c.created_at,
+                c.user_id,
+                c.parent_comment_id, -- <--- ¡¡¡LÍNEA AÑADIDA!!!
+                u.username, 
+                u.profile_pic_url
+            FROM commentsapp c
+            JOIN usersapp u ON c.user_id = u.id
+            WHERE c.post_id = $1
+            ORDER BY c.created_at ASC;
+        `;
+        const result = await pool.query(query, [postId]);
 
-        } catch (error) {
-            console.error('❌ Error al obtener comentarios:', error.stack);
-            res.status(500).json({ success: false, message: 'Error interno al cargar comentarios.' });
-        }
-    });
+        res.status(200).json({
+            success: true,
+            comments: result.rows
+        });
+
+    } catch (error) {
+        console.error('❌ Error al obtener comentarios:', error.stack);
+        res.status(500).json({ success: false, message: 'Error interno al cargar comentarios.' });
+    }
+});
     
     // ----------------------------------------------------
     // NUEVA RUTA: Añadir un Comentario (/api/posts/:postId/comment)
