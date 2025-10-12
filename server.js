@@ -126,6 +126,17 @@ async function initDatabase() {
         );
     `;
 
+
+   // 6. TABLA DE SEGUIDORES (followersapp) - NUEVA
+    const followersQuery = `
+        CREATE TABLE IF NOT EXISTS followersapp (
+            follower_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
+            following_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (follower_id, following_id)
+        );
+    `;
+
     try {
         await pool.query(usersQuery);
         console.log('✅ Tabla "usersapp" verificada/creada.');
@@ -137,6 +148,8 @@ async function initDatabase() {
         console.log('✅ Tabla "saved_postsapp" verificada/creada.');
         await pool.query(commentsQuery);
         console.log('✅ Tabla "commentsapp" verificada/creada.');
+        await pool.query(followersQuery);
+        console.log('✅ Tabla "followersapp" verificada/creada.');
     } catch (err) {
         console.error('❌ Error al inicializar la base de datos:', err.stack);
         // NO HACEMOS process.exit(1) si es un error al crear, ya que puede que la tabla ya exista.

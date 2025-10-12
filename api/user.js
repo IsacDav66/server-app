@@ -1,155 +1,169 @@
-// Archivo: /server/api/user.js
+// Archivo: /server/api/user.js (VERSIÓN COMPLETA Y ACTUALIZADA)
 
 const express = require('express');
-const { protect } = require('../middleware/auth'); 
+const { protect } = require('../middleware/auth');
 const uploadMiddleware = require('../middleware/upload');
-const processImage = require('../middleware/processImage'); // <-- 1. IMPORTAR
+const processImage = require('../middleware/processImage');
 const path = require('path');
 
-
-module.exports = (pool, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
+module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
 
     // ----------------------------------------------------
-    // RUTA PROTEGIDA: Manejo explícito del OPTIONS de CORS
-    // Se deja, ya que es buena práctica
+    // RUTA PROTEGIDA: Obtener datos del usuario LOGUEADO
     // ----------------------------------------------------
-    router.options('/me', (req, res) => {
-        res.sendStatus(200); 
-    });
-
-    // ----------------------------------------------------
-    // RUTA PROTEGIDA: Obtener datos del usuario (y checkear perfil)
-    // ----------------------------------------------------
-    router.get('/me', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => { 
-        
+    router.get('/me', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         try {
-            // Buscamos todos los campos de perfil
-            const query = 'SELECT email, username, age, gender, profile_pic_url FROM usersapp WHERE id = $1';
+            // Se añade 'bio' a la consulta
+            const query = 'SELECT id, email, username, age, gender, profile_pic_url, bio FROM usersapp WHERE id = $1';
             const result = await pool.query(query, [req.user.userId]);
 
             if (result.rows.length === 0) {
-                return res.status(404).json({ success: false, message: 'Usuario no encontrado en DB.' });
+                return res.status(404).json({ success: false, message: 'Usuario no encontrado en la base de datos.' });
             }
             
             const user = result.rows[0];
-            
-            // Checkear si el perfil está completo
             const isProfileComplete = !!user.username && user.age !== null && user.gender !== null;
             
+            // Se devuelve un objeto 'data' limpio y consistente
             res.status(200).json({
                 success: true,
-                message: 'Acceso a la ruta protegida concedido.',
                 data: {
-                    userId: req.user.userId,
+                    userId: user.id,
                     email: user.email,
                     username: user.username,
-                    isProfileComplete: isProfileComplete, // <-- CLAVE: Estado del perfil
+                    isProfileComplete: isProfileComplete,
                     age: user.age,
                     gender: user.gender,
-                    profilePicUrl: user.profile_pic_url
+                    profilePicUrl: user.profile_pic_url,
+                    bio: user.bio
                 }
             });
         } catch (error) {
             console.error(error.stack);
-            res.status(500).json({ success: false, message: 'Error al obtener datos del usuario.' });
+            res.status(500).json({ success: false, message: 'Error al obtener los datos del usuario.' });
         }
     });
 
     // ----------------------------------------------------
-    // RUTA: Actualizar Perfil (/api/user/complete-profile)
+    // NUEVA RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario
+    // ----------------------------------------------------
+    router.get('/profile/:userId', async (req, res) => {
+        const { userId } = req.params;
+        try {
+            const query = `
+                SELECT 
+                    u.id, 
+                    u.username, 
+                    u.profile_pic_url, 
+                    u.bio,
+                    (SELECT COUNT(*) FROM postapp WHERE user_id = u.id) AS post_count,
+                    (SELECT COUNT(*) FROM followersapp WHERE following_id = u.id) AS followers_count,
+                    (SELECT COUNT(*) FROM followersapp WHERE follower_id = u.id) AS following_count
+                FROM usersapp u
+                WHERE u.id = $1;
+            `;
+            const result = await pool.query(query, [userId]);
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Perfil de usuario no encontrado.' });
+            }
+            
+            res.status(200).json({ success: true, data: result.rows[0] });
+        } catch (error) {
+            console.error(error.stack);
+            res.status(500).json({ success: false, message: 'Error interno del servidor al obtener el perfil.' });
+        }
+    });
+
+    // ----------------------------------------------------
+    // RUTA: Actualizar/Completar Perfil (MEJORADA)
     // ----------------------------------------------------
     router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        // CLAVE: Recibir profilePicUrl
-        const { username, age, gender, profilePicUrl } = req.body; 
+        // Se añade 'bio'
+        const { username, age, gender, bio } = req.body;
         const userId = req.user.userId;
 
-        if (!username || !age || !gender) {
-            return res.status(400).json({ success: false, message: 'Faltan campos obligatorios: username, edad, o género.' });
-        }
-        
-        let query;
-        let values;
-        
-       // Si se envió una nueva URL de foto de perfil
-        if (profilePicUrl) {
-            query = `
-                UPDATE usersapp 
-                SET username = $1, age = $2, gender = $3, profile_pic_url = $4
-                WHERE id = $5 
-                RETURNING id;
-            `;
-            values = [username, age, gender, profilePicUrl, userId];
-        } else {
-            // Si NO se envió, solo actualiza los datos de perfil
-            query = `
-                UPDATE usersapp 
-                SET username = $1, age = $2, gender = $3 
-                WHERE id = $4
-                RETURNING id;
-            `;
-            values = [username, age, gender, userId];
+        // Validaciones básicas
+        if (!username) {
+            return res.status(400).json({ success: false, message: 'El nombre de usuario es obligatorio.' });
         }
 
         try {
-            const result = await pool.query(query, values);
-
-            // Ahora solo necesitamos el rowCount = 1 (el usuario existe), 
-            // el error 409 de unicidad lo maneja el catch.
-            if (result.rowCount === 0) {
-                 // Esto solo ocurriría si el userId no existe, lo cual es casi imposible con el protect
-                 return res.status(404).json({ success: false, message: 'Usuario no encontrado.' });
-            }
-
-            res.status(200).json({ 
-                success: true, 
-                message: 'Perfil completado con éxito.' 
-            });
-
+            // Consulta mejorada con COALESCE para actualizar solo los campos que se envían
+            const query = `
+                UPDATE usersapp SET 
+                    username = COALESCE($1, username), 
+                    age = COALESCE($2, age), 
+                    gender = COALESCE($3, gender), 
+                    bio = COALESCE($4, bio)
+                WHERE id = $5;
+            `;
+            await pool.query(query, [username, age, gender, bio, userId]);
+            res.status(200).json({ success: true, message: 'Perfil actualizado con éxito.' });
         } catch (error) {
-            if (error.code === '23505') { // <--- ESTE ES EL ERROR DE NOMBRE DUPLICADO
+            if (error.code === '23505') { // Error de unicidad (username duplicado)
                 return res.status(409).json({ success: false, message: 'El nombre de usuario ya está en uso.' });
             }
             console.error(error.stack);
-            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+            res.status(500).json({ success: false, message: 'Error interno del servidor al actualizar el perfil.' });
+        }
+    });
+
+    // ----------------------------------------------------
+    // RUTA: Subir Foto de Perfil (ya estaba correcta)
+    // ----------------------------------------------------
+    router.post('/upload-profile-pic', 
+        (req, res, next) => protect(req, res, next, JWT_SECRET),
+        uploadMiddleware,
+        processImage('profile'),
+        async (req, res) => {
+            if (!req.file) {
+                return res.status(400).json({ success: false, message: 'No se subió ningún archivo.' });
+            }
+            
+            const publicPath = `/uploads/profile_images/${req.file.filename}`;
+            try {
+                await pool.query('UPDATE usersapp SET profile_pic_url = $1 WHERE id = $2', [publicPath, req.user.userId]);
+                res.status(200).json({ success: true, message: 'Foto de perfil actualizada.', profilePicUrl: publicPath });
+            } catch (error) {
+                console.error(error.stack);
+                res.status(500).json({ success: false, message: 'Error al guardar la URL del perfil.' });
+            }
+        });
+        
+    // ----------------------------------------------------
+    // NUEVA RUTA: Seguir / Dejar de seguir a un usuario
+    // ----------------------------------------------------
+    router.post('/follow/:userId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const followerId = req.user.userId; // El que está haciendo la acción
+        const followingId = parseInt(req.params.userId); // Al que se quiere seguir
+
+        if (followerId === followingId) {
+            return res.status(400).json({ success: false, message: 'No puedes seguirte a ti mismo.' });
+        }
+
+        try {
+            // Intentar eliminar la relación (dejar de seguir)
+            const deleteQuery = 'DELETE FROM followersapp WHERE follower_id = $1 AND following_id = $2';
+            const deleteResult = await pool.query(deleteQuery, [followerId, followingId]);
+
+            if (deleteResult.rowCount > 0) {
+                // Si se eliminó, significa que lo estaba siguiendo
+                return res.status(200).json({ success: true, action: 'unfollowed', message: 'Has dejado de seguir a este usuario.' });
+            }
+
+            // Si no se eliminó nada, significa que no lo seguía, así que lo insertamos (seguir)
+            const insertQuery = 'INSERT INTO followersapp (follower_id, following_id) VALUES ($1, $2)';
+            await pool.query(insertQuery, [followerId, followingId]);
+
+            return res.status(201).json({ success: true, action: 'followed', message: 'Ahora sigues a este usuario.' });
+
+        } catch (error) {
+            console.error(error.stack);
+            res.status(500).json({ success: false, message: 'Error interno al procesar la solicitud de seguimiento.' });
         }
     });
 
 
-   // ----------------------------------------------------
-    // NUEVA RUTA: Subir Foto de Perfil (/api/user/upload-profile-pic)
-    // ----------------------------------------------------
-    router.post('/upload-profile-pic', 
-    (req, res, next) => protect(req, res, next, JWT_SECRET),
-    uploadMiddleware, // 2. Multer sube el archivo a la memoria
-    processImage('profile'), // <-- 3. Sharp procesa y guarda la imagen como .webp
-    async (req, res) => {
-    
-    if (!req.file) {
-        return res.status(400).json({ success: false, message: 'No se subió ningún archivo.' });
-    }
-    
-    const userId = req.user.userId;
-    
-    // La URL pública ahora apunta a la carpeta correcta y usa el nuevo nombre .webp
-    const publicPath = `/uploads/profile_images/${req.file.filename}`; 
-
-    try {
-        const query = 'UPDATE usersapp SET profile_pic_url = $1 WHERE id = $2';
-        await pool.query(query, [publicPath, userId]);
-
-        res.status(200).json({ 
-            success: true, 
-            message: 'Foto de perfil actualizada con éxito.',
-            profilePicUrl: publicPath
-        });
-
-    } catch (error) {
-        console.error(error.stack);
-        res.status(500).json({ success: false, message: 'Error al guardar la URL del perfil.' });
-    }
-});
-
     return router;
-
 };
