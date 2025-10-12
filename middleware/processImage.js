@@ -15,7 +15,10 @@ const processImage = (type) => async (req, res, next) => {
     }
 
     // 1. Definir la carpeta de destino según el tipo
-    const folder = type === 'profile' ? 'profile_images' : 'post_images';
+    let folder = 'default';
+    if (type === 'profile') folder = 'profile_images';
+    if (type === 'post') folder = 'post_images';
+    if (type === 'cover') folder = 'cover_images'; // <-- AÑADIR ESTA LÍNEA
     const destinationPath = path.join(__dirname, `../uploads/${folder}/`);
 
     // 2. Asegurarse de que el directorio exista

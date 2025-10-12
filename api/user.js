@@ -3,51 +3,40 @@
 const express = require('express');
 const { protect } = require('../middleware/auth');
 const uploadMiddleware = require('../middleware/upload');
+const uploadCoverMiddleware = require('../middleware/uploadCover'); // <-- 1. IMPORTAR NUEVO MIDDLEWARE
 const processImage = require('../middleware/processImage');
 const path = require('path');
 
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
 
-    // ----------------------------------------------------
     // RUTA PROTEGIDA: Obtener datos del usuario LOGUEADO
-    // ----------------------------------------------------
     router.get('/me', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         try {
-            const query = 'SELECT id, email, username, age, gender, profile_pic_url, bio FROM usersapp WHERE id = $1';
+            // Se añade 'cover_pic_url'
+            const query = 'SELECT id, email, username, age, gender, profile_pic_url, bio, cover_pic_url FROM usersapp WHERE id = $1';
             const result = await pool.query(query, [req.user.userId]);
             if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Usuario no encontrado.' });
             
             const user = result.rows[0];
-            const isProfileComplete = !!user.username && user.age !== null && user.gender !== null;
+            const isProfileComplete = !!user.username;
             
-            res.status(200).json({
-                success: true,
-                data: { userId: user.id, ...user, isProfileComplete }
-            });
+            res.status(200).json({ success: true, data: { userId: user.id, ...user, isProfileComplete } });
         } catch (error) {
             console.error(error.stack);
             res.status(500).json({ success: false, message: 'Error al obtener los datos del usuario.' });
         }
     });
 
-    // ----------------------------------------------------
     // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario
-    // ----------------------------------------------------
     router.get('/profile/:userId', async (req, res) => {
         const userId = parseInt(req.params.userId, 10);
-
-        // --- SOLUCIÓN AL BUG ---
-        // Validar que el userId sea un número antes de consultar la BD
-        if (isNaN(userId)) {
-            return res.status(400).json({ success: false, message: 'El ID de usuario proporcionado no es válido.' });
-        }
-        // -----------------------
+        if (isNaN(userId)) return res.status(400).json({ success: false, message: 'El ID de usuario no es válido.' });
 
         try {
             const query = `
                 SELECT 
-                    u.id, u.username, u.profile_pic_url, u.bio,
+                    u.id, u.username, u.profile_pic_url, u.bio, u.cover_pic_url, -- <-- 2. AÑADIR cover_pic_url
                     (SELECT COUNT(*) FROM postapp WHERE user_id = u.id) AS post_count,
                     (SELECT COUNT(*) FROM followersapp WHERE following_id = u.id) AS followers_count,
                     (SELECT COUNT(*) FROM followersapp WHERE follower_id = u.id) AS following_count
@@ -55,9 +44,7 @@ module.exports = (pool, JWT_SECRET) => {
                 WHERE u.id = $1;
             `;
             const result = await pool.query(query, [userId]);
-            if (result.rows.length === 0) {
-                return res.status(404).json({ success: false, message: 'Perfil de usuario no encontrado.' });
-            }
+            if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Perfil no encontrado.' });
             
             res.status(200).json({ success: true, data: result.rows[0] });
         } catch (error) {
@@ -116,6 +103,36 @@ module.exports = (pool, JWT_SECRET) => {
                 res.status(500).json({ success: false, message: 'Error al guardar la URL del perfil.' });
             }
         });
+
+
+      // ----------------------------------------------------
+    // NUEVA RUTA: Subir Foto de Portada
+    // ----------------------------------------------------
+    router.post('/upload-cover-pic', 
+        (req, res, next) => protect(req, res, next, JWT_SECRET), // 1. Proteger ruta
+        uploadCoverMiddleware,                                   // 2. Multer sube a memoria
+        processImage('cover'),                                   // 3. Sharp procesa y guarda como .webp
+        async (req, res) => {
+            if (!req.file) {
+                return res.status(400).json({ success: false, message: 'No se subió ningún archivo.' });
+            }
+            
+            // 4. Construir la URL pública y guardar en la BD
+            const publicPath = `/uploads/cover_images/${req.file.filename}`;
+            try {
+                await pool.query('UPDATE usersapp SET cover_pic_url = $1 WHERE id = $2', [publicPath, req.user.userId]);
+                res.status(200).json({ 
+                    success: true, 
+                    message: 'Foto de portada actualizada.', 
+                    coverPicUrl: publicPath 
+                });
+            } catch (error) {
+                console.error(error.stack);
+                res.status(500).json({ success: false, message: 'Error al guardar la URL de la portada.' });
+            }
+        });
+
+
         
     // ----------------------------------------------------
     // NUEVA RUTA: Seguir / Dejar de seguir a un usuario
