@@ -2,12 +2,11 @@
 
 const jwt = require('jsonwebtoken'); // <-- AÑADIDO
 
+
 /**
- * Middleware para proteger rutas basado en la verificación de un Token JWT.
+ * Middleware ESTRICTO: Bloquea la ruta si no hay un token válido.
  */
-const protect = (req, res, next, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
-    
-    // 1. Obtener el token de la cabecera "Authorization: Bearer <token>"
+const protect = (req, res, next, JWT_SECRET) => {
     let token;
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
         token = req.headers.authorization.split(' ')[1];
@@ -18,22 +17,37 @@ const protect = (req, res, next, JWT_SECRET) => { // <-- AHORA RECIBE JWT_SECRET
     }
 
     try {
-        // 2. Verificar el token
         const decoded = jwt.verify(token, JWT_SECRET);
-        
-        // 3. Adjuntar el userId decodificado al objeto req
         req.user = { userId: decoded.userId }; 
-        
-        next(); // Token válido: Continúa
-        
+        next();
     } catch (error) {
-        // Token inválido, expirado, etc.
-        console.log('❌ Error de verificación de Token:', error.message);
-        res.status(401).json({ 
-            success: false, 
-            message: 'No autorizado. Token inválido o expirado.' 
-        });
+        res.status(401).json({ success: false, message: 'No autorizado. Token inválido.' });
     }
 };
 
-module.exports = { protect };
+/**
+ * Middleware SUAVE (NUEVO): Intenta decodificar el usuario si hay un token,
+ * pero NUNCA bloquea la ruta. Ideal para rutas públicas con contenido personalizado.
+ */
+const softProtect = (req, res, next, JWT_SECRET) => {
+    let token;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+        token = req.headers.authorization.split(' ')[1];
+    }
+
+    if (token) {
+        try {
+            const decoded = jwt.verify(token, JWT_SECRET);
+            req.user = { userId: decoded.userId }; // Adjunta el usuario si el token es válido
+        } catch (error) {
+            // Si el token es inválido o expirado, simplemente no hacemos nada.
+            req.user = null;
+        }
+    }
+    
+    next(); // Siempre continúa a la siguiente función
+};
+
+
+// Exportar ambos middlewares
+module.exports = { protect, softProtect };
