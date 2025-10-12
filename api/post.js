@@ -18,9 +18,10 @@ module.exports = (pool, JWT_SECRET) => {
         const currentUserId = req.user.userId;
 
         try {
-            const query = `
+           const query = `
     SELECT 
         p.post_id, 
+        p.user_id, -- <--- LÍNEA AÑADIDA
         p.content, 
         p.image_url, 
         p.created_at,
@@ -29,14 +30,12 @@ module.exports = (pool, JWT_SECRET) => {
         COUNT(DISTINCT r_all.reaction_id) AS total_likes,
         MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
         COUNT(DISTINCT c.comment_id) AS total_comments,
-        -- LÍNEA CLAVE AÑADIDA: Chequear si el post está guardado por el usuario actual
         MAX(CASE WHEN s.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_saved_by_user
     FROM postapp p
     JOIN usersapp u ON p.user_id = u.id
     LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
     LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1 AND r_user.reaction_type = 'like'
     LEFT JOIN commentsapp c ON p.post_id = c.post_id
-    -- JOIN AÑADIDO: Unir con la tabla de posts guardados
     LEFT JOIN saved_postsapp s ON p.post_id = s.post_id AND s.user_id = $1
     GROUP BY p.post_id, u.username, u.profile_pic_url
     ORDER BY p.created_at DESC;
@@ -69,28 +68,24 @@ module.exports = (pool, JWT_SECRET) => {
 
     try {
         const query = `
-            SELECT 
-                p.post_id, 
-                p.content, 
-                p.image_url, 
-                p.created_at,
-                u.username,
-                u.profile_pic_url,
-                COUNT(DISTINCT r_all.reaction_id) AS total_likes,
-                COUNT(DISTINCT c_all.comment_id) AS total_comments,
-                MAX(CASE WHEN r_user.user_id = $2 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
-                -- LÍNEA CLAVE AÑADIDA: Chequear si el post está guardado por el usuario actual
-                MAX(CASE WHEN s.user_id = $2 THEN 1 ELSE 0 END)::boolean AS is_saved_by_user
-            FROM postapp p
-            JOIN usersapp u ON p.user_id = u.id
-            LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
-            LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $2 AND r_user.reaction_type = 'like'
-            LEFT JOIN commentsapp c_all ON p.post_id = c_all.post_id
-            -- JOIN AÑADIDO: Unir con la tabla de posts guardados
-            LEFT JOIN saved_postsapp s ON p.post_id = s.post_id AND s.user_id = $2
-            WHERE p.post_id = $1
-            GROUP BY p.post_id, u.username, u.profile_pic_url;
-        `;
+    SELECT 
+        p.post_id, 
+        p.user_id, -- <--- LÍNEA AÑADIDA
+        p.content, p.image_url, p.created_at, u.username, u.profile_pic_url,
+        COUNT(DISTINCT r.reaction_id) AS total_likes,
+        COUNT(DISTINCT c.comment_id) AS total_comments,
+        MAX(CASE WHEN r_user.user_id = $2 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
+        MAX(CASE WHEN s.user_id = $2 THEN 1 ELSE 0 END)::boolean AS is_saved_by_user
+    FROM postapp p
+    JOIN usersapp u ON p.user_id = u.id
+    LEFT JOIN post_reactionapp r ON p.post_id = r.post_id AND r.reaction_type = 'like'
+    LEFT JOIN commentsapp c ON p.post_id = c.post_id
+    LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $2
+    LEFT JOIN saved_postsapp s ON p.post_id = s.post_id AND s.user_id = $2
+    WHERE p.user_id = $1
+    GROUP BY p.post_id, u.username, u.profile_pic_url
+    ORDER BY p.created_at DESC;
+`;
         const result = await pool.query(query, [postId, currentUserId]);
 
         if (result.rows.length === 0) {
@@ -422,22 +417,24 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
 
     try {
         const query = `
-            SELECT 
-                p.post_id, p.content, p.image_url, p.created_at, u.username, u.profile_pic_url,
-                COUNT(DISTINCT r.reaction_id) AS total_likes,
-                COUNT(DISTINCT c.comment_id) AS total_comments,
-                MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
-                TRUE AS is_saved_by_user -- Todos los resultados aquí están guardados por definición
-            FROM postapp p
-            JOIN saved_postsapp s ON p.post_id = s.post_id
-            JOIN usersapp u ON p.user_id = u.id
-            LEFT JOIN post_reactionapp r ON p.post_id = r.post_id AND r.reaction_type = 'like'
-            LEFT JOIN commentsapp c ON p.post_id = c.post_id
-            LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1
-            WHERE s.user_id = $1
-            GROUP BY p.post_id, u.username, u.profile_pic_url
-            ORDER BY s.created_at DESC;
-        `;
+    SELECT 
+        p.post_id, 
+        p.user_id, -- <--- LÍNEA AÑADIDA
+        p.content, p.image_url, p.created_at, u.username, u.profile_pic_url,
+        COUNT(DISTINCT r.reaction_id) AS total_likes,
+        COUNT(DISTINCT c.comment_id) AS total_comments,
+        MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
+        TRUE AS is_saved_by_user
+    FROM postapp p
+    JOIN saved_postsapp s ON p.post_id = s.post_id
+    JOIN usersapp u ON p.user_id = u.id
+    LEFT JOIN post_reactionapp r ON p.post_id = r.post_id AND r.reaction_type = 'like'
+    LEFT JOIN commentsapp c ON p.post_id = c.post_id
+    LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1
+    WHERE s.user_id = $1
+    GROUP BY p.post_id, u.username, u.profile_pic_url
+    ORDER BY s.created_at DESC;
+`;
         const result = await pool.query(query, [loggedInUserId]);
         res.status(200).json({ success: true, posts: result.rows });
     } catch (error) {
