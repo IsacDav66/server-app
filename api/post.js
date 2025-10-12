@@ -2,8 +2,9 @@
 
 const express = require('express');
 const { protect } = require('../middleware/auth'); 
-const uploadPostMiddleware = require('../middleware/uploadPost'); // <-- Importar el middleware de subida
-const path = require('path'); 
+const uploadPostMiddleware = require('../middleware/uploadPost');
+const processImage = require('../middleware/processImage'); // <-- 1. IMPORTAR
+const path = require('path');
 
 // Módulo para manejar las publicaciones
 module.exports = (pool, JWT_SECRET) => {
@@ -112,47 +113,43 @@ module.exports = (pool, JWT_SECRET) => {
     // RUTA: Crear nueva publicación (/api/posts/create)
     // ----------------------------------------------------
     router.post('/create', 
-        (req, res, next) => protect(req, res, next, JWT_SECRET), 
-        uploadPostMiddleware, // 2. Multer sube la imagen (opcional)
-        async (req, res) => {
-        
-        const { content } = req.body;
-        const userId = req.user.userId;
-        let imageUrl = null;
-        
-        // 1. Determinar la URL de la imagen si se subió un archivo
-        if (req.file) {
-            // '/uploads/post_images' es la ruta pública que Express sirve estáticamente
-            imageUrl = `/uploads/post_images/${req.file.filename}`; 
-        }
+    (req, res, next) => protect(req, res, next, JWT_SECRET), 
+    uploadPostMiddleware, // 2. Multer sube la imagen a memoria
+    processImage('post'), // <-- 3. Sharp procesa y guarda la imagen como .webp
+    async (req, res) => {
+    
+    const { content } = req.body;
+    const userId = req.user.userId;
+    let imageUrl = null;
+    
+    if (req.file) {
+        // La URL pública ahora apunta a la carpeta correcta y usa el nuevo nombre .webp
+        imageUrl = `/uploads/post_images/${req.file.filename}`; 
+    }
 
-        // Validación: Debe haber contenido o una imagen
-        if (!content && !imageUrl) {
-            return res.status(400).json({ success: false, message: 'La publicación debe tener contenido o una imagen.' });
-        }
+    if (!content && !imageUrl) {
+        return res.status(400).json({ success: false, message: 'La publicación debe tener contenido o una imagen.' });
+    }
 
-        try {
-            // 2. Insertar la publicación en la BD
-            const query = `
-                INSERT INTO postapp (user_id, content, image_url) 
-                VALUES ($1, $2, $3) 
-                RETURNING post_id, created_at;
-            `;
-            const result = await pool.query(query, [userId, content, imageUrl]);
+    try {
+        const query = `
+            INSERT INTO postapp (user_id, content, image_url) 
+            VALUES ($1, $2, $3) 
+            RETURNING post_id, created_at;
+        `;
+        const result = await pool.query(query, [userId, content, imageUrl]);
 
-            res.status(201).json({ 
-                success: true, 
-                message: 'Publicación creada con éxito.',
-                postId: result.rows[0].post_id,
-                created_at: result.rows[0].created_at,
-                imageUrl: imageUrl 
-            });
+        res.status(201).json({ 
+            success: true, 
+            message: 'Publicación creada con éxito.',
+            postId: result.rows[0].post_id,
+        });
 
-        } catch (error) {
-            console.error('❌ Error al crear post:', error.stack);
-            res.status(500).json({ success: false, message: 'Error interno del servidor al crear la publicación.' });
-        }
-    });
+    } catch (error) {
+        console.error('❌ Error al crear post:', error.stack);
+        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+    }
+});
 
 
 

@@ -1,25 +1,11 @@
-// Archivo: /server/middleware/uploadPost.js
+// Archivo: /server/middleware/uploadPost.js (ACTUALIZADO)
 
 const multer = require('multer');
-const path = require('path');
 
-// Configuración de almacenamiento: guarda el archivo en el disco
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        // La ruta donde se guardarán los archivos
-        cb(null, path.join(__dirname, '../uploads/post_images/')); // Carpeta separada
-    },
-    filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname);
-        const userId = req.user.userId; 
-        const timestamp = Date.now();
-        
-        // Nombra el archivo como: post_<userId>_<timestamp>.<ext>
-        cb(null, `post_${userId}_${timestamp}${ext}`); 
-    }
-});
+// 1. Usar almacenamiento en memoria
+const storage = multer.memoryStorage();
 
-// Filtro de archivos: solo permite imágenes
+// 2. Filtro de archivos (sin cambios)
 const fileFilter = (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
         cb(null, true);
@@ -28,7 +14,7 @@ const fileFilter = (req, file, cb) => {
     }
 };
 
-// Inicializar Multer para una sola imagen de post
+// 3. Inicializar Multer
 const uploadPost = multer({ 
     storage: storage,
     limits: { 
@@ -37,5 +23,5 @@ const uploadPost = multer({
     fileFilter: fileFilter
 });
 
-// Exporta el middleware configurado. El campo 'postImage' debe coincidir con el frontend
+// Exporta el middleware (sin cambios)
 module.exports = uploadPost.single('postImage');
