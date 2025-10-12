@@ -209,15 +209,16 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-    // ----------------------------------------------------
+// ----------------------------------------------------
 // RUTA: Obtener todas las publicaciones de un usuario específico
 // ----------------------------------------------------
-router.get('/user/:userId', (req, res, next) => softProtect(req, res, next, JWT_SECRET), async (req, res) => { // <-- CAMBIADO a softProtect
+// CORRECCIÓN: Debe usar softProtect para ser una ruta pública
+router.get('/user/:userId', (req, res, next) => softProtect(req, res, next, JWT_SECRET), async (req, res) => {
     const { userId } = req.params;
-    // Esta lógica ya maneja correctamente si req.user existe o no
     const loggedInUserId = req.user ? req.user.userId : null;
 
     try {
+        // La consulta SQL ya está correcta
         const query = `
             SELECT 
                 p.post_id, p.user_id, p.content, p.image_url, p.created_at, u.username, u.profile_pic_url,
@@ -242,6 +243,7 @@ router.get('/user/:userId', (req, res, next) => softProtect(req, res, next, JWT_
         res.status(500).json({ success: false, message: 'Error al cargar las publicaciones del usuario.' });
     }
 });
+
 
     // ----------------------------------------------------
     // RUTA: Obtener los posts guardados por el usuario logueado
