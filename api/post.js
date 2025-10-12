@@ -25,16 +25,18 @@ module.exports = (pool, JWT_SECRET) => {
         p.created_at,
         u.username,
         u.profile_pic_url,
-        -- CORRECCIÓN: Contar solo los IDs de reacción ÚNICOS
         COUNT(DISTINCT r_all.reaction_id) AS total_likes,
         MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
-        -- CORRECCIÓN: Contar solo los IDs de comentario ÚNICOS
-        COUNT(DISTINCT c.comment_id) AS total_comments
+        COUNT(DISTINCT c.comment_id) AS total_comments,
+        -- LÍNEA CLAVE AÑADIDA: Chequear si el post está guardado por el usuario actual
+        MAX(CASE WHEN s.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_saved_by_user
     FROM postapp p
     JOIN usersapp u ON p.user_id = u.id
     LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
     LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1 AND r_user.reaction_type = 'like'
     LEFT JOIN commentsapp c ON p.post_id = c.post_id
+    -- JOIN AÑADIDO: Unir con la tabla de posts guardados
+    LEFT JOIN saved_postsapp s ON p.post_id = s.post_id AND s.user_id = $1
     GROUP BY p.post_id, u.username, u.profile_pic_url
     ORDER BY p.created_at DESC;
 `;
@@ -324,6 +326,65 @@ router.get('/:postId/comments', (req, res, next) => protect(req, res, next, JWT_
             res.status(500).json({ success: false, message: 'Error interno al eliminar el comentario.' });
         }
     });
+
+
+
+
+
+    // ----------------------------------------------------
+// NUEVA RUTA: Alternar Guardado de Post (/api/posts/save/:postId)
+// ----------------------------------------------------
+router.post('/save/:postId', 
+    (req, res, next) => protect(req, res, next, JWT_SECRET), 
+    async (req, res) => {
+    
+    const postId = parseInt(req.params.postId);
+    const userId = req.user.userId;
+
+    if (isNaN(postId)) {
+        return res.status(400).json({ success: false, message: 'ID de publicación inválido.' });
+    }
+
+    try {
+        // 1. Intentar eliminar el registro de la tabla de guardados
+        const deleteQuery = `
+            DELETE FROM saved_postsapp 
+            WHERE post_id = $1 AND user_id = $2
+            RETURNING saved_post_id;
+        `;
+        const deleteResult = await pool.query(deleteQuery, [postId, userId]);
+
+        if (deleteResult.rowCount > 0) {
+            // Si se eliminó una fila, el usuario está "desguardando" el post
+            return res.status(200).json({ 
+                success: true, 
+                action: 'unsaved', 
+                message: 'Publicación eliminada de guardados.' 
+            });
+        }
+
+        // 2. Si no se eliminó nada, significa que no estaba guardado, así que lo insertamos
+        const insertQuery = `
+            INSERT INTO saved_postsapp (post_id, user_id) 
+            VALUES ($1, $2)
+            RETURNING saved_post_id;
+        `;
+        await pool.query(insertQuery, [postId, userId]);
+        
+        return res.status(201).json({ 
+            success: true, 
+            action: 'saved', 
+            message: 'Publicación guardada con éxito.' 
+        });
+        
+    } catch (error) {
+        console.error('❌ Error al procesar guardado de post:', error.stack);
+        res.status(500).json({ success: false, message: 'Error interno del servidor al procesar la solicitud.' });
+    }
+});
+
+
+
 
     return router;
 };
