@@ -18,26 +18,26 @@ module.exports = (pool, JWT_SECRET) => {
 
         try {
             const query = `
-                SELECT 
-                    p.post_id, 
-                    p.content, 
-                    p.image_url, 
-                    p.created_at,
-                    u.username,
-                    u.profile_pic_url,
-                    COALESCE(COUNT(r_all.reaction_id), 0) AS total_likes,
-                    MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
-                    -- CLAVE: Contar el número total de comentarios
-                    COALESCE(COUNT(c.comment_id), 0) AS total_comments
-                FROM postapp p
-                JOIN usersapp u ON p.user_id = u.id
-                LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
-                LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1 AND r_user.reaction_type = 'like'
-                -- CLAVE: JOIN para el conteo de comentarios
-                LEFT JOIN commentsapp c ON p.post_id = c.post_id
-                GROUP BY p.post_id, u.username, u.profile_pic_url
-                ORDER BY p.created_at DESC;
-            `;
+    SELECT 
+        p.post_id, 
+        p.content, 
+        p.image_url, 
+        p.created_at,
+        u.username,
+        u.profile_pic_url,
+        -- CORRECCIÓN: Contar solo los IDs de reacción ÚNICOS
+        COUNT(DISTINCT r_all.reaction_id) AS total_likes,
+        MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
+        -- CORRECCIÓN: Contar solo los IDs de comentario ÚNICOS
+        COUNT(DISTINCT c.comment_id) AS total_comments
+    FROM postapp p
+    JOIN usersapp u ON p.user_id = u.id
+    LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
+    LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1 AND r_user.reaction_type = 'like'
+    LEFT JOIN commentsapp c ON p.post_id = c.post_id
+    GROUP BY p.post_id, u.username, u.profile_pic_url
+    ORDER BY p.created_at DESC;
+`;
             const result = await pool.query(query, [currentUserId]); 
 
             res.status(200).json({
@@ -66,28 +66,26 @@ module.exports = (pool, JWT_SECRET) => {
 
         try {
             const query = `
-                SELECT 
-                    p.post_id, 
-                    p.content, 
-                    p.image_url, 
-                    p.created_at,
-                    u.username,
-                    u.profile_pic_url,
-                    -- CLAVE: Contar el número total de likes
-                    COALESCE(COUNT(r_all.reaction_id), 0) AS total_likes,
-                    -- CLAVE: Contar el número total de comentarios
-                    COALESCE(COUNT(c_all.comment_id), 0) AS total_comments,
-                    -- CLAVE: Chequear si el usuario actual ya dio like
-                    MAX(CASE WHEN r_user.user_id = $2 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user
-                FROM postapp p
-                JOIN usersapp u ON p.user_id = u.id
-                -- Joins para los contadores y estado de like
-                LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
-                LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $2 AND r_user.reaction_type = 'like'
-                LEFT JOIN commentsapp c_all ON p.post_id = c_all.post_id
-                WHERE p.post_id = $1
-                GROUP BY p.post_id, u.username, u.profile_pic_url;
-            `;
+    SELECT 
+        p.post_id, 
+        p.content, 
+        p.image_url, 
+        p.created_at,
+        u.username,
+        u.profile_pic_url,
+        -- CORRECCIÓN: Contar solo los IDs de reacción ÚNICOS
+        COUNT(DISTINCT r_all.reaction_id) AS total_likes,
+        -- CORRECCIÓN: Contar solo los IDs de comentario ÚNICOS
+        COUNT(DISTINCT c_all.comment_id) AS total_comments,
+        MAX(CASE WHEN r_user.user_id = $2 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user
+    FROM postapp p
+    JOIN usersapp u ON p.user_id = u.id
+    LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
+    LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $2 AND r_user.reaction_type = 'like'
+    LEFT JOIN commentsapp c_all ON p.post_id = c_all.post_id
+    WHERE p.post_id = $1
+    GROUP BY p.post_id, u.username, u.profile_pic_url;
+`;
             const result = await pool.query(query, [postId, currentUserId]); // CLAVE: Pasar el currentUserId como $2
 
             if (result.rows.length === 0) {
