@@ -214,7 +214,16 @@ module.exports = (pool, JWT_SECRET) => {
         const postId = parseInt(req.params.postId);
         const userId = req.user.userId;
         const { content, parent_comment_id } = req.body;
-        if (!content) return res.status(400).json({ success: false, message: 'El contenido del comentario no puede estar vacío.' });
+
+        if (!content || content.trim() === '') {
+            return res.status(400).json({ success: false, message: 'El contenido del comentario no puede estar vacío.' });
+        }
+
+        // --- VALIDACIÓN DE LÍMITE DE CARACTERES ---
+        if (content.length > 500) {
+            return res.status(400).json({ success: false, message: `El comentario no puede exceder los 500 caracteres.` });
+        }
+        // ------------------------------------------
 
         try {
             const query = `INSERT INTO commentsapp (post_id, user_id, content, parent_comment_id) VALUES ($1, $2, $3, $4) RETURNING comment_id;`;
