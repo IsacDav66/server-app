@@ -55,34 +55,42 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-    // ----------------------------------------------------
-// RUTA: Actualizar/Completar Perfil (AHORA CON SANITIZACIÓN DE BIO)
+   // ----------------------------------------------------
+// RUTA: Actualizar/Completar Perfil (CON SANITIZACIÓN MEJORADA)
 // ----------------------------------------------------
 router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-    // Obtenemos todos los campos posibles del body
     const { username, age, gender, bio } = req.body;
     const userId = req.user.userId;
 
-    // --- LÓGICA DE SANITIZACIÓN DE LA BIOGRAFÍA ---
+    // --- CONFIGURACIÓN DE SANITIZACIÓN PARA QUILL.JS ---
     const cleanBio = bio ? sanitizeHtml(bio, {
-        allowedTags: sanitizeHtml.defaults.allowedTags.concat(['img', 'span', 'p', 'br', 'strong', 'em', 'u', 'h1', 'h2', 'h3']),
+        // 1. Permitir las etiquetas que usa Quill
+        allowedTags: sanitizeHtml.defaults.allowedTags.concat(['img', 'span', 'p', 'h1', 'h2', 'h3']),
+        
+        // 2. Permitir los atributos 'class' y 'style'
         allowedAttributes: {
             ...sanitizeHtml.defaults.allowedAttributes,
-            '*': ['style'], // Permite el atributo 'style' para colores, alineación, etc.
-            'img': ['src', 'width', 'height', 'style'] // Permite atributos de imagen
+            'span': ['style', 'class'], // Permitir style y class en span
+            'p': ['class'],            // Permitir class en p
+            'img': ['src', 'width', 'height', 'style']
         },
+
+        // 3. (CLAVE) Permitir CLASES específicas de Quill para tamaño y alineación
+        allowedClasses: {
+            'p': ['ql-align-center', 'ql-align-right', 'ql-align-justify'],
+            'span': ['ql-size-small', 'ql-size-large', 'ql-size-huge']
+        },
+
+        // 4. (CLAVE) Permitir ESTILOS específicos para color y resaltado
         allowedStyles: {
-            '*': {
+            'span': {
               'color': [/^#(0x)?[0-9a-f]+$/i, /^rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)$/],
-              'text-align': [/^left$/, /^right$/, /^center$/]
+              'background-color': [/^#(0x)?[0-9a-f]+$/i, /^rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)$/]
             }
         }
-    }) : null; // Si no se envía 'bio', se tratará como null
+    }) : null;
 
     try {
-        // Consulta mejorada con COALESCE.
-        // COALESCE(valor_nuevo, valor_antiguo) -> Si el valor_nuevo es null, mantiene el valor_antiguo.
-        // Esto permite actualizar solo los campos que se envían en la petición.
         const query = `
             UPDATE usersapp SET 
                 username = COALESCE($1, username), 
@@ -91,23 +99,22 @@ router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT
                 bio = COALESCE($4, bio)
             WHERE id = $5;
         `;
-        // Pasamos null para los campos que no se envían
         await pool.query(query, [
             username || null, 
             age || null, 
             gender || null, 
-            cleanBio, // Ya es null si no se envió 'bio'
+            cleanBio,
             userId
         ]);
         
         res.status(200).json({ success: true, message: 'Perfil actualizado con éxito.' });
 
     } catch (error) {
-        if (error.code === '23505') { // Error de unicidad (username duplicado)
+        if (error.code === '23505') {
             return res.status(409).json({ success: false, message: 'El nombre de usuario ya está en uso.' });
         }
         console.error("Error al actualizar perfil:", error.stack);
-        res.status(500).json({ success: false, message: 'Error interno del servidor al actualizar el perfil.' });
+        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
     }
 });
 
