@@ -69,7 +69,7 @@ async function initDatabase() {
         CREATE TABLE IF NOT EXISTS usersapp (
             id SERIAL PRIMARY KEY,
             email VARCHAR(100) UNIQUE NOT NULL,
-            password_hash VARCHAR(255) NOT NULL,
+            password_hash VARCHAR(255),
             created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             username VARCHAR(50) UNIQUE,           
             age INTEGER,
