@@ -1,12 +1,12 @@
-// Archivo: /server/server.js
+// Archivo: /server/server.js (VERSIÓN CON CORS MANUAL)
 // Carga las variables de entorno del archivo .env
 require('dotenv').config({ path: './.env' }); 
 
 const express = require('express');
-const cors = require('cors'); 
+// const cors = require('cors'); // Ya no se necesita
 const { Pool } = require('pg');
-const path = require('path'); // <-- CLAVE: Módulo Path
-const bodyParser = require('body-parser'); // <-- 1. IMPORTAR BODY-PARSER
+const path = require('path');
+// const bodyParser = require('body-parser'); // Usaremos el de Express integrado
 
 const app = express();
 const PORT = 3001;
@@ -41,26 +41,40 @@ pool.connect()
     });
 
 // ====================================================
-// CONFIGURACIÓN DE MIDDLEWARE (SECCIÓN ACTUALIZADA)
+// CONFIGURACIÓN DE MIDDLEWARE
 // ====================================================
-const PRODUCTION_API_URL = 'https://davcenter.servequake.com';
 
-const corsOptions = {
-    origin: [PRODUCTION_API_URL, 'https://localhost', 'http://localhost', 'http://127.0.0.1:3000','http://127.0.0.1:5500'], 
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true 
-};
+// Aumentamos el límite del cuerpo de la solicitud para poder subir videos grandes.
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// 2. AÑADIR BODY-PARSER CON LÍMITES AMPLIADOS (ANTES DE CORS)
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
-// 3. APLICAR CORS
-// La librería cors() ya maneja las solicitudes OPTIONS (preflight) automáticamente.
-app.use(cors(corsOptions)); 
+// --- INICIO DE NUESTRO MIDDLEWARE DE CORS MANUAL Y ROBUSTO ---
+app.use((req, res, next) => {
+    // Dominios permitidos. Usamos '*' para ser permisivos durante el desarrollo.
+    // En producción, podrías restringirlo a 'https://davcenter.servequake.com' y 'https://localhost'.
+    res.setHeader('Access-Control-Allow-Origin', '*'); 
 
-// La línea app.options('*', ...) ha sido eliminada.
+    // Métodos HTTP permitidos en las solicitudes.
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+
+    // Cabeceras personalizadas permitidas.
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+    // Permitir el envío de credenciales (importante para CORS).
+    res.setHeader('Access-Control-Allow-Credentials', true);
+
+    // Si la solicitud es un 'OPTIONS' (preflight), respondemos inmediatamente con OK (204)
+    // y no dejamos que la solicitud continúe a las otras rutas.
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+
+    // Si no es una solicitud OPTIONS, pasamos al siguiente middleware.
+    next();
+});
+// --- FIN DE NUESTRO MIDDLEWARE DE CORS MANUAL ---
+
 
 // Servir archivos estáticos (sin cambios)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); 
@@ -70,7 +84,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // ====================================================
 
 async function initDatabase() {
-    // 1. TABLA PRINCIPAL DE USUARIOS (usersapp)
+    // TABLA DE USUARIOS (usersapp)
     const usersQuery = `
         CREATE TABLE IF NOT EXISTS usersapp (
             id SERIAL PRIMARY KEY,
@@ -84,31 +98,32 @@ async function initDatabase() {
         );
     `;
 
-    // 2. TABLA DE PUBLICACIONES (postapp)
+    // TABLA DE PUBLICACIONES (postapp)
     const postQuery = `
         CREATE TABLE IF NOT EXISTS postapp (
             post_id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
             content TEXT,
             image_url VARCHAR(255),
+            video_id VARCHAR(255), -- Columna para el ID de video de YouTube
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
     `;
 
-    // 3. TABLA DE REACCIONES (post_reactionapp)
+    // TABLA DE REACCIONES (post_reactionapp)
     const reactionQuery = `
         CREATE TABLE IF NOT EXISTS post_reactionapp (
             reaction_id SERIAL PRIMARY KEY,
             post_id INTEGER REFERENCES postapp(post_id) ON DELETE CASCADE NOT NULL,
             user_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
-            reaction_type VARCHAR(10) NOT NULL, -- Ej: 'like', 'love', 'haha'
+            reaction_type VARCHAR(10) NOT NULL,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (post_id, user_id)
         );
     `;
 
-    // 4. TABLA DE POSTS GUARDADOS (saved_postsapp)
+    // TABLA DE POSTS GUARDADOS (saved_postsapp)
     const savedQuery = `
         CREATE TABLE IF NOT EXISTS saved_postsapp (
             saved_post_id SERIAL PRIMARY KEY,
@@ -119,7 +134,7 @@ async function initDatabase() {
         );
     `;
 
-    // 5. TABLA DE COMENTARIOS (commentsapp)
+    // TABLA DE COMENTARIOS (commentsapp)
     const commentsQuery = `
         CREATE TABLE IF NOT EXISTS commentsapp (
             comment_id SERIAL PRIMARY KEY,
@@ -132,8 +147,7 @@ async function initDatabase() {
         );
     `;
 
-
-   // 6. TABLA DE SEGUIDORES (followersapp) - NUEVA
+    // TABLA DE SEGUIDORES (followersapp)
     const followersQuery = `
         CREATE TABLE IF NOT EXISTS followersapp (
             follower_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
@@ -158,22 +172,19 @@ async function initDatabase() {
         console.log('✅ Tabla "followersapp" verificada/creada.');
     } catch (err) {
         console.error('❌ Error al inicializar la base de datos:', err.stack);
-        // NO HACEMOS process.exit(1) si es un error al crear, ya que puede que la tabla ya exista.
-        // Si tienes problemas, ejecuta un DROP TABLE si estás en desarrollo.
     }
 }
-initDatabase(); // <-- LLAMAR A LA FUNCIÓN
+initDatabase();
 
 // Rutas
 const authRoutes = require('./api/auth');
 const userRoutes = require('./api/user'); 
-const postRoutes = require('./api/post'); // <-- NUEVA RUTA DE POSTS
-// Pasamos el pool y el JWT_SECRET
+const postRoutes = require('./api/post');
 app.use('/api/auth', authRoutes(pool, JWT_SECRET)); 
 app.use('/api/user', userRoutes(pool, JWT_SECRET)); 
-app.use('/api/posts', postRoutes(pool, JWT_SECRET)); // <-- RUTA BASE PARA PUBLICACIONES
+app.use('/api/posts', postRoutes(pool, JWT_SECRET));
 
-// Manejador de Errores Final (Evita devolver HTML)
+// Manejador de Errores Final
 app.use((err, req, res, next) => {
     console.error(err.stack);
     const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
@@ -183,8 +194,8 @@ app.use((err, req, res, next) => {
     });
 });
 
-
 // Servidor de escucha
+const PRODUCTION_API_URL = 'https://davcenter.servequake.com';
 app.listen(PORT, INTERNAL_HOST, () => {
     console.log(`📡 Servidor de Node.js escuchando INTERNAMENTE en ${INTERNAL_HOST}:${PORT}`);
     console.log(`🌐 Acceso EXTERNO (APP) vía: ${PRODUCTION_API_URL}`);
