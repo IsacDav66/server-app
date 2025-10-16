@@ -2,11 +2,12 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken'); // <-- AÑADIDO
+ const { OAuth2Client } = require('google-auth-library'); // <-- IMPORTAR
 
 // La función principal exportada toma el pool y el JWT_SECRET
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
-    
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID); // <-- CREAR CLIENTE
     // ----------------------------------------------------
     // RUTA DE REGISTRO (/api/auth/register) - CON JWT
     // ----------------------------------------------------
@@ -94,5 +95,47 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-    return router;
-};
+    // ====================================================
+     // === NUEVA RUTA: INICIO DE SESIÓN CON GOOGLE      ===
+     // ====================================================
+     router.post('/google', async (req, res) => {
+         const { token } = req.body;
+         try {
+             const ticket = await client.verifyIdToken({
+                 idToken: token,
+                 audience: process.env.GOOGLE_CLIENT_ID,
+             });
+             const { email, name, picture } = ticket.getPayload();
+
+             let userResult = await pool.query('SELECT * FROM usersapp WHERE email = $1', [email]);
+             let user;
+
+             if (userResult.rows.length > 0) {
+                 user = userResult.rows[0];
+             } else {
+                 const newUserQuery = `
+                     INSERT INTO usersapp (email, username, profile_pic_url)
+                     VALUES ($1, $2, $3)
+                     RETURNING *;
+                 `;
+                 const newUsername = name.replace(/ /g, '').substring(0, 15) + Math.floor(Math.random() * 1000);
+                 const newUserResult = await pool.query(newUserQuery, [email, newUsername, picture]);
+                 user = newUserResult.rows[0];
+             }
+             
+             const appToken = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '30d' });
+
+             res.status(200).json({
+                 success: true,
+                 message: 'Inicio de sesión con Google exitoso.',
+                 token: appToken
+             });
+
+         } catch (error) {
+             console.error("Error en la verificación de Google:", error);
+             res.status(401).json({ success: false, message: 'Token de Google inválido o expirado.' });
+         }
+     });
+
+     return router;
+ };
