@@ -2,7 +2,8 @@
 
 const express = require('express');
 const { protect, softProtect } = require('../middleware/auth');
-const uploadPostMiddleware = require('../middleware/uploadPost');
+const uploadImageMiddleware = require('../middleware/uploadImage');
+const uploadVideoMiddleware = require('../middleware/uploadVideo');
 const processImage = require('../middleware/processImage');
 const path = require('path');
 
@@ -123,7 +124,7 @@ module.exports = (pool, JWT_SECRET) => {
     // ----------------------------------------------------
     router.post('/create', 
         (req, res, next) => protect(req, res, next, JWT_SECRET), 
-        uploadPostMiddleware,
+        uploadImageMiddleware,
         processImage('post'),
         async (req, res) => {
         const { content } = req.body;
@@ -303,7 +304,7 @@ router.get('/user/:userId', (req, res, next) => softProtect(req, res, next, JWT_
     // ====================================================
     router.post('/create-video-post', 
         (req, res, next) => protect(req, res, next, JWT_SECRET), 
-        uploadPostMiddleware, // Reutilizamos el middleware para recibir el archivo
+        uploadVideoMiddleware, // Reutilizamos el middleware para recibir el archivo
         async (req, res) => {
             const { content } = req.body;
             const userId = req.user.userId;
