@@ -262,18 +262,17 @@ module.exports = (pool, JWT_SECRET) => {
     });
 
 // ----------------------------------------------------
-// RUTA: Obtener todas las publicaciones de un usuario específico
+// RUTA: Obtener todas las publicaciones de un usuario específico - VERSIÓN CORREGIDA
 // ----------------------------------------------------
-// CORRECCIÓN: Debe usar softProtect para ser una ruta pública
 router.get('/user/:userId', (req, res, next) => softProtect(req, res, next, JWT_SECRET), async (req, res) => {
     const { userId } = req.params;
     const loggedInUserId = req.user ? req.user.userId : null;
 
     try {
-        // La consulta SQL ya está correcta
         const query = `
             SELECT 
-                p.post_id, p.user_id, p.content, p.image_url, p.created_at, u.username, u.profile_pic_url,
+                p.post_id, p.user_id, p.content, p.image_url, p.created_at, p.video_id, -- <-- ¡LA LÍNEA QUE FALTABA!
+                u.username, u.profile_pic_url,
                 COUNT(DISTINCT r.reaction_id) AS total_likes,
                 COUNT(DISTINCT c.comment_id) AS total_comments,
                 MAX(CASE WHEN r_user.user_id = $2 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
