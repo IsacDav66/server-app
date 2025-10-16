@@ -49,35 +49,17 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 
-// --- INICIO DE NUESTRO MIDDLEWARE DE CORS MANUAL Y ROBUSTO ---
-app.use((req, res, next) => {
-    // Dominios permitidos. Usamos '*' para ser permisivos durante el desarrollo.
-    // En producción, podrías restringirlo a 'https://davcenter.servequake.com' y 'https://localhost'.
-    res.setHeader('Access-Control-Allow-Origin', '*'); 
+// ====================================================
+// CONFIGURACIÓN DE MIDDLEWARE (VERSIÓN FINAL Y SIMPLIFICADA)
+// ====================================================
 
-    // Métodos HTTP permitidos en las solicitudes.
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-
-    // Cabeceras personalizadas permitidas.
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-    // Permitir el envío de credenciales (importante para CORS).
-    res.setHeader('Access-Control-Allow-Credentials', true);
-
-    // Si la solicitud es un 'OPTIONS' (preflight), respondemos inmediatamente con OK (204)
-    // y no dejamos que la solicitud continúe a las otras rutas.
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(204);
-    }
-
-    // Si no es una solicitud OPTIONS, pasamos al siguiente middleware.
-    next();
-});
-// --- FIN DE NUESTRO MIDDLEWARE DE CORS MANUAL ---
-
+// Solo necesitamos el parser para cuerpos de solicitud grandes.
+// Nginx se encargará de todo lo relacionado con CORS.
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Servir archivos estáticos (sin cambios)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); 
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ====================================================
 // INICIALIZACIÓN DE TABLAS
