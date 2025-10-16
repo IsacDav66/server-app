@@ -53,22 +53,17 @@ const corsOptions = {
 };
 
 // 2. AÑADIR BODY-PARSER CON LÍMITES AMPLIADOS (ANTES DE CORS)
-// Aumentamos el límite para poder subir videos grandes. 50mb es un buen punto de partida.
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 // 3. APLICAR CORS
+// La librería cors() ya maneja las solicitudes OPTIONS (preflight) automáticamente.
 app.use(cors(corsOptions)); 
 
-// 4. AÑADIR UN MANEJADOR EXPLÍCITO PARA LAS SOLICITUDES OPTIONS
-// Esto actúa como un seguro para garantizar que las preflight requests siempre funcionen.
-app.options('*', cors(corsOptions));
-
-// Middleware para procesar JSON (ya no es necesario si usas bodyParser)
-// app.use(express.json()); // <-- PUEDES COMENTAR O ELIMINAR ESTA LÍNEA
+// La línea app.options('*', ...) ha sido eliminada.
 
 // Servir archivos estáticos (sin cambios)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));  
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); 
 
 // ====================================================
 // INICIALIZACIÓN DE TABLAS
