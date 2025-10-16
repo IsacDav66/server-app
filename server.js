@@ -6,6 +6,7 @@ const express = require('express');
 const cors = require('cors'); 
 const { Pool } = require('pg');
 const path = require('path'); // <-- CLAVE: Módulo Path
+const bodyParser = require('body-parser'); // <-- 1. IMPORTAR BODY-PARSER
 
 const app = express();
 const PORT = 3001;
@@ -40,7 +41,7 @@ pool.connect()
     });
 
 // ====================================================
-// CONFIGURACIÓN CORS
+// CONFIGURACIÓN DE MIDDLEWARE (SECCIÓN ACTUALIZADA)
 // ====================================================
 const PRODUCTION_API_URL = 'https://davcenter.servequake.com';
 
@@ -51,13 +52,23 @@ const corsOptions = {
     credentials: true 
 };
 
+// 2. AÑADIR BODY-PARSER CON LÍMITES AMPLIADOS (ANTES DE CORS)
+// Aumentamos el límite para poder subir videos grandes. 50mb es un buen punto de partida.
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+
+// 3. APLICAR CORS
 app.use(cors(corsOptions)); 
 
-// Middleware para procesar JSON
-app.use(express.json());
+// 4. AÑADIR UN MANEJADOR EXPLÍCITO PARA LAS SOLICITUDES OPTIONS
+// Esto actúa como un seguro para garantizar que las preflight requests siempre funcionen.
+app.options('*', cors(corsOptions));
 
-// Servir archivos estáticos (las imágenes de perfil y posts)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); 
+// Middleware para procesar JSON (ya no es necesario si usas bodyParser)
+// app.use(express.json()); // <-- PUEDES COMENTAR O ELIMINAR ESTA LÍNEA
+
+// Servir archivos estáticos (sin cambios)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));  
 
 // ====================================================
 // INICIALIZACIÓN DE TABLAS
