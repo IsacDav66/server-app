@@ -6,6 +6,11 @@ const uploadPostMiddleware = require('../middleware/uploadPost');
 const processImage = require('../middleware/processImage');
 const path = require('path');
 
+// Al principio del archivo, junto a los otros 'require'
+const { google } = require('googleapis');
+const { Readable } = require('stream');
+
+
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
 
@@ -292,6 +297,73 @@ router.get('/user/:userId', (req, res, next) => softProtect(req, res, next, JWT_
 
 
    
+
+// ====================================================
+    // === NUEVA RUTA: CREAR POST CON VIDEO (YOUTUBE)   ===
+    // ====================================================
+    router.post('/create-video-post', 
+        (req, res, next) => protect(req, res, next, JWT_SECRET), 
+        uploadPostMiddleware, // Reutilizamos el middleware para recibir el archivo
+        async (req, res) => {
+            const { content } = req.body;
+            const userId = req.user.userId;
+
+            if (!req.file) {
+                return res.status(400).json({ success: false, message: 'No se ha subido ningún archivo de video.' });
+            }
+
+            try {
+                // 1. Autenticar con Google usando el refresh token
+                const oauth2Client = new google.auth.OAuth2(
+                    process.env.YOUTUBE_CLIENT_ID,
+                    process.env.YOUTUBE_CLIENT_SECRET,
+                    process.env.YOUTUBE_REDIRECT_URI
+                );
+                oauth2Client.setCredentials({ refresh_token: process.env.YOUTUBE_REFRESH_TOKEN });
+                
+                const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+
+                // 2. Subir el video a YouTube
+                const response = await youtube.videos.insert({
+                    part: 'snippet,status',
+                    requestBody: {
+                        snippet: {
+                            title: `Video de Omlet Arcade - Usuario #${userId}`,
+                            description: content || 'Video subido desde Omlet Web Arcade.',
+                        },
+                        status: {
+                            privacyStatus: 'unlisted', // 'unlisted' es ideal para que no aparezca en tu canal público
+                        },
+                    },
+                    media: {
+                        body: Readable.from(req.file.buffer), // Convertimos el buffer del video a un stream
+                    },
+                });
+
+                const videoId = response.data.id;
+                if (!videoId) {
+                    throw new Error('La API de YouTube no devolvió un ID de video.');
+                }
+
+                // 3. Guardar el post en nuestra base de datos con el videoId
+                const query = `
+                    INSERT INTO postapp (user_id, content, video_id) 
+                    VALUES ($1, $2, $3) RETURNING post_id;
+                `;
+                const result = await pool.query(query, [userId, content, videoId]);
+                
+                res.status(201).json({ 
+                    success: true, 
+                    message: 'Video publicado con éxito.', 
+                    postId: result.rows[0].post_id 
+                });
+
+            } catch (error) {
+                console.error('❌ Error al subir video a YouTube o guardar el post:', error);
+                res.status(500).json({ success: false, message: 'Error interno del servidor al procesar el video.' });
+            }
+        }
+    );
 
     return router;
 };
