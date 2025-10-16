@@ -16,14 +16,14 @@ module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
 
     // ----------------------------------------------------
-    // RUTA: Obtener el Feed de Publicaciones (/api/posts)
+    // RUTA: Obtener el Feed de Publicaciones (/api/posts) - VERSIÓN CORREGIDA
     // ----------------------------------------------------
     router.get('/', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const currentUserId = req.user.userId;
         try {
             const query = `
                 SELECT 
-                    p.post_id, p.user_id, p.content, p.image_url, p.created_at,
+                    p.post_id, p.user_id, p.content, p.image_url, p.created_at, p.video_id,
                     u.username, u.profile_pic_url,
                     COUNT(DISTINCT r_all.reaction_id) AS total_likes,
                     MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
@@ -35,7 +35,7 @@ module.exports = (pool, JWT_SECRET) => {
                 LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1 AND r_user.reaction_type = 'like'
                 LEFT JOIN commentsapp c ON p.post_id = c.post_id
                 LEFT JOIN saved_postsapp s ON p.post_id = s.post_id AND s.user_id = $1
-                GROUP BY p.post_id, p.user_id, u.username, u.profile_pic_url -- <-- CORREGIDO
+                GROUP BY p.post_id, u.username, u.profile_pic_url -- <-- ¡ESTA ES LA LÍNEA CORREGIDA!
                 ORDER BY p.created_at DESC;
             `;
             const result = await pool.query(query, [currentUserId]); 
