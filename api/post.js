@@ -365,5 +365,43 @@ router.get('/user/:userId', (req, res, next) => softProtect(req, res, next, JWT_
         }
     );
 
-    return router;
+    // ====================================================
+// === NUEVA RUTA: ELIMINAR UNA PUBLICACIÓN         ===
+// ====================================================
+router.delete('/:postId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    const postId = parseInt(req.params.postId);
+    const userId = req.user.userId; // ID del usuario que hace la solicitud
+
+    if (isNaN(postId)) {
+        return res.status(400).json({ success: false, message: 'ID de publicación inválido.' });
+    }
+
+    try {
+        // ¡LA CLÁUSULA DE SEGURIDAD MÁS IMPORTANTE!
+        // La consulta DELETE solo tendrá éxito si el post_id coincide Y el user_id
+        // del post coincide con el ID del usuario que está haciendo la solicitud.
+        const deleteQuery = `
+            DELETE FROM postapp 
+            WHERE post_id = $1 AND user_id = $2;
+        `;
+        
+        const result = await pool.query(deleteQuery, [postId, userId]);
+
+        // Si result.rowCount es 0, significa que no se eliminó ninguna fila.
+        // Esto ocurre si el post no existe O si el usuario no es el propietario.
+        if (result.rowCount === 0) {
+            return res.status(403).json({ success: false, message: 'No tienes permiso para eliminar esta publicación o no existe.' });
+        }
+
+        // Si se eliminó una fila, la operación fue exitosa.
+        res.status(200).json({ success: true, message: 'Publicación eliminada correctamente.' });
+
+    } catch (error) {
+        console.error('❌ Error al eliminar la publicación:', error.stack);
+        res.status(500).json({ success: false, message: 'Error interno del servidor al eliminar la publicación.' });
+    }
+});
+
+
+return router;
 };
