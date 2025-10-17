@@ -51,37 +51,37 @@ module.exports = (pool, JWT_SECRET) => {
     // === INICIO DE LA CORRECCIÓN DE ORDEN ===
     // ==========================================================
 
-    // RUTA 2: Obtener los posts guardados (Específica) -> AHORA VA ANTES DE /:postId
     // ----------------------------------------------------
-    // RUTA: Obtener los posts guardados por el usuario logueado
-    // ----------------------------------------------------
-    router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const loggedInUserId = req.user.userId;
-        try {
-            const query = `
-                SELECT 
-                    p.post_id, p.user_id, p.content, p.image_url, p.created_at, u.username, u.profile_pic_url,
-                    COUNT(DISTINCT r.reaction_id) AS total_likes,
-                    COUNT(DISTINCT c.comment_id) AS total_comments,
-                    MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
-                    TRUE AS is_saved_by_user
-                FROM postapp p
-                JOIN saved_postsapp s ON p.post_id = s.post_id
-                JOIN usersapp u ON p.user_id = u.id
-                LEFT JOIN post_reactionapp r ON p.post_id = r.post_id AND r.reaction_type = 'like'
-                LEFT JOIN commentsapp c ON p.post_id = c.post_id
-                LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1
-                WHERE s.user_id = $1
-                GROUP BY p.post_id, p.user_id, u.username, u.profile_pic_url
-                ORDER BY MAX(s.created_at) DESC; -- <-- CORRECCIÓN: Usar una función de agregación
-            `;
-            const result = await pool.query(query, [loggedInUserId]);
-            res.status(200).json({ success: true, posts: result.rows });
-        } catch (error) {
-            console.error('❌ Error al cargar los posts guardados:', error.stack);
-            res.status(500).json({ success: false, message: 'Error al cargar los posts guardados.' });
-        }
-    });
+// RUTA: Obtener los posts guardados por el usuario - VERSIÓN CORREGIDA
+// ----------------------------------------------------
+router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    const loggedInUserId = req.user.userId;
+    try {
+        const query = `
+            SELECT 
+                p.post_id, p.user_id, p.content, p.image_url, p.created_at, p.video_id, -- <-- ¡LA LÍNEA QUE FALTABA!
+                u.username, u.profile_pic_url,
+                COUNT(DISTINCT r.reaction_id) AS total_likes,
+                COUNT(DISTINCT c.comment_id) AS total_comments,
+                MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
+                TRUE AS is_saved_by_user -- Si está en esta lista, siempre está guardado
+            FROM postapp p
+            JOIN saved_postsapp s ON p.post_id = s.post_id
+            JOIN usersapp u ON p.user_id = u.id
+            LEFT JOIN post_reactionapp r ON p.post_id = r.post_id AND r.reaction_type = 'like'
+            LEFT JOIN commentsapp c ON p.post_id = c.post_id
+            LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1
+            WHERE s.user_id = $1
+            GROUP BY p.post_id, u.username, u.profile_pic_url -- Agrupamos por la clave primaria del post y los datos del usuario
+            ORDER BY MAX(s.created_at) DESC;
+        `;
+        const result = await pool.query(query, [loggedInUserId]);
+        res.status(200).json({ success: true, posts: result.rows });
+    } catch (error) {
+        console.error('❌ Error al cargar los posts guardados:', error.stack);
+        res.status(500).json({ success: false, message: 'Error al cargar los posts guardados.' });
+    }
+});
 
     // ----------------------------------------------------
     // RUTA: Obtener UN solo Post (/api/posts/:postId)
