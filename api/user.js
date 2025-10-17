@@ -233,5 +233,41 @@ router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT
         }
     });
 
+    // ====================================================
+    // === NUEVA RUTA: BÚSQUEDA DE USUARIOS             ===
+    // ====================================================
+    router.get('/search', async (req, res) => {
+        // Obtenemos el término de búsqueda de la query string (ej: ?q=Isac)
+        const searchTerm = req.query.q;
+
+        // Si no hay término de búsqueda, devolvemos un array vacío.
+        if (!searchTerm || searchTerm.trim() === '') {
+            return res.status(200).json({ success: true, users: [] });
+        }
+
+        try {
+            // Preparamos el término de búsqueda para una consulta LIKE, insensible a mayúsculas/minúsculas.
+            // Los '%' son comodines que significan "cualquier cosa".
+            const searchQuery = `%${searchTerm}%`;
+
+            // Consulta SQL segura usando parámetros ($1) para prevenir inyección SQL.
+            const query = `
+                SELECT id, username, profile_pic_url 
+                FROM usersapp 
+                WHERE username ILIKE $1 
+                LIMIT 10;
+            `;
+            
+            const result = await pool.query(query, [searchQuery]);
+
+            res.status(200).json({ success: true, users: result.rows });
+
+        } catch (error) {
+            console.error('❌ Error en la búsqueda de usuarios:', error.stack);
+            res.status(500).json({ success: false, message: 'Error interno del servidor al buscar usuarios.' });
+        }
+    });
+
+
     return router;
 };
