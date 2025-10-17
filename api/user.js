@@ -31,21 +31,26 @@ module.exports = (pool, JWT_SECRET) => {
     });
 
     // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario
-    router.get('/profile/:userId', async (req, res) => {
+    // REEMPLAZA tu ruta /profile/:userId con esta
+    router.get('/profile/:userId', (req, res, next) => softProtect(req, res, next, JWT_SECRET), async (req, res) => {
         const userId = parseInt(req.params.userId, 10);
+        const loggedInUserId = req.user ? req.user.userId : null; // Obtenemos el ID del visitante
+
         if (isNaN(userId)) return res.status(400).json({ success: false, message: 'El ID de usuario no es válido.' });
 
         try {
             const query = `
                 SELECT 
-                    u.id, u.username, u.profile_pic_url, u.bio, u.cover_pic_url, u.bio_bg_url, -- <-- 2. AÑADIR cover_pic_url
+                    u.id, u.username, u.profile_pic_url, u.bio, u.cover_pic_url, u.bio_bg_url,
                     (SELECT COUNT(*) FROM postapp WHERE user_id = u.id) AS post_count,
                     (SELECT COUNT(*) FROM followersapp WHERE following_id = u.id) AS followers_count,
-                    (SELECT COUNT(*) FROM followersapp WHERE follower_id = u.id) AS following_count
+                    (SELECT COUNT(*) FROM followersapp WHERE follower_id = u.id) AS following_count,
+                    -- ¡LA LÍNEA CLAVE! Comprueba si el usuario logueado sigue a este perfil
+                    EXISTS(SELECT 1 FROM followersapp WHERE follower_id = $2 AND following_id = $1) AS is_followed_by_user
                 FROM usersapp u
                 WHERE u.id = $1;
             `;
-            const result = await pool.query(query, [userId]);
+            const result = await pool.query(query, [userId, loggedInUserId]);
             if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Perfil no encontrado.' });
             
             res.status(200).json({ success: true, data: result.rows[0] });
@@ -268,6 +273,37 @@ router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT
         }
     });
 
+    // ====================================================
+// === NUEVA RUTA: SEGUIR / DEJAR DE SEGUIR         ===
+// ====================================================
+router.post('/follow/:userId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    const followerId = req.user.userId; // El que está logueado
+    const followingId = parseInt(req.params.userId, 10); // Al que se quiere seguir
 
+    if (isNaN(followingId) || followerId === followingId) {
+        return res.status(400).json({ success: false, message: 'ID de usuario inválido o no puedes seguirte a ti mismo.' });
+    }
+
+    try {
+        // Intentamos eliminar la relación primero (dejar de seguir)
+        const deleteQuery = 'DELETE FROM followersapp WHERE follower_id = $1 AND following_id = $2';
+        const deleteResult = await pool.query(deleteQuery, [followerId, followingId]);
+
+        // Si se eliminó una fila, significa que ya lo seguía y ahora no.
+        if (deleteResult.rowCount > 0) {
+            return res.status(200).json({ success: true, action: 'unfollowed' });
+        }
+
+        // Si no se eliminó nada, significa que no lo seguía. Lo insertamos (seguir).
+        const insertQuery = 'INSERT INTO followersapp (follower_id, following_id) VALUES ($1, $2)';
+        await pool.query(insertQuery, [followerId, followingId]);
+
+        return res.status(201).json({ success: true, action: 'followed' });
+
+    } catch (error) {
+        console.error('❌ Error al procesar la acción de seguir:', error.stack);
+        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+    }
+});
     return router;
 };
