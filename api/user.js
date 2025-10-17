@@ -305,5 +305,66 @@ router.post('/follow/:userId', (req, res, next) => protect(req, res, next, JWT_S
         res.status(500).json({ success: false, message: 'Error interno del servidor.' });
     }
 });
-    return router;
+
+
+
+  // =============================================================
+// === NUEVAS RUTAS: OBTENER LISTAS DE SEGUIDORES / SEGUIDOS ===
+// =============================================================
+
+// Ruta para obtener la lista de SEGUIDORES de un usuario
+router.get('/:userId/followers', (req, res, next) => softProtect(req, res, next, JWT_SECRET), async (req, res) => {
+    const targetUserId = parseInt(req.params.userId);
+    const loggedInUserId = req.user ? req.user.userId : null;
+
+    if (isNaN(targetUserId)) return res.status(400).json({ success: false, message: 'ID de usuario inválido.' });
+
+    try {
+        const query = `
+            SELECT 
+                u.id, 
+                u.username, 
+                u.profile_pic_url,
+                -- Comprueba si el usuario logueado sigue a esta persona de la lista
+                EXISTS(SELECT 1 FROM followersapp WHERE follower_id = $2 AND following_id = u.id) AS is_followed_by_user
+            FROM usersapp u
+            JOIN followersapp f ON u.id = f.follower_id
+            WHERE f.following_id = $1;
+        `;
+        const result = await pool.query(query, [targetUserId, loggedInUserId]);
+        res.status(200).json({ success: true, users: result.rows });
+    } catch (error) {
+        console.error('Error al obtener seguidores:', error.stack);
+        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+    }
+});
+
+// Ruta para obtener la lista de personas que un usuario SIGUE (following)
+router.get('/:userId/following', (req, res, next) => softProtect(req, res, next, JWT_SECRET), async (req, res) => {
+    const targetUserId = parseInt(req.params.userId);
+    const loggedInUserId = req.user ? req.user.userId : null;
+
+    if (isNaN(targetUserId)) return res.status(400).json({ success: false, message: 'ID de usuario inválido.' });
+    
+    try {
+        const query = `
+            SELECT 
+                u.id, 
+                u.username, 
+                u.profile_pic_url,
+                -- Comprueba si el usuario logueado sigue a esta persona de la lista
+                EXISTS(SELECT 1 FROM followersapp WHERE follower_id = $2 AND following_id = u.id) AS is_followed_by_user
+            FROM usersapp u
+            JOIN followersapp f ON u.id = f.following_id
+            WHERE f.follower_id = $1;
+        `;
+        const result = await pool.query(query, [targetUserId, loggedInUserId]);
+        res.status(200).json({ success: true, users: result.rows });
+    } catch (error) {
+        console.error('Error al obtener seguidos:', error.stack);
+        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+    }
+});
+
+return router;
 };
