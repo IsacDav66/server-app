@@ -84,41 +84,40 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
 });
 
     // ----------------------------------------------------
-    // RUTA: Obtener UN solo Post (/api/posts/:postId)
-    // ----------------------------------------------------
-     router.get('/:postId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const postId = parseInt(req.params.postId);
-        const currentUserId = req.user.userId;
-        if (isNaN(postId)) return res.status(400).json({ success: false, message: 'ID de publicación inválido.' });
+// RUTA: Obtener UN solo Post (/api/posts/:postId) - VERSIÓN CORREGIDA
+// ----------------------------------------------------
+ router.get('/:postId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    const postId = parseInt(req.params.postId);
+    const currentUserId = req.user.userId;
+    if (isNaN(postId)) return res.status(400).json({ success: false, message: 'ID de publicación inválido.' });
 
-        try {
-            const query = `
-                SELECT 
-                    p.post_id, p.user_id, p.content, p.image_url, p.created_at,
-                    u.username, u.profile_pic_url,
-                    COUNT(DISTINCT r_all.reaction_id) AS total_likes,
-                    COUNT(DISTINCT c_all.comment_id) AS total_comments,
-                    MAX(CASE WHEN r_user.user_id = $2 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
-                    MAX(CASE WHEN s.user_id = $2 THEN 1 ELSE 0 END)::boolean AS is_saved_by_user
-                FROM postapp p
-                JOIN usersapp u ON p.user_id = u.id
-                LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
-                LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $2 AND r_user.reaction_type = 'like'
-                LEFT JOIN commentsapp c_all ON p.post_id = c_all.post_id
-                LEFT JOIN saved_postsapp s ON p.post_id = s.post_id AND s.user_id = $2
-                WHERE p.post_id = $1
-                GROUP BY p.post_id, p.user_id, u.username, u.profile_pic_url; -- <-- CORREGIDO
-            `;
-            const result = await pool.query(query, [postId, currentUserId]);
-            if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Publicación no encontrada.' });
-            
-            res.status(200).json({ success: true, post: result.rows[0] });
-        } catch (error) {
-            console.error('❌ Error al obtener post único:', error.stack);
-            res.status(500).json({ success: false, message: 'Error interno del servidor al cargar la publicación.' });
-        }
-    });
-
+    try {
+        const query = `
+            SELECT 
+                p.post_id, p.user_id, p.content, p.image_url, p.created_at, p.video_id, -- <-- ¡LA LÍNEA QUE FALTABA!
+                u.username, u.profile_pic_url,
+                COUNT(DISTINCT r_all.reaction_id) AS total_likes,
+                COUNT(DISTINCT c_all.comment_id) AS total_comments,
+                MAX(CASE WHEN r_user.user_id = $2 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
+                MAX(CASE WHEN s.user_id = $2 THEN 1 ELSE 0 END)::boolean AS is_saved_by_user
+            FROM postapp p
+            JOIN usersapp u ON p.user_id = u.id
+            LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
+            LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $2 AND r_user.reaction_type = 'like'
+            LEFT JOIN commentsapp c_all ON p.post_id = c_all.post_id
+            LEFT JOIN saved_postsapp s ON p.post_id = s.post_id AND s.user_id = $2
+            WHERE p.post_id = $1
+            GROUP BY p.post_id, u.username, u.profile_pic_url; -- Agrupamos por la clave primaria y datos del usuario
+        `;
+        const result = await pool.query(query, [postId, currentUserId]);
+        if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Publicación no encontrada.' });
+        
+        res.status(200).json({ success: true, post: result.rows[0] });
+    } catch (error) {
+        console.error('❌ Error al obtener post único:', error.stack);
+        res.status(500).json({ success: false, message: 'Error interno del servidor al cargar la publicación.' });
+    }
+});
     // ----------------------------------------------------
     // RUTA: Crear nueva publicación (/api/posts/create)
     // ----------------------------------------------------
