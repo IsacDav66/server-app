@@ -26,9 +26,11 @@ const io = new Server(server, {
     cors: {
         origin: "*",
         methods: ["GET", "POST"]
-    }
-    // La opción 'path' ha sido eliminada. Usará el path por defecto: /socket.io/
+    },
+    // ¡LA LÍNEA CLAVE!
+    path: "/app/socket.io/"
 });
+
 
 // ====================================================
 // CONFIGURACIÓN DE BASE DE DATOS (POSTGRESQL)
