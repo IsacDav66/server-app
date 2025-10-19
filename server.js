@@ -24,9 +24,11 @@ const server = http.createServer(app);
 // --- CONFIGURA SOCKET.IO CON CORS ---
 const io = new Server(server, {
     cors: {
-        origin: "*", // En producción, deberías restringirlo a tu dominio
+        origin: "*",
         methods: ["GET", "POST"]
-    }
+    },
+    // ¡LA LÍNEA CLAVE!
+    path: "/app/socket.io/"
 });
 
 
