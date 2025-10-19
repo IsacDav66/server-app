@@ -7,6 +7,9 @@ const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
 // const bodyParser = require('body-parser'); // Usaremos el de Express integrado
+const http = require('http'); // <-- AÑADE ESTA LÍNEA
+const { Server } = require("socket.io"); // <-- AÑADE ESTA LÍNEA
+
 
 const app = express();
 const PORT = 3001;
@@ -14,6 +17,18 @@ const INTERNAL_HOST = '0.0.0.0';
 
 // CLAVE SECRETA DE JWT (¡USAR .ENV EN PRODUCCIÓN!)
 const JWT_SECRET = 'TuSuperClaveSecretaJWT9876543210'; 
+
+// --- CREA UN SERVIDOR HTTP Y ENVUELVE TU APP DE EXPRESS ---
+const server = http.createServer(app);
+
+// --- CONFIGURA SOCKET.IO CON CORS ---
+const io = new Server(server, {
+    cors: {
+        origin: "*", // En producción, deberías restringirlo a tu dominio
+        methods: ["GET", "POST"]
+    }
+});
+
 
 // ====================================================
 // CONFIGURACIÓN DE BASE DE DATOS (POSTGRESQL)
@@ -60,6 +75,43 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Servir archivos estáticos (sin cambios)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+
+
+// --- LÓGICA DE WEBSOCKETS (Pega esto después de tus middlewares) ---
+io.on('connection', (socket) => {
+    console.log('🔌 Un usuario se ha conectado:', socket.id);
+
+    // El cliente se une a una sala privada al conectarse
+    socket.on('join_room', (roomName) => {
+        socket.join(roomName);
+        console.log(`Socket ${socket.id} se unió a la sala: ${roomName}`);
+    });
+
+    // Escucha los mensajes entrantes del cliente
+    socket.on('send_message', async (data) => {
+        const { senderId, receiverId, content, roomName } = data;
+
+        try {
+            // 1. Guardar el mensaje en la base de datos
+            const query = 'INSERT INTO messagesapp (sender_id, receiver_id, content) VALUES ($1, $2, $3) RETURNING *';
+            const result = await pool.query(query, [senderId, receiverId, content]);
+            const savedMessage = result.rows[0];
+
+            // 2. Enviar el mensaje guardado al otro usuario en la sala
+            socket.to(roomName).emit('receive_message', savedMessage);
+        } catch (error) {
+            console.error("Error al guardar o enviar el mensaje:", error);
+        }
+    });
+
+    socket.on('disconnect', () => {
+        console.log('🔌 Un usuario se ha desconectado:', socket.id);
+    });
+});
+
+
+
 
 // ====================================================
 // INICIALIZACIÓN DE TABLAS
@@ -166,6 +218,9 @@ app.use('/api/auth', authRoutes(pool, JWT_SECRET));
 app.use('/api/user', userRoutes(pool, JWT_SECRET)); 
 app.use('/api/posts', postRoutes(pool, JWT_SECRET));
 
+const chatRoutes = require('./api/chat'); // <-- AÑADE
+app.use('/api/chat', chatRoutes(pool, JWT_SECRET)); // <-- AÑADE
+
 // Manejador de Errores Final
 app.use((err, req, res, next) => {
     console.error(err.stack);
@@ -178,7 +233,7 @@ app.use((err, req, res, next) => {
 
 // Servidor de escucha
 const PRODUCTION_API_URL = 'https://davcenter.servequake.com';
-app.listen(PORT, INTERNAL_HOST, () => {
+server.listen(PORT, INTERNAL_HOST, () => {
     console.log(`📡 Servidor de Node.js escuchando INTERNAMENTE en ${INTERNAL_HOST}:${PORT}`);
     console.log(`🌐 Acceso EXTERNO (APP) vía: ${PRODUCTION_API_URL}`);
 });

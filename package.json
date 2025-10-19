@@ -23,7 +23,8 @@
     "multer": "^2.0.2",
     "pg": "^8.16.3",
     "sanitize-html": "^2.17.0",
-    "sharp": "^0.34.4"
+    "sharp": "^0.34.4",
+    "socket.io": "^4.8.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
