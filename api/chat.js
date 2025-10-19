@@ -15,10 +15,17 @@ module.exports = (pool, JWT_SECRET) => {
         }
 
         try {
+            // --- CONSULTA ACTUALIZADA CON LEFT JOIN ---
             const query = `
-                SELECT * FROM messagesapp
-                WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1)
-                ORDER BY created_at ASC;
+                SELECT 
+                    m.message_id, m.sender_id, m.receiver_id, m.content, m.created_at, m.parent_message_id,
+                    p.content as parent_content,
+                    pu.username as parent_username
+                FROM messagesapp AS m
+                LEFT JOIN messagesapp AS p ON m.parent_message_id = p.message_id
+                LEFT JOIN usersapp AS pu ON p.sender_id = pu.id
+                WHERE (m.sender_id = $1 AND m.receiver_id = $2) OR (m.sender_id = $2 AND m.receiver_id = $1)
+                ORDER BY m.created_at ASC;
             `;
             const result = await pool.query(query, [loggedInUserId, otherUserId]);
             res.status(200).json({ success: true, messages: result.rows });
