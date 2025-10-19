@@ -2,7 +2,8 @@
 const express = require('express');
 const { protect } = require('../middleware/auth');
 
-module.exports = (pool, JWT_SECRET) => {
+// Aceptamos 'io' como un nuevo parámetro
+module.exports = (pool, JWT_SECRET, io) => {
     const router = express.Router();
 
     // Ruta para obtener el historial de mensajes entre dos usuarios
@@ -40,6 +41,7 @@ module.exports = (pool, JWT_SECRET) => {
     // ====================================================
     // === NUEVA RUTA: ELIMINAR UN MENSAJE              ===
     // ====================================================
+    // REEMPLAZA tu ruta DELETE con esta
     router.delete('/messages/:messageId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const loggedInUserId = req.user.userId;
         const messageId = parseInt(req.params.messageId);
@@ -49,15 +51,28 @@ module.exports = (pool, JWT_SECRET) => {
         }
 
         try {
-            // Consulta segura: solo borra si el ID del mensaje coincide Y el que lo envió es el usuario logueado.
-            const query = 'DELETE FROM messagesapp WHERE message_id = $1 AND sender_id = $2';
-            const result = await pool.query(query, [messageId, loggedInUserId]);
+            // 1. PRIMERO, verificamos la propiedad y obtenemos los IDs para la sala de socket
+            const ownershipQuery = 'SELECT sender_id, receiver_id FROM messagesapp WHERE message_id = $1';
+            const ownershipResult = await pool.query(ownershipQuery, [messageId]);
 
-            if (result.rowCount === 0) {
-                // No se borró nada, probablemente porque el usuario no es el dueño del mensaje.
+            if (ownershipResult.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Mensaje no encontrado.' });
+            }
+
+            const message = ownershipResult.rows[0];
+            if (message.sender_id !== loggedInUserId) {
                 return res.status(403).json({ success: false, message: 'No tienes permiso para eliminar este mensaje.' });
             }
 
+            // 2. AHORA, eliminamos el mensaje
+            const deleteQuery = 'DELETE FROM messagesapp WHERE message_id = $1';
+            await pool.query(deleteQuery, [messageId]);
+
+            // 3. ¡LA CLAVE! Emitimos un evento a la sala de chat
+            const roomName = [message.sender_id, message.receiver_id].sort().join('-');
+            io.to(roomName).emit('message_deleted', { messageId: messageId });
+            
+            // 4. Respondemos a la petición original
             res.status(200).json({ success: true, message: 'Mensaje eliminado.' });
         } catch (error) {
             console.error("Error al eliminar el mensaje:", error);

@@ -246,7 +246,7 @@ app.use('/api/user', userRoutes(pool, JWT_SECRET));
 app.use('/api/posts', postRoutes(pool, JWT_SECRET));
 
 const chatRoutes = require('./api/chat'); // <-- AÑADE
-app.use('/api/chat', chatRoutes(pool, JWT_SECRET)); // <-- AÑADE
+app.use('/api/chat', chatRoutes(pool, JWT_SECRET, io)); // <-- Pasamos 'io' como argumento
 
 // Manejador de Errores Final
 app.use((err, req, res, next) => {
