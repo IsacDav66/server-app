@@ -92,22 +92,48 @@ io.on('connection', (socket) => {
 
     // Escucha los mensajes entrantes del cliente
     socket.on('send_message', async (data) => {
-        // --- INICIO DE LA CORRECCIÓN ---
-        // El cliente envía 'message_id' como el ID temporal. Lo capturamos.
-        // También nos aseguramos de usar snake_case para las otras variables.
-        const { sender_id, receiver_id, content, roomName, parent_message_id, message_id } = data;
-        const tempId = message_id; // Asignamos el message_id temporal a la variable tempId
-        // --- FIN DE LA CORRECCIÓN ---
+        // Obtenemos los datos del cliente, incluyendo el ID temporal
+        const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId } = data;
 
         try {
-            const query = 'INSERT INTO messagesapp (sender_id, receiver_id, content, parent_message_id) VALUES ($1, $2, $3, $4) RETURNING *';
-            const result = await pool.query(query, [sender_id, receiver_id, content, parent_message_id || null]);
-            const savedMessage = result.rows[0];
+            // 1. Guardar el nuevo mensaje en la base de datos
+            const insertQuery = 'INSERT INTO messagesapp (sender_id, receiver_id, content, parent_message_id) VALUES ($1, $2, $3, $4) RETURNING *';
+            const insertResult = await pool.query(insertQuery, [sender_id, receiver_id, content, parent_message_id || null]);
+            let savedMessage = insertResult.rows[0]; // Usamos 'let' para poder modificar el objeto
 
+            // =========================================================
+            // === INICIO DE LA LÓGICA DE "ENRIQUECIMIENTO" ===
+            // =========================================================
+            // 2. Si el mensaje que acabamos de guardar es una respuesta...
+            if (savedMessage.parent_message_id) {
+                // ...hacemos una consulta extra para obtener los datos del mensaje original.
+                const parentQuery = `
+                    SELECT 
+                        p.content as parent_content,
+                        pu.username as parent_username
+                    FROM messagesapp AS p
+                    JOIN usersapp AS pu ON p.sender_id = pu.id
+                    WHERE p.message_id = $1;
+                `;
+                const parentResult = await pool.query(parentQuery, [savedMessage.parent_message_id]);
+                
+                if (parentResult.rows.length > 0) {
+                    // Añadimos las propiedades 'parent_content' y 'parent_username'
+                    // al objeto 'savedMessage' antes de enviarlo.
+                    savedMessage.parent_content = parentResult.rows[0].parent_content;
+                    savedMessage.parent_username = parentResult.rows[0].parent_username;
+                }
+            }
+            // =========================================================
+            // === FIN DE LA LÓGICA DE "ENRIQUECIMIENTO" ===
+            // =========================================================
+
+            // 3. Emitimos el mensaje (ahora "enriquecido") al otro usuario en la sala
             socket.to(roomName).emit('receive_message', savedMessage);
 
+            // 4. Enviamos la confirmación al emisor original con el mismo objeto enriquecido
             socket.emit('message_confirmed', {
-                tempId: tempId, // Ahora tempId tiene el valor correcto
+                tempId: tempId,
                 realMessage: savedMessage
             });
 
