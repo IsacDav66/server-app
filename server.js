@@ -26,11 +26,9 @@ const io = new Server(server, {
     cors: {
         origin: "*",
         methods: ["GET", "POST"]
-    },
-    // ¡LA LÍNEA CLAVE!
-    path: "/app/socket.io/"
+    }
+    // La opción 'path' ha sido eliminada. Usará el path por defecto: /socket.io/
 });
-
 
 // ====================================================
 // CONFIGURACIÓN DE BASE DE DATOS (POSTGRESQL)
@@ -193,6 +191,18 @@ async function initDatabase() {
         );
     `;
 
+    // --- AÑADE ESTE BLOQUE COMPLETO ---
+    const messagesQuery = `
+        CREATE TABLE IF NOT EXISTS messagesapp (
+            message_id SERIAL PRIMARY KEY,
+            sender_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
+            receiver_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
+    // --- FIN DEL BLOQUE A AÑADIR ---
+
     try {
         await pool.query(usersQuery);
         console.log('✅ Tabla "usersapp" verificada/creada.');
@@ -206,6 +216,9 @@ async function initDatabase() {
         console.log('✅ Tabla "commentsapp" verificada/creada.');
         await pool.query(followersQuery);
         console.log('✅ Tabla "followersapp" verificada/creada.');
+        // --- AÑADE ESTA LÍNEA ---
+        await pool.query(messagesQuery);
+        console.log('✅ Tabla "messagesapp" verificada/creada.');
     } catch (err) {
         console.error('❌ Error al inicializar la base de datos:', err.stack);
     }
