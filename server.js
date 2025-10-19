@@ -92,39 +92,33 @@ io.on('connection', (socket) => {
 
     // Escucha los mensajes entrantes del cliente
     socket.on('send_message', async (data) => {
-        const { sender_id, receiver_id, content, roomName, parent_message_id } = data;
+        // Obtenemos el ID temporal que nos envía el cliente
+        const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId } = data;
 
         try {
-            // 1. Guardar el nuevo mensaje en la base de datos
-            const insertQuery = 'INSERT INTO messagesapp (sender_id, receiver_id, content, parent_message_id) VALUES ($1, $2, $3, $4) RETURNING *';
-            const insertResult = await pool.query(insertQuery, [sender_id, receiver_id, content, parent_message_id || null]);
-            const savedMessage = insertResult.rows[0];
+            const query = 'INSERT INTO messagesapp (sender_id, receiver_id, content, parent_message_id) VALUES ($1, $2, $3, $4) RETURNING *';
+            const result = await pool.query(query, [sender_id, receiver_id, content, parent_message_id || null]);
+            const savedMessage = result.rows[0];
 
-            // 2. Si el mensaje es una respuesta, necesitamos "enriquecerlo"
-            if (savedMessage.parent_message_id) {
-                const parentQuery = `
-                    SELECT 
-                        p.content as parent_content,
-                        pu.username as parent_username
-                    FROM messagesapp AS p
-                    JOIN usersapp AS pu ON p.sender_id = pu.id
-                    WHERE p.message_id = $1;
-                `;
-                const parentResult = await pool.query(parentQuery, [savedMessage.parent_message_id]);
-                
-                if (parentResult.rows.length > 0) {
-                    // Añadimos los datos del padre al objeto del mensaje que vamos a enviar
-                    savedMessage.parent_content = parentResult.rows[0].parent_content;
-                    savedMessage.parent_username = parentResult.rows[0].parent_username;
-                }
-            }
+            // --- INICIO DE LA MODIFICACIÓN ---
 
-            // 3. Emitir el mensaje (ahora enriquecido, si era una respuesta)
+            // 1. Enviamos el mensaje completo al otro usuario en la sala
+            // (Esta parte no cambia)
             socket.to(roomName).emit('receive_message', savedMessage);
+
+            // 2. Enviamos un evento de "confirmación" SOLO al emisor original.
+            // Le decimos: "El mensaje temporal X ahora tiene el ID real Y".
+            socket.emit('message_confirmed', {
+                tempId: tempId,
+                realMessage: savedMessage
+            });
+            // --- FIN DE LA MODIFICACIÓN ---
+
         } catch (error) {
             console.error("Error al guardar o enviar el mensaje:", error);
         }
     });
+
 
     socket.on('disconnect', () => {
         console.log('🔌 Un usuario se ha desconectado:', socket.id);
