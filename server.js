@@ -92,15 +92,17 @@ io.on('connection', (socket) => {
 
     // Escucha los mensajes entrantes del cliente
     socket.on('send_message', async (data) => {
-        const { senderId, receiverId, content, roomName } = data;
+        // --- ¡LA CORRECCIÓN! ---
+        // Ahora desestructuramos usando snake_case para que coincida con lo que envía el cliente.
+        const { sender_id, receiver_id, content, roomName } = data;
 
         try {
-            // 1. Guardar el mensaje en la base de datos
             const query = 'INSERT INTO messagesapp (sender_id, receiver_id, content) VALUES ($1, $2, $3) RETURNING *';
-            const result = await pool.query(query, [senderId, receiverId, content]);
+            // Ahora las variables pasadas a la consulta tienen los valores correctos.
+            const result = await pool.query(query, [sender_id, receiver_id, content]);
             const savedMessage = result.rows[0];
-
-            // 2. Enviar el mensaje guardado al otro usuario en la sala
+            
+            console.log("SERVIDOR: Mensaje guardado en BD:", savedMessage); // Mantenemos el log para verificar
             socket.to(roomName).emit('receive_message', savedMessage);
         } catch (error) {
             console.error("Error al guardar o enviar el mensaje:", error);
