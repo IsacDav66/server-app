@@ -92,27 +92,24 @@ io.on('connection', (socket) => {
 
     // Escucha los mensajes entrantes del cliente
     socket.on('send_message', async (data) => {
-        // Obtenemos el ID temporal que nos envía el cliente
-        const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId } = data;
+        // --- INICIO DE LA CORRECCIÓN ---
+        // El cliente envía 'message_id' como el ID temporal. Lo capturamos.
+        // También nos aseguramos de usar snake_case para las otras variables.
+        const { sender_id, receiver_id, content, roomName, parent_message_id, message_id } = data;
+        const tempId = message_id; // Asignamos el message_id temporal a la variable tempId
+        // --- FIN DE LA CORRECCIÓN ---
 
         try {
             const query = 'INSERT INTO messagesapp (sender_id, receiver_id, content, parent_message_id) VALUES ($1, $2, $3, $4) RETURNING *';
             const result = await pool.query(query, [sender_id, receiver_id, content, parent_message_id || null]);
             const savedMessage = result.rows[0];
 
-            // --- INICIO DE LA MODIFICACIÓN ---
-
-            // 1. Enviamos el mensaje completo al otro usuario en la sala
-            // (Esta parte no cambia)
             socket.to(roomName).emit('receive_message', savedMessage);
 
-            // 2. Enviamos un evento de "confirmación" SOLO al emisor original.
-            // Le decimos: "El mensaje temporal X ahora tiene el ID real Y".
             socket.emit('message_confirmed', {
-                tempId: tempId,
+                tempId: tempId, // Ahora tempId tiene el valor correcto
                 realMessage: savedMessage
             });
-            // --- FIN DE LA MODIFICACIÓN ---
 
         } catch (error) {
             console.error("Error al guardar o enviar el mensaje:", error);
