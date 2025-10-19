@@ -35,5 +35,35 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
+
+
+    // ====================================================
+    // === NUEVA RUTA: ELIMINAR UN MENSAJE              ===
+    // ====================================================
+    router.delete('/messages/:messageId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const loggedInUserId = req.user.userId;
+        const messageId = parseInt(req.params.messageId);
+
+        if (isNaN(messageId)) {
+            return res.status(400).json({ success: false, message: 'ID de mensaje inválido.' });
+        }
+
+        try {
+            // Consulta segura: solo borra si el ID del mensaje coincide Y el que lo envió es el usuario logueado.
+            const query = 'DELETE FROM messagesapp WHERE message_id = $1 AND sender_id = $2';
+            const result = await pool.query(query, [messageId, loggedInUserId]);
+
+            if (result.rowCount === 0) {
+                // No se borró nada, probablemente porque el usuario no es el dueño del mensaje.
+                return res.status(403).json({ success: false, message: 'No tienes permiso para eliminar este mensaje.' });
+            }
+
+            res.status(200).json({ success: true, message: 'Mensaje eliminado.' });
+        } catch (error) {
+            console.error("Error al eliminar el mensaje:", error);
+            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        }
+    });
+
     return router;
 };
