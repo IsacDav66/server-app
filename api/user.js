@@ -8,6 +8,9 @@ const uploadCoverMiddleware = require('../middleware/uploadCover');
 const uploadBioImageMiddleware = require('../middleware/uploadBioImage'); // <-- 2. IMPORTAR NUEVO MIDDLEWARE
 const processImage = require('../middleware/processImage');
 const path = require('path');
+// EN LA PARTE SUPERIOR DEL ARCHIVO, JUNTO A LOS OTROS REQUIRES
+const admin = require('firebase-admin'); // <-- SOLO NECESITAS IMPORTARLO
+
 
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
@@ -204,62 +207,122 @@ router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT
         });
 
 
-        
+    // RUTA PARA REGISTRAR O ACTUALIZAR EL TOKEN FCM
+router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    const { token } = req.body;
+    const userId = req.user.userId;
+
+    if (!token) {
+        return res.status(400).json({ success: false, message: 'No se proporcionó ningún token.' });
+    }
+
+    try {
+        const query = 'UPDATE usersapp SET fcm_token = $1 WHERE id = $2';
+        await pool.query(query, [token, userId]);
+        res.status(200).json({ success: true, message: 'Token FCM actualizado.' });
+    } catch (error) {
+        console.error('Error al guardar el token FCM:', error.stack);
+        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+    }
+});
     // ----------------------------------------------------
     // NUEVA RUTA: Seguir / Dejar de seguir a un usuario
     // ----------------------------------------------------
     // --- RUTA DE SEGUIMIENTO CON LA LÓGICA DE NOTIFICACIÓN FUNCIONAL ---
+    // --- RUTA PARA SEGUIR / DEJAR DE SEGUIR A UN USUARIO (VERSIÓN COMPLETA) ---
     router.post('/follow/:userId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const followerId = req.user.userId;
-        const followingId = parseInt(req.params.userId, 10);
+        const followerId = req.user.userId; // El ID del usuario que está haciendo la acción
+        const followingId = parseInt(req.params.userId, 10); // El ID del usuario que va a ser seguido
 
-        if (isNaN(followingId) || followerId === followingId) {
-            return res.status(400).json({ success: false, message: 'Solicitud inválida.' });
+        // Validaciones básicas
+        if (isNaN(followingId)) {
+            return res.status(400).json({ success: false, message: 'El ID de usuario no es válido.' });
+        }
+        if (followerId === followingId) {
+            return res.status(400).json({ success: false, message: 'No puedes seguirte a ti mismo.' });
         }
 
         try {
-            // Lógica para dejar de seguir (sin cambios)
+            // 1. INTENTAR DEJAR DE SEGUIR PRIMERO
+            // Se intenta eliminar la relación. Si se elimina una fila, significa que el usuario ya lo seguía.
             const deleteQuery = 'DELETE FROM followersapp WHERE follower_id = $1 AND following_id = $2';
             const deleteResult = await pool.query(deleteQuery, [followerId, followingId]);
+
             if (deleteResult.rowCount > 0) {
-                return res.status(200).json({ success: true, action: 'unfollowed' });
+                // Si se eliminó una fila, la acción fue "unfollow". Respondemos y terminamos.
+                return res.status(200).json({ success: true, action: 'unfollowed', message: 'Has dejado de seguir a este usuario.' });
             }
 
-            // Lógica para empezar a seguir
+            // 2. SI NO SE DEJÓ DE SEGUIR, ENTONCES SE EMPIEZA A SEGUIR
+            // Si no se eliminó ninguna fila, significa que no lo seguía. Procedemos a insertar.
             const insertQuery = 'INSERT INTO followersapp (follower_id, following_id) VALUES ($1, $2)';
             await pool.query(insertQuery, [followerId, followingId]);
             
-            // --- LÓGICA DE NOTIFICACIÓN (AHORA FUNCIONARÁ) ---
-            
-            // 1. Inserta la notificación en la base de datos
-            const notifQuery = `
-                INSERT INTO notificationsapp (recipient_id, sender_id, type)
-                VALUES ($1, $2, 'new_follower')
-                RETURNING *;
-            `;
-            const notifResult = await pool.query(notifQuery, [followingId, followerId]);
-            const newNotification = notifResult.rows[0];
-
-            // 2. Obtiene los datos del usuario que envió la notificación
+            // 3. OBTENER DATOS DEL USUARIO QUE INICIÓ LA ACCIÓN (SENDER)
+            // Necesitamos su nombre y foto de perfil para ambas notificaciones.
             const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [followerId]);
             const senderData = senderResult.rows[0];
 
-            // 3. Prepara el payload completo
-            const notificationPayload = {
-                ...newNotification,
-                sender_username: senderData.username,
-                sender_profile_pic_url: senderData.profile_pic_url
-            };
+            // 4. LÓGICA DE NOTIFICACIÓN DENTRO DE LA APP (CON SOCKET.IO)
+            try {
+                // A. Inserta la notificación en la tabla `notificationsapp`
+                const notifQuery = `
+                    INSERT INTO notificationsapp (recipient_id, sender_id, type)
+                    VALUES ($1, $2, 'new_follower')
+                    RETURNING *;
+                `;
+                const notifResult = await pool.query(notifQuery, [followingId, followerId]);
+                const newNotification = notifResult.rows[0];
 
-            // 4. Emite el evento a la sala del usuario que fue seguido
-            // ESTA LÍNEA AHORA FUNCIONARÁ GRACIAS AL PASO 1
-            const io = req.app.get('socketio'); 
-            const userRoom = `user-${followingId}`;
-            io.to(userRoom).emit('new_notification', notificationPayload);
+                // B. Prepara el payload completo para el cliente
+                const notificationPayload = {
+                    ...newNotification,
+                    sender_username: senderData.username,
+                    sender_profile_pic_url: senderData.profile_pic_url
+                };
 
-            return res.status(201).json({ success: true, action: 'followed' });
+                // C. Emite el evento a la sala específica del usuario que fue seguido (recipient)
+                const io = req.app.get('socketio');
+                const userRoom = `user-${followingId}`;
+                io.to(userRoom).emit('new_notification', notificationPayload);
+                console.log(`Notificación en-app enviada a la sala ${userRoom}`);
+            } catch (inAppNotifError) {
+                // Si esta notificación falla, no detenemos el proceso, solo lo registramos.
+                console.error("Error al crear o emitir la notificación en la app:", inAppNotifError);
+            }
+
+            // 5. LÓGICA DE NOTIFICACIÓN PUSH (CON FIREBASE)
+            try {
+                // A. Obtiene el token FCM del usuario que fue seguido (recipient)
+                const tokenResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [followingId]);
+                const userToNotify = tokenResult.rows[0];
+
+                // B. Si el usuario tiene un token FCM registrado, se envía la notificación push.
+                if (userToNotify && userToNotify.fcm_token) {
+                    // Construye el mensaje de la notificación push
+                    const message = {
+                        notification: {
+                            title: '¡Nuevo Seguidor!',
+                            body: `${senderData.username} ha comenzado a seguirte.`
+                        },
+                        token: userToNotify.fcm_token
+                    };
+
+                    // C. Envía el mensaje usando el SDK de Firebase Admin
+                    await admin.messaging().send(message);
+                    console.log(`Notificación push enviada al usuario ${followingId}`);
+                }
+            } catch (pushError) {
+                // Si el envío de la notificación push falla, tampoco detenemos el proceso.
+                console.error("Error al enviar la notificación push:", pushError);
+            }
+
+            // 6. RESPONDER A LA PETICIÓN ORIGINAL
+            // Si todo lo anterior (o al menos la acción de seguir) fue exitoso, respondemos al cliente.
+            return res.status(201).json({ success: true, action: 'followed', message: 'Ahora sigues a este usuario.' });
 
         } catch (error) {
+            // Captura de errores generales (problemas con la base de datos, etc.)
             console.error('❌ Error al procesar la acción de seguir:', error.stack);
             res.status(500).json({ success: false, message: 'Error interno del servidor.' });
         }
@@ -299,39 +362,6 @@ router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT
             res.status(500).json({ success: false, message: 'Error interno del servidor al buscar usuarios.' });
         }
     });
-
-    // ====================================================
-// === NUEVA RUTA: SEGUIR / DEJAR DE SEGUIR         ===
-// ====================================================
-router.post('/follow/:userId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-    const followerId = req.user.userId; // El que está logueado
-    const followingId = parseInt(req.params.userId, 10); // Al que se quiere seguir
-
-    if (isNaN(followingId) || followerId === followingId) {
-        return res.status(400).json({ success: false, message: 'ID de usuario inválido o no puedes seguirte a ti mismo.' });
-    }
-
-    try {
-        // Intentamos eliminar la relación primero (dejar de seguir)
-        const deleteQuery = 'DELETE FROM followersapp WHERE follower_id = $1 AND following_id = $2';
-        const deleteResult = await pool.query(deleteQuery, [followerId, followingId]);
-
-        // Si se eliminó una fila, significa que ya lo seguía y ahora no.
-        if (deleteResult.rowCount > 0) {
-            return res.status(200).json({ success: true, action: 'unfollowed' });
-        }
-
-        // Si no se eliminó nada, significa que no lo seguía. Lo insertamos (seguir).
-        const insertQuery = 'INSERT INTO followersapp (follower_id, following_id) VALUES ($1, $2)';
-        await pool.query(insertQuery, [followerId, followingId]);
-
-        return res.status(201).json({ success: true, action: 'followed' });
-
-    } catch (error) {
-        console.error('❌ Error al procesar la acción de seguir:', error.stack);
-        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
-    }
-});
 
 
 

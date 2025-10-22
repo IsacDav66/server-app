@@ -9,6 +9,7 @@ const path = require('path');
 // const bodyParser = require('body-parser'); // Usaremos el de Express integrado
 const http = require('http'); // <-- AÑADE ESTA LÍNEA
 const { Server } = require("socket.io"); // <-- AÑADE ESTA LÍNEA
+const admin = require('firebase-admin'); // <-- 1. IMPORTA FIREBASE ADMIN
 
 
 const app = express();
@@ -36,6 +37,23 @@ const io = new Server(server, {
 // ==========================================================
 app.set('socketio', io);
 // ==========================================================
+
+// ==========================================================
+// === INICIALIZACIÓN DE FIREBASE ADMIN (SOLO UNA VEZ) ===
+// ==========================================================
+try {
+    const serviceAccount = require('./config/firebase-service-account.json');
+    admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('✅ Firebase Admin SDK inicializado correctamente.');
+} catch (error) {
+    console.error('❌ Error al inicializar Firebase Admin SDK:', error.message);
+    // Podrías decidir salir del proceso si Firebase es crítico
+    // process.exit(1); 
+}
+// ==========================================================
+
 
 // ====================================================
 // CONFIGURACIÓN DE BASE DE DATOS (POSTGRESQL)
