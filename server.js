@@ -84,6 +84,23 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 io.on('connection', (socket) => {
     console.log('🔌 Un usuario se ha conectado:', socket.id);
 
+    // --- NUEVA LÓGICA DE AUTENTICACIÓN Y SALA ---
+    // El cliente debe emitir este evento justo después de conectarse
+    socket.on('authenticate', (token) => {
+        try {
+            const jwt = require('jsonwebtoken');
+            const decoded = jwt.verify(token, JWT_SECRET);
+            if (decoded.userId) {
+                const userRoom = `user-${decoded.userId}`;
+                socket.join(userRoom);
+                console.log(`Socket ${socket.id} autenticado y unido a la sala ${userRoom}`);
+            }
+        } catch (error) {
+            console.log(`Fallo de autenticación para socket ${socket.id}`);
+        }
+    });
+    // --- FIN DE LA NUEVA LÓGICA ---
+
     // El cliente se une a una sala privada al conectarse
     socket.on('join_room', (roomName) => {
         socket.join(roomName);
@@ -241,6 +258,19 @@ async function initDatabase() {
     `;
     // --- FIN DEL BLOQUE A AÑADIR ---
 
+    // TABLA DE NOTIFICACIONES (notificationsapp)
+    const notificationsQuery = `
+        CREATE TABLE IF NOT EXISTS notificationsapp (
+            notification_id SERIAL PRIMARY KEY,
+            recipient_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL, -- Quién recibe la notificación
+            sender_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,    -- Quién la originó
+            type VARCHAR(20) NOT NULL, -- 'new_follower', 'like', 'comment'
+            post_id INTEGER REFERENCES postapp(post_id) ON DELETE CASCADE, -- Opcional, para likes/comentarios
+            is_read BOOLEAN DEFAULT FALSE NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
+
     try {
         await pool.query(usersQuery);
         console.log('✅ Tabla "usersapp" verificada/creada.');
@@ -257,6 +287,9 @@ async function initDatabase() {
         // --- AÑADE ESTA LÍNEA ---
         await pool.query(messagesQuery);
         console.log('✅ Tabla "messagesapp" verificada/creada.');
+        
+        await pool.query(notificationsQuery);
+        console.log('✅ Tabla "notificationsapp" verificada/creada.');
     } catch (err) {
         console.error('❌ Error al inicializar la base de datos:', err.stack);
     }
@@ -272,6 +305,11 @@ app.use('/api/user', userRoutes(pool, JWT_SECRET));
 app.use('/api/posts', postRoutes(pool, JWT_SECRET));
 
 const chatRoutes = require('./api/chat'); // <-- AÑADE
+
+// --- AÑADE LA NUEVA RUTA ---
+const notificationRoutes = require('./api/notifications');
+app.set('socketio', io); // <-- AÑADE ESTA LÍNEA
+app.use('/api/notifications', notificationRoutes(pool, JWT_SECRET));
 app.use('/api/chat', chatRoutes(pool, JWT_SECRET, io)); // <-- Pasamos 'io' como argumento
 
 // Manejador de Errores Final

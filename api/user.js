@@ -366,5 +366,65 @@ router.get('/:userId/following', (req, res, next) => softProtect(req, res, next,
     }
 });
 
+
+// --- RUTA DE SEGUIMIENTO MODIFICADA ---
+    router.post('/follow/:userId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const followerId = req.user.userId;
+        const followingId = parseInt(req.params.userId, 10);
+
+        if (isNaN(followingId) || followerId === followingId) {
+            return res.status(400).json({ success: false, message: 'Solicitud inválida.' });
+        }
+
+        try {
+            // Lógica para dejar de seguir (sin cambios)
+            const deleteQuery = 'DELETE FROM followersapp WHERE follower_id = $1 AND following_id = $2';
+            const deleteResult = await pool.query(deleteQuery, [followerId, followingId]);
+            if (deleteResult.rowCount > 0) {
+                return res.status(200).json({ success: true, action: 'unfollowed' });
+            }
+
+            // Lógica para empezar a seguir
+            const insertQuery = 'INSERT INTO followersapp (follower_id, following_id) VALUES ($1, $2)';
+            await pool.query(insertQuery, [followerId, followingId]);
+            
+            // --- INICIO DE LA NUEVA LÓGICA DE NOTIFICACIÓN ---
+            
+            // 1. Inserta la notificación en la base de datos
+            const notifQuery = `
+                INSERT INTO notificationsapp (recipient_id, sender_id, type)
+                VALUES ($1, $2, 'new_follower')
+                RETURNING *;
+            `;
+            const notifResult = await pool.query(notifQuery, [followingId, followerId]);
+            const newNotification = notifResult.rows[0];
+
+            // 2. Obtiene los datos del usuario que envió la notificación para mostrar en el frontend
+            const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [followerId]);
+            const senderData = senderResult.rows[0];
+
+            // 3. Prepara el payload completo de la notificación
+            const notificationPayload = {
+                ...newNotification,
+                sender_username: senderData.username,
+                sender_profile_pic_url: senderData.profile_pic_url
+            };
+
+            // 4. Emite el evento a la sala específica del usuario que fue seguido
+            const io = req.app.get('socketio'); // Obtenemos la instancia de io
+            const userRoom = `user-${followingId}`;
+            io.to(userRoom).emit('new_notification', notificationPayload);
+
+            // --- FIN DE LA NUEVA LÓGICA DE NOTIFICACIÓN ---
+
+            return res.status(201).json({ success: true, action: 'followed' });
+
+        } catch (error) {
+            console.error('❌ Error al procesar la acción de seguir:', error.stack);
+            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        }
+    });
+
+
 return router;
 };
