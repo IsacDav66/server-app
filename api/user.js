@@ -273,61 +273,52 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
             // 5. Lógica de NOTIFICACIÓN PUSH (Firebase Cloud Messaging) con imagen
             // --- LÓGICA DE NOTIFICACIÓN PUSH (CON ESTRUCTURA CORREGIDA) ---
             try {
-                const tokenResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [followingId]);
-                const userToNotify = tokenResult.rows[0];
+        const tokenResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [followingId]);
+        const userToNotify = tokenResult.rows[0];
 
-                if (userToNotify && userToNotify.fcm_token) {
-                    
-                    // ==========================================================
-                    // === ¡AQUÍ ESTÁ LA CORRECCIÓN ESTRUCTURAL! ===
-                    // ==========================================================
-                    
-                    // 1. Prepara el mensaje base para Firebase
-                    const message = {
-                        token: userToNotify.fcm_token,
-                        // El objeto `notification` genérico solo lleva título y cuerpo
-                        notification: {
-                            title: '¡Nuevo Seguidor!',
-                            body: `${senderData.username} ha comenzado a seguirte.`
-                        },
-                        // El objeto `data` para tu lógica de frontend
-                        data: {
-                          senderId: String(followerId)
-                        },
-                        // El objeto `android` para personalizaciones específicas de Android
-                        android: {
-                            notification: {
-                                // El `imageUrl` va DENTRO de android.notification
-                            }
-                        }
-                    };
-
-                    // 2. Construye la URL de la imagen de forma segura
-                    const serverUrl = process.env.PUBLIC_SERVER_URL;
-                    const profilePicPath = senderData.profile_pic_url;
-
-                    if (serverUrl && profilePicPath) {
-                        const fullImageUrl = (serverUrl + profilePicPath).trim();
-                        // ==========================================================
-                        // AHORA ASIGNAMOS LA URL A `largeIcon` Y NO A `imageUrl`
-                        // ==========================================================
-                        message.android.notification.largeIcon = fullImageUrl;
-                        message.data.imageUrl = fullImageUrl; // Mantenemos esto para el frontend
-                         // ==========================================================
+        if (userToNotify && userToNotify.fcm_token) {
             
-                        console.log(`- URL de imagen preparada para FCM: ${fullImageUrl}`);
-                    } else {
-                        console.warn(`- No se adjuntará imagen a la notificación push (faltan datos).`);
-                    }
-                    // ==========================================================
-                    
-                    console.log("➡️ PUSH: Enviando payload final a Firebase:", JSON.stringify(message, null, 2));
-                    await admin.messaging().send(message);
-                    console.log(`✅ PUSH: Notificación push enviada con éxito al usuario ${followingId}`);
+            // 1. Prepara el mensaje base para Firebase
+            const message = {
+                token: userToNotify.fcm_token,
+                notification: {
+                    title: '¡Nuevo Seguidor!',
+                    body: `${senderData.username} ha comenzado a seguirte.`
+                },
+                data: {
+                  senderId: String(followerId)
+                },
+                // Prepara el objeto para la configuración específica de Android
+                android: {
+                    notification: {} // Inicialmente vacío
                 }
-            } catch (pushError) {
-                console.error("❌ PUSH: Error al enviar la notificación push (FCM):", pushError);
+            };
+
+            // 2. Construye la URL de la imagen de forma segura
+            const serverUrl = process.env.PUBLIC_SERVER_URL;
+            const profilePicPath = senderData.profile_pic_url;
+
+            if (serverUrl && profilePicPath) {
+                const fullImageUrl = (serverUrl + profilePicPath).trim();
+
+                // ==========================================================
+                // === ¡ESTA ES LA ÚNICA LÍNEA QUE IMPORTA PARA ESTE BUG! ===
+                // ==========================================================
+                // Asigna la URL a `largeIcon` para que aparezca como avatar.
+                // NO uses `imageUrl`.
+                message.android.notification.largeIcon = fullImageUrl;
+                
+                // Mantenemos la URL en `data` para que el frontend la use si es necesario.
+                message.data.imageUrl = fullImageUrl;
             }
+            
+            console.log("➡️ PUSH: Enviando payload final a Firebase:", JSON.stringify(message, null, 2));
+            await admin.messaging().send(message);
+            console.log(`✅ PUSH: Notificación (con largeIcon) enviada al usuario ${followingId}`);
+        }
+    } catch (pushError) {
+        console.error("❌ PUSH: Error al enviar la notificación push (FCM):", pushError);
+    }
             
             return res.status(201).json({ success: true, action: 'followed' });
 
