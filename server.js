@@ -176,11 +176,60 @@ io.on('connection', (socket) => {
                 tempId: tempId,
                 realMessage: savedMessage
             });
+            // ==========================================================
+            // === ¡NUEVA LÓGICA DE NOTIFICACIÓN PUSH PARA MENSAJES! ===
+            // ==========================================================
+            try {
+                // A. Obtener los datos del destinatario (token FCM) y del remitente (nombre, foto)
+                const recipientResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
+                const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+
+                const recipient = recipientResult.rows[0];
+                const sender = senderResult.rows[0];
+
+                // B. Si el destinatario tiene un token FCM, enviar la notificación
+                if (recipient && recipient.fcm_token) {
+                    
+                    // C. Construir el payload del mensaje para Firebase
+                    const message = {
+                        token: recipient.fcm_token,
+                        notification: {
+                            title: sender.username, // El título es el nombre del remitente
+                            body: content, // El cuerpo es el contenido del mensaje
+                        },
+                        data: {
+                            senderId: String(sender_id),
+                            // Acción de clic: abrir el chat con el remitente
+                            openUrl: `chat.html?userId=${sender_id}` 
+                        },
+                        android: {
+                            notification: {
+                                // Usamos 'imageUrl' para que Android muestre el avatar
+                            }
+                        }
+                    };
+                    
+                    // D. Añadir la imagen de perfil si existe
+                    if (sender.profile_pic_url) {
+                        const fullImageUrl = (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim();
+                        message.android.notification.imageUrl = fullImageUrl;
+                        message.data.imageUrl = fullImageUrl;
+                    }
+
+                    // E. Enviar la notificación push
+                    await admin.messaging().send(message);
+                    console.log(`Notificación push de mensaje enviada al usuario ${receiver_id}`);
+                }
+            } catch (pushError) {
+                console.error("Error al enviar la notificación push del mensaje:", pushError);
+            }
+            // ==========================================================
 
         } catch (error) {
             console.error("Error al guardar o enviar el mensaje:", error);
         }
     });
+
 
 
     socket.on('disconnect', () => {
