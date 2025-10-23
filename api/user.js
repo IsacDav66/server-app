@@ -228,41 +228,30 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
     // ----------------------------------------------------
     // NUEVA RUTA: Seguir / Dejar de seguir a un usuario
     // ----------------------------------------------------
-    // --- RUTA PARA SEGUIR / DEJAR DE SEGUIR A UN USUARIO (VERSIÓN COMPLETA CON IMAGEN EN PUSH) ---
+    // --- RUTA PARA SEGUIR / DEJAR DE SEGUIR A UN USUARIO (VERSIÓN FINAL CON DEPURACIÓN DE IMAGEN) ---
     router.post('/follow/:userId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const followerId = req.user.userId; // El ID del usuario que está haciendo la acción.
-        const followingId = parseInt(req.params.userId, 10); // El ID del usuario que va a ser seguido.
+        const followerId = req.user.userId;
+        const followingId = parseInt(req.params.userId, 10);
 
         // 1. Validaciones de la Petición
-        if (isNaN(followingId)) {
-            return res.status(400).json({ success: false, message: 'El ID de usuario no es válido.' });
-        }
-        if (followerId === followingId) {
-            return res.status(400).json({ success: false, message: 'No puedes seguirte a ti mismo.' });
+        if (isNaN(followingId) || followerId === followingId) {
+            return res.status(400).json({ success: false, message: 'Solicitud inválida.' });
         }
 
         try {
             // 2. Lógica de "Dejar de Seguir"
-            // Intentamos eliminar la relación. Si se elimina una fila, la acción fue "unfollow".
-            const deleteQuery = 'DELETE FROM followersapp WHERE follower_id = $1 AND following_id = $2';
-            const deleteResult = await pool.query(deleteQuery, [followerId, followingId]);
-
+            const deleteResult = await pool.query('DELETE FROM followersapp WHERE follower_id = $1 AND following_id = $2', [followerId, followingId]);
             if (deleteResult.rowCount > 0) {
-                // Si se eliminó, respondemos al cliente y terminamos la ejecución.
                 return res.status(200).json({ success: true, action: 'unfollowed', message: 'Has dejado de seguir a este usuario.' });
             }
 
             // 3. Lógica de "Seguir"
-            // Si no se eliminó nada, procedemos a insertar la nueva relación.
-            const insertQuery = 'INSERT INTO followersapp (follower_id, following_id) VALUES ($1, $2)';
-            await pool.query(insertQuery, [followerId, followingId]);
+            await pool.query('INSERT INTO followersapp (follower_id, following_id) VALUES ($1, $2)', [followerId, followingId]);
             
-            // Obtenemos los datos del usuario que inició la acción (el seguidor) para usarlos en las notificaciones.
             const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [followerId]);
             const senderData = senderResult.rows[0];
 
             // 4. Lógica de Notificación DENTRO DE LA APP (Socket.IO)
-            // Se ejecuta en un bloque try/catch para no detener el proceso si falla.
             try {
                 const notifQuery = `INSERT INTO notificationsapp (recipient_id, sender_id, type) VALUES ($1, $2, 'new_follower') RETURNING *;`;
                 const notifResult = await pool.query(notifQuery, [followingId, followerId]);
@@ -282,50 +271,60 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
             }
 
             // 5. Lógica de NOTIFICACIÓN PUSH (Firebase Cloud Messaging) con imagen
-            // También se ejecuta en un bloque try/catch independiente.
             try {
-                const tokenResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [followingId]);
-                const userToNotify = tokenResult.rows[0];
+                const tokenResult = await pool.query('SELECT fcm_token, username FROM usersapp WHERE id = $1', [followingId]);
+                
+                if (tokenResult.rows.length > 0) {
+                    const userToNotify = tokenResult.rows[0];
+                    if (userToNotify.fcm_token) {
+                        const notificationPayload = {
+                            title: '¡Nuevo Seguidor!',
+                            body: `${senderData.username} ha comenzado a seguirte.`
+                        };
 
-                if (userToNotify && userToNotify.fcm_token) {
-                    // Construye el payload base de la notificación
-                    const notificationPayload = {
-                        title: '¡Nuevo Seguidor!',
-                        body: `${senderData.username} ha comenzado a seguirte.`
-                    };
+                        // --- DEPURACIÓN Y CONSTRUCCIÓN SEGURA DE LA URL DE IMAGEN ---
+                        const serverUrl = process.env.PUBLIC_SERVER_URL;
+                        const profilePicPath = senderData.profile_pic_url;
 
-                    // Si el seguidor tiene una foto de perfil, construye la URL completa y la añade al payload.
-                    if (senderData.profile_pic_url) {
-                        // Utiliza la variable de entorno para la URL pública del servidor.
-                        const fullImageUrl = process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url;
-                        notificationPayload.imageUrl = fullImageUrl;
-                    }
+                        console.log(`➡️ PUSH-IMG: Verificando datos para la URL de la imagen...`);
+                        console.log(`- PUBLIC_SERVER_URL: ${serverUrl}`);
+                        console.log(`- profile_pic_url de la BD: ${profilePicPath}`);
 
-                    // Construye el mensaje final para FCM
-                    const message = {
-                        notification: notificationPayload,
-                        token: userToNotify.fcm_token,
-                        // Añadir datos extra para que el cliente pueda usarlos
-                        data: {
-                          senderId: String(followerId), // Enviar IDs como strings es una buena práctica
-                          imageUrl: notificationPayload.imageUrl || '' // Enviar la URL también en los datos
+                        if (serverUrl && profilePicPath) {
+                            const fullImageUrl = serverUrl + profilePicPath;
+                            notificationPayload.imageUrl = fullImageUrl;
+                            console.log(`- URL de imagen construida: ${fullImageUrl}`);
+                        } else {
+                            console.warn(`🟡 PUSH-IMG: No se pudo construir la URL de la imagen. Faltan datos.`);
                         }
-                    };
-                    
-                    await admin.messaging().send(message);
-                    console.log(`Notificación push con imagen enviada al usuario ${followingId}`);
+                        // --- FIN DEPURACIÓN ---
+
+                        const message = {
+                            notification: notificationPayload,
+                            token: userToNotify.fcm_token,
+                            data: {
+                              senderId: String(followerId),
+                              imageUrl: notificationPayload.imageUrl || ''
+                            }
+                        };
+                        
+                        await admin.messaging().send(message);
+                        console.log(`✅ PUSH: Notificación push enviada al usuario ${followingId}`);
+                    } else {
+                        console.warn(`🟡 PUSH: El usuario ${followingId} no tiene un token FCM registrado.`);
+                    }
                 } else {
-                    console.log(`El usuario ${followingId} no tiene un token FCM para recibir notificaciones push.`);
+                     console.error(`❌ PUSH: No se encontró al usuario ${followingId} en la BD para notificar.`);
                 }
             } catch (pushError) {
-                console.error("Error al enviar la notificación push (FCM):", pushError);
+                console.error("❌ PUSH: Error al enviar la notificación push (FCM):", pushError);
             }
             
             // 6. Respuesta Final de Éxito
             return res.status(201).json({ success: true, action: 'followed', message: 'Ahora sigues a este usuario.' });
 
         } catch (error) {
-            // 7. Manejo de Errores Generales (ej. fallo de la base de datos)
+            // 7. Manejo de Errores Generales
             console.error('❌ Error crítico en la ruta /follow:', error.stack);
             res.status(500).json({ success: false, message: 'Error interno del servidor.' });
         }
