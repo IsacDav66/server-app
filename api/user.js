@@ -239,17 +239,13 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
         }
 
         try {
-            // 2. Lógica de "Dejar de Seguir"
             const deleteResult = await pool.query('DELETE FROM followersapp WHERE follower_id = $1 AND following_id = $2', [followerId, followingId]);
             if (deleteResult.rowCount > 0) {
-                return res.status(200).json({ success: true, action: 'unfollowed', message: 'Has dejado de seguir a este usuario.' });
+                return res.status(200).json({ success: true, action: 'unfollowed' });
             }
-
-            // 3. Lógica de "Seguir"
             await pool.query('INSERT INTO followersapp (follower_id, following_id) VALUES ($1, $2)', [followerId, followingId]);
             
-            const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [followerId]);
-            const senderData = senderResult.rows[0];
+            const senderData = (await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [followerId])).rows[0];
 
             // 4. Lógica de Notificación DENTRO DE LA APP (Socket.IO)
             try {
@@ -272,54 +268,44 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
 
             // 5. Lógica de NOTIFICACIÓN PUSH (Firebase Cloud Messaging) con imagen
             // --- LÓGICA DE NOTIFICACIÓN PUSH (CON ESTRUCTURA CORREGIDA) ---
-            try {
+             try {
                 const tokenResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [followingId]);
                 const userToNotify = tokenResult.rows[0];
 
                 if (userToNotify && userToNotify.fcm_token) {
                     
-                    // ==========================================================
-                    // === ¡AQUÍ ESTÁ LA CORRECCIÓN ESTRUCTURAL! ===
-                    // ==========================================================
-                    
-                    // 1. Prepara el mensaje base para Firebase
                     const message = {
                         token: userToNotify.fcm_token,
-                        // El objeto `notification` genérico solo lleva título y cuerpo
                         notification: {
                             title: '¡Nuevo Seguidor!',
                             body: `${senderData.username} ha comenzado a seguirte.`
                         },
-                        // El objeto `data` para tu lógica de frontend
+                        // ==========================================================
+                        // === ¡AQUÍ ESTÁ LA MODIFICACIÓN CLAVE! ===
+                        // ==========================================================
                         data: {
-                          senderId: String(followerId)
+                        senderId: String(followerId),
+                        // Creamos la URL de destino que el frontend usará para navegar.
+                        // OJO: Usamos la ruta relativa, sin el dominio.
+                        openUrl: `user_profile.html?id=${followerId}` 
                         },
-                        // El objeto `android` para personalizaciones específicas de Android
+                        // ==========================================================
                         android: {
-                            notification: {
-                                // El `imageUrl` va DENTRO de android.notification
-                            }
+                            notification: {}
                         }
                     };
 
-                    // 2. Construye la URL de la imagen de forma segura
                     const serverUrl = process.env.PUBLIC_SERVER_URL;
                     const profilePicPath = senderData.profile_pic_url;
 
                     if (serverUrl && profilePicPath) {
                         const fullImageUrl = (serverUrl + profilePicPath).trim();
-                        // Añade la URL al objeto `android` y al objeto `data`
                         message.android.notification.imageUrl = fullImageUrl;
-                        message.data.imageUrl = fullImageUrl;
-                        console.log(`- URL de imagen preparada para FCM: ${fullImageUrl}`);
-                    } else {
-                        console.warn(`- No se adjuntará imagen a la notificación push (faltan datos).`);
+                        message.data.imageUrl = fullImageUrl; // También lo enviamos en data para el frontend
                     }
-                    // ==========================================================
                     
-                    console.log("➡️ PUSH: Enviando payload final a Firebase:", JSON.stringify(message, null, 2));
                     await admin.messaging().send(message);
-                    console.log(`✅ PUSH: Notificación push enviada con éxito al usuario ${followingId}`);
+                    console.log(`✅ PUSH: Notificación con acción de clic enviada al usuario ${followingId}`);
                 }
             } catch (pushError) {
                 console.error("❌ PUSH: Error al enviar la notificación push (FCM):", pushError);
@@ -329,7 +315,6 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
 
         } catch (error) {
             console.error('❌ Error crítico en la ruta /follow:', error.stack);
-            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
         }
     });
 
