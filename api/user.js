@@ -307,7 +307,7 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
                     const profilePicPath = senderData.profile_pic_url;
 
                     if (serverUrl && profilePicPath) {
-                        const fullImageUrl = serverUrl + profilePicPath;
+                        const fullImageUrl = (serverUrl + profilePicPath).trim();
                         // Añade la URL al objeto `android` y al objeto `data`
                         message.android.notification.imageUrl = fullImageUrl;
                         message.data.imageUrl = fullImageUrl;
