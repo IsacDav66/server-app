@@ -308,9 +308,13 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
 
                     if (serverUrl && profilePicPath) {
                         const fullImageUrl = (serverUrl + profilePicPath).trim();
-                        // Añade la URL al objeto `android` y al objeto `data`
-                        message.android.notification.imageUrl = fullImageUrl;
-                        message.data.imageUrl = fullImageUrl;
+                        // ==========================================================
+                        // AHORA ASIGNAMOS LA URL A `largeIcon` Y NO A `imageUrl`
+                        // ==========================================================
+                        message.android.notification.largeIcon = fullImageUrl;
+                        message.data.imageUrl = fullImageUrl; // Mantenemos esto para el frontend
+                         // ==========================================================
+            
                         console.log(`- URL de imagen preparada para FCM: ${fullImageUrl}`);
                     } else {
                         console.warn(`- No se adjuntará imagen a la notificación push (faltan datos).`);
