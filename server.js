@@ -194,31 +194,35 @@ io.on('connection', (socket) => {
                     const message = {
                         token: recipient.fcm_token,
                         notification: {
-                            title: sender.username, // El título es el nombre del remitente
-                            body: content, // El cuerpo es el contenido del mensaje
+                            title: sender.username,
+                            body: content,
                         },
                         data: {
                             senderId: String(sender_id),
-                            // Acción de clic: abrir el chat con el remitente
                             openUrl: `chat.html?userId=${sender_id}` 
                         },
+                        // ==========================================================
+                        // === ¡AQUÍ ESTÁ LA MODIFICACIÓN CLAVE PARA AGRUPAR! ===
+                        // ==========================================================
                         android: {
                             notification: {
-                                // Usamos 'imageUrl' para que Android muestre el avatar
+                                // El 'tag' actúa como el identificador de grupo.
+                                // Todos los mensajes del mismo sender_id compartirán este tag.
+                                tag: String(sender_id) 
                             }
                         }
+                        // ==========================================================
                     };
                     
-                    // D. Añadir la imagen de perfil si existe
+                    // Añadir la imagen de perfil (sin cambios)
                     if (sender.profile_pic_url) {
                         const fullImageUrl = (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim();
                         message.android.notification.imageUrl = fullImageUrl;
                         message.data.imageUrl = fullImageUrl;
                     }
 
-                    // E. Enviar la notificación push
                     await admin.messaging().send(message);
-                    console.log(`Notificación push de mensaje enviada al usuario ${receiver_id}`);
+                    console.log(`Notificación push de mensaje (agrupada por tag: ${sender_id}) enviada al usuario ${receiver_id}`);
                 }
             } catch (pushError) {
                 console.error("Error al enviar la notificación push del mensaje:", pushError);
