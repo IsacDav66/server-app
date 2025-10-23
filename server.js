@@ -189,40 +189,42 @@ io.on('connection', (socket) => {
 
                 // B. Si el destinatario tiene un token FCM, enviar la notificación
                 if (recipient && recipient.fcm_token) {
-                    
-                    // C. Construir el payload del mensaje para Firebase
+    
+                    // CONSTRUIMOS EL PAYLOAD DE "SOLO DATOS"
                     const message = {
                         token: recipient.fcm_token,
-                        notification: {
+                        // ¡¡¡ELIMINAMOS EL CAMPO "notification"!!!
+                        
+                        // Toda la información visual va DENTRO del campo "data"
+                        data: {
+                            // Datos para que el cliente construya la notificación
                             title: sender.username,
                             body: content,
-                        },
-                        data: {
+                            channelId: 'chat_messages_channel', // Le decimos qué canal usar
+                            
+                            // Datos para el agrupamiento
+                            groupId: String(sender_id), // El ID del remitente es el grupo
+                            
+                            // Datos para la acción de clic
                             senderId: String(sender_id),
                             openUrl: `chat.html?userId=${sender_id}` 
                         },
-                        // ==========================================================
-                        // === ¡AQUÍ ESTÁ LA MODIFICACIÓN CLAVE PARA AGRUPAR! ===
-                        // ==========================================================
+                        
+                        // Podemos seguir usando las opciones de Android para la prioridad
                         android: {
-                            notification: {
-                                // El 'tag' actúa como el identificador de grupo.
-                                // Todos los mensajes del mismo sender_id compartirán este tag.
-                                tag: String(sender_id) 
-                            }
+                            priority: 'high' // Asegura la entrega rápida
                         }
-                        // ==========================================================
                     };
                     
                     // Añadir la imagen de perfil (sin cambios)
                     if (sender.profile_pic_url) {
                         const fullImageUrl = (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim();
-                        message.android.notification.imageUrl = fullImageUrl;
+                        // La enviamos solo en el campo `data`
                         message.data.imageUrl = fullImageUrl;
                     }
 
                     await admin.messaging().send(message);
-                    console.log(`Notificación push de mensaje (agrupada por tag: ${sender_id}) enviada al usuario ${receiver_id}`);
+                    console.log(`Notificación de DATOS de mensaje enviada al usuario ${receiver_id}`);
                 }
             } catch (pushError) {
                 console.error("Error al enviar la notificación push del mensaje:", pushError);
