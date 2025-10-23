@@ -272,55 +272,60 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
 
             // 5. Lógica de NOTIFICACIÓN PUSH (Firebase Cloud Messaging) con imagen
             // --- LÓGICA DE NOTIFICACIÓN PUSH (CON ESTRUCTURA CORREGIDA) ---
-                try {
-                    const tokenResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [followingId]);
-                    const userToNotify = tokenResult.rows[0];
+            try {
+                const tokenResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [followingId]);
+                const userToNotify = tokenResult.rows[0];
 
-                    if (userToNotify && userToNotify.fcm_token) {
-                        
-                        // ==========================================================
-                        // === ¡AQUÍ ESTÁ LA NUEVA ESTRUCTURA DEL PAYLOAD! ===
-                        // ==========================================================
-
-                        // 1. Construimos el objeto de datos que nuestra app recibirá.
-                        const dataPayload = {
+                if (userToNotify && userToNotify.fcm_token) {
+                    
+                    // ==========================================================
+                    // === ¡AQUÍ ESTÁ LA CORRECCIÓN ESTRUCTURAL! ===
+                    // ==========================================================
+                    
+                    // 1. Prepara el mensaje base para Firebase
+                    const message = {
+                        token: userToNotify.fcm_token,
+                        // El objeto `notification` genérico solo lleva título y cuerpo
+                        notification: {
                             title: '¡Nuevo Seguidor!',
-                            body: `${senderData.username} ha comenzado a seguirte.`,
-                            // Otros datos que queramos enviar
-                            senderId: String(followerId),
-                            // Definimos el ID del canal que el cliente debe usar
-                            channelId: 'followers_channel', 
-                        };
-
-                        // 2. Construimos la URL de la imagen de forma segura y la añadimos.
-                        const serverUrl = process.env.PUBLIC_SERVER_URL;
-                        const profilePicPath = senderData.profile_pic_url;
-                        if (serverUrl && profilePicPath) {
-                            const fullImageUrl = (serverUrl + profilePicPath).trim();
-                            dataPayload.largeIcon = fullImageUrl; // Usamos el nombre que espera nuestro JS
+                            body: `${senderData.username} ha comenzado a seguirte.`
+                        },
+                        // El objeto `data` para tu lógica de frontend
+                        data: {
+                          senderId: String(followerId)
+                        },
+                        // El objeto `android` para personalizaciones específicas de Android
+                        android: {
+                            notification: {
+                                // El `imageUrl` va DENTRO de android.notification
+                            }
                         }
+                    };
 
-                        // 3. El mensaje final AHORA SOLO CONTIENE el campo `data`.
-                        // El campo `notification` se ha ELIMINADO por completo.
-                        const message = {
-                            token: userToNotify.fcm_token,
-                            data: dataPayload,
-                            // Opcional: Configuraciones de Android para prioridad
-                            android: {
-                                priority: 'high',
-                            },
-                        };
-                        // ==========================================================
-                        
-                        console.log("➡️ PUSH (data-only): Enviando payload final a Firebase:", JSON.stringify(message, null, 2));
-                        await admin.messaging().send(message);
-                        console.log(`✅ PUSH (data-only): Notificación enviada con éxito al usuario ${followingId}`);
+                    // 2. Construye la URL de la imagen de forma segura
+                    const serverUrl = process.env.PUBLIC_SERVER_URL;
+                    const profilePicPath = senderData.profile_pic_url;
+
+                    if (serverUrl && profilePicPath) {
+                        const fullImageUrl = (serverUrl + profilePicPath).trim();
+                        // Añade la URL al objeto `android` y al objeto `data`
+                        message.android.notification.imageUrl = fullImageUrl;
+                        message.data.imageUrl = fullImageUrl;
+                        console.log(`- URL de imagen preparada para FCM: ${fullImageUrl}`);
+                    } else {
+                        console.warn(`- No se adjuntará imagen a la notificación push (faltan datos).`);
                     }
-                } catch (pushError) {
-                    console.error("❌ PUSH: Error al enviar la notificación push (FCM):", pushError);
+                    // ==========================================================
+                    
+                    console.log("➡️ PUSH: Enviando payload final a Firebase:", JSON.stringify(message, null, 2));
+                    await admin.messaging().send(message);
+                    console.log(`✅ PUSH: Notificación push enviada con éxito al usuario ${followingId}`);
                 }
-                
-                return res.status(201).json({ success: true, action: 'followed' });
+            } catch (pushError) {
+                console.error("❌ PUSH: Error al enviar la notificación push (FCM):", pushError);
+            }
+            
+            return res.status(201).json({ success: true, action: 'followed' });
 
         } catch (error) {
             console.error('❌ Error crítico en la ruta /follow:', error.stack);
