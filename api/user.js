@@ -228,8 +228,7 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
     // ----------------------------------------------------
     // NUEVA RUTA: Seguir / Dejar de seguir a un usuario
     // ----------------------------------------------------
-    // --- RUTA DE SEGUIMIENTO CON LA LÓGICA DE NOTIFICACIÓN FUNCIONAL ---
-    // --- RUTA PARA SEGUIR / DEJAR DE SEGUIR A UN USUARIO (VERSIÓN COMPLETA Y FINAL) ---
+    // --- RUTA PARA SEGUIR / DEJAR DE SEGUIR A UN USUARIO (VERSIÓN COMPLETA CON IMAGEN EN PUSH) ---
     router.post('/follow/:userId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const followerId = req.user.userId; // El ID del usuario que está haciendo la acción.
         const followingId = parseInt(req.params.userId, 10); // El ID del usuario que va a ser seguido.
@@ -282,23 +281,39 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
                 console.error("Error al procesar la notificación en la app (Socket.IO):", inAppNotifError);
             }
 
-            // 5. Lógica de NOTIFICACIÓN PUSH (Firebase Cloud Messaging)
+            // 5. Lógica de NOTIFICACIÓN PUSH (Firebase Cloud Messaging) con imagen
             // También se ejecuta en un bloque try/catch independiente.
             try {
                 const tokenResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [followingId]);
                 const userToNotify = tokenResult.rows[0];
 
                 if (userToNotify && userToNotify.fcm_token) {
+                    // Construye el payload base de la notificación
+                    const notificationPayload = {
+                        title: '¡Nuevo Seguidor!',
+                        body: `${senderData.username} ha comenzado a seguirte.`
+                    };
+
+                    // Si el seguidor tiene una foto de perfil, construye la URL completa y la añade al payload.
+                    if (senderData.profile_pic_url) {
+                        // Utiliza la variable de entorno para la URL pública del servidor.
+                        const fullImageUrl = process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url;
+                        notificationPayload.imageUrl = fullImageUrl;
+                    }
+
+                    // Construye el mensaje final para FCM
                     const message = {
-                        notification: {
-                            title: '¡Nuevo Seguidor!',
-                            body: `${senderData.username} ha comenzado a seguirte.`
-                        },
-                        token: userToNotify.fcm_token
+                        notification: notificationPayload,
+                        token: userToNotify.fcm_token,
+                        // Añadir datos extra para que el cliente pueda usarlos
+                        data: {
+                          senderId: String(followerId), // Enviar IDs como strings es una buena práctica
+                          imageUrl: notificationPayload.imageUrl || '' // Enviar la URL también en los datos
+                        }
                     };
                     
                     await admin.messaging().send(message);
-                    console.log(`Notificación push enviada al usuario ${followingId}`);
+                    console.log(`Notificación push con imagen enviada al usuario ${followingId}`);
                 } else {
                     console.log(`El usuario ${followingId} no tiene un token FCM para recibir notificaciones push.`);
                 }
