@@ -229,12 +229,12 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
     // NUEVA RUTA: Seguir / Dejar de seguir a un usuario
     // ----------------------------------------------------
     // --- RUTA DE SEGUIMIENTO CON LA LÓGICA DE NOTIFICACIÓN FUNCIONAL ---
-    // --- RUTA PARA SEGUIR / DEJAR DE SEGUIR A UN USUARIO (VERSIÓN COMPLETA) ---
+    // --- RUTA PARA SEGUIR / DEJAR DE SEGUIR A UN USUARIO (VERSIÓN COMPLETA Y FINAL) ---
     router.post('/follow/:userId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const followerId = req.user.userId; // El ID del usuario que está haciendo la acción
-        const followingId = parseInt(req.params.userId, 10); // El ID del usuario que va a ser seguido
+        const followerId = req.user.userId; // El ID del usuario que está haciendo la acción.
+        const followingId = parseInt(req.params.userId, 10); // El ID del usuario que va a ser seguido.
 
-        // Validaciones básicas
+        // 1. Validaciones de la Petición
         if (isNaN(followingId)) {
             return res.status(400).json({ success: false, message: 'El ID de usuario no es válido.' });
         }
@@ -243,63 +243,52 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
         }
 
         try {
-            // 1. INTENTAR DEJAR DE SEGUIR PRIMERO
-            // Se intenta eliminar la relación. Si se elimina una fila, significa que el usuario ya lo seguía.
+            // 2. Lógica de "Dejar de Seguir"
+            // Intentamos eliminar la relación. Si se elimina una fila, la acción fue "unfollow".
             const deleteQuery = 'DELETE FROM followersapp WHERE follower_id = $1 AND following_id = $2';
             const deleteResult = await pool.query(deleteQuery, [followerId, followingId]);
 
             if (deleteResult.rowCount > 0) {
-                // Si se eliminó una fila, la acción fue "unfollow". Respondemos y terminamos.
+                // Si se eliminó, respondemos al cliente y terminamos la ejecución.
                 return res.status(200).json({ success: true, action: 'unfollowed', message: 'Has dejado de seguir a este usuario.' });
             }
 
-            // 2. SI NO SE DEJÓ DE SEGUIR, ENTONCES SE EMPIEZA A SEGUIR
-            // Si no se eliminó ninguna fila, significa que no lo seguía. Procedemos a insertar.
+            // 3. Lógica de "Seguir"
+            // Si no se eliminó nada, procedemos a insertar la nueva relación.
             const insertQuery = 'INSERT INTO followersapp (follower_id, following_id) VALUES ($1, $2)';
             await pool.query(insertQuery, [followerId, followingId]);
             
-            // 3. OBTENER DATOS DEL USUARIO QUE INICIÓ LA ACCIÓN (SENDER)
-            // Necesitamos su nombre y foto de perfil para ambas notificaciones.
+            // Obtenemos los datos del usuario que inició la acción (el seguidor) para usarlos en las notificaciones.
             const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [followerId]);
             const senderData = senderResult.rows[0];
 
-            // 4. LÓGICA DE NOTIFICACIÓN DENTRO DE LA APP (CON SOCKET.IO)
+            // 4. Lógica de Notificación DENTRO DE LA APP (Socket.IO)
+            // Se ejecuta en un bloque try/catch para no detener el proceso si falla.
             try {
-                // A. Inserta la notificación en la tabla `notificationsapp`
-                const notifQuery = `
-                    INSERT INTO notificationsapp (recipient_id, sender_id, type)
-                    VALUES ($1, $2, 'new_follower')
-                    RETURNING *;
-                `;
+                const notifQuery = `INSERT INTO notificationsapp (recipient_id, sender_id, type) VALUES ($1, $2, 'new_follower') RETURNING *;`;
                 const notifResult = await pool.query(notifQuery, [followingId, followerId]);
-                const newNotification = notifResult.rows[0];
-
-                // B. Prepara el payload completo para el cliente
+                
                 const notificationPayload = {
-                    ...newNotification,
+                    ...notifResult.rows[0],
                     sender_username: senderData.username,
                     sender_profile_pic_url: senderData.profile_pic_url
                 };
 
-                // C. Emite el evento a la sala específica del usuario que fue seguido (recipient)
                 const io = req.app.get('socketio');
                 const userRoom = `user-${followingId}`;
                 io.to(userRoom).emit('new_notification', notificationPayload);
                 console.log(`Notificación en-app enviada a la sala ${userRoom}`);
             } catch (inAppNotifError) {
-                // Si esta notificación falla, no detenemos el proceso, solo lo registramos.
-                console.error("Error al crear o emitir la notificación en la app:", inAppNotifError);
+                console.error("Error al procesar la notificación en la app (Socket.IO):", inAppNotifError);
             }
 
-            // 5. LÓGICA DE NOTIFICACIÓN PUSH (CON FIREBASE)
+            // 5. Lógica de NOTIFICACIÓN PUSH (Firebase Cloud Messaging)
+            // También se ejecuta en un bloque try/catch independiente.
             try {
-                // A. Obtiene el token FCM del usuario que fue seguido (recipient)
                 const tokenResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [followingId]);
                 const userToNotify = tokenResult.rows[0];
 
-                // B. Si el usuario tiene un token FCM registrado, se envía la notificación push.
                 if (userToNotify && userToNotify.fcm_token) {
-                    // Construye el mensaje de la notificación push
                     const message = {
                         notification: {
                             title: '¡Nuevo Seguidor!',
@@ -307,23 +296,22 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
                         },
                         token: userToNotify.fcm_token
                     };
-
-                    // C. Envía el mensaje usando el SDK de Firebase Admin
+                    
                     await admin.messaging().send(message);
                     console.log(`Notificación push enviada al usuario ${followingId}`);
+                } else {
+                    console.log(`El usuario ${followingId} no tiene un token FCM para recibir notificaciones push.`);
                 }
             } catch (pushError) {
-                // Si el envío de la notificación push falla, tampoco detenemos el proceso.
-                console.error("Error al enviar la notificación push:", pushError);
+                console.error("Error al enviar la notificación push (FCM):", pushError);
             }
-
-            // 6. RESPONDER A LA PETICIÓN ORIGINAL
-            // Si todo lo anterior (o al menos la acción de seguir) fue exitoso, respondemos al cliente.
+            
+            // 6. Respuesta Final de Éxito
             return res.status(201).json({ success: true, action: 'followed', message: 'Ahora sigues a este usuario.' });
 
         } catch (error) {
-            // Captura de errores generales (problemas con la base de datos, etc.)
-            console.error('❌ Error al procesar la acción de seguir:', error.stack);
+            // 7. Manejo de Errores Generales (ej. fallo de la base de datos)
+            console.error('❌ Error crítico en la ruta /follow:', error.stack);
             res.status(500).json({ success: false, message: 'Error interno del servidor.' });
         }
     });
