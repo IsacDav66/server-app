@@ -110,9 +110,9 @@ app.set('onlineUsers', onlineUsers); // Hacemos el mapa accesible en las rutas
 io.on('connection', (socket) => {
     console.log('🔌 Un usuario se ha conectado:', socket.id);
 
-    const notifyFriendsOfStatusChange = async (userId, isOnline) => {
+    const notifyFriendsOfStatusChange = async (userId, isOnline, currentApp = null) => {
+        console.log(`📢 BACKEND-STATUS: Intentando notificar a amigos de User ${userId}. Estado: ${isOnline}, App: ${currentApp}`);
         try {
-            // 1. Encontrar los amigos de este usuario
             const query = `
                 SELECT f1.follower_id as friend_id
                 FROM followersapp f1
@@ -122,18 +122,21 @@ io.on('connection', (socket) => {
             const result = await pool.query(query, [userId]);
             const friends = result.rows;
             
-            // 2. Emitir la actualización a cada amigo que esté conectado
+            if (friends.length === 0) {
+                console.log(`🟡 BACKEND-STATUS: User ${userId} no tiene amigos para notificar.`);
+                return;
+            }
+
+            const payload = { userId: userId, isOnline: isOnline, currentApp: currentApp };
+            console.log('➡️ BACKEND-STATUS: Preparando para emitir el payload:', payload);
+
             friends.forEach(friend => {
                 const friendRoom = `user-${friend.friend_id}`;
-                const payload = { userId: userId, isOnline: isOnline };
                 io.to(friendRoom).emit('friend_status_update', payload);
+                console.log(`  -> Emitiendo a la sala ${friendRoom}`);
             });
-
-            if (friends.length > 0) {
-                 console.log(`📢 Notificando a ${friends.length} amigo(s) sobre el estado de ${userId}: ${isOnline ? 'Online' : 'Offline'}`);
-            }
         } catch (error) {
-            console.error("Error al notificar a amigos:", error);
+            console.error("❌ BACKEND-STATUS: Error en notifyFriendsOfStatusChange:", error);
         }
     };
 
@@ -156,6 +159,25 @@ io.on('connection', (socket) => {
         }
     });
     // --- FIN DE LA NUEVA LÓGICA ---
+
+
+    socket.on('update_current_app', (packageName) => {
+        console.log(`🔔 BACKEND-STATUS: Evento 'update_current_app' recibido del socket ${socket.id}. Paquete: "${packageName}"`);
+        if (onlineUsers.has(socket.id)) {
+            const userData = onlineUsers.get(socket.id);
+            if (userData.currentApp !== packageName) {
+                console.log(`- El estado de la app para User ${userData.userId} cambió de "${userData.currentApp}" a "${packageName}".`);
+                userData.currentApp = packageName;
+                onlineUsers.set(socket.id, userData);
+                notifyFriendsOfStatusChange(userData.userId, true, packageName);
+            } else {
+                console.log(`- El estado de la app para User ${userData.userId} no ha cambiado. No se notifica.`);
+            }
+        } else {
+            console.warn(`🟡 BACKEND-STATUS: Se recibió 'update_current_app' de un socket no autenticado.`);
+        }
+    });
+    
 
     // El cliente se une a una sala privada al conectarse
     socket.on('join_room', (roomName) => {
