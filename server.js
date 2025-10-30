@@ -146,38 +146,48 @@ io.on('connection', (socket) => {
             const decoded = jwt.verify(token, JWT_SECRET);
             if (decoded.userId) {
                 const userId = decoded.userId;
+                
+                // Asociamos el userId con el socket
+                socket.userId = userId; // <-- AÑADIMOS EL userId DIRECTAMENTE AL OBJETO SOCKET
+
                 const userRoom = `user-${userId}`;
                 socket.join(userRoom);
-                onlineUsers.set(socket.id, userId); // Añadir al mapa de usuarios en línea
-                console.log(`Socket ${socket.id} autenticado como user ${userId} y unido a la sala ${userRoom}`);
+                onlineUsers.set(socket.id, { userId: userId, currentApp: null });
+                console.log(`✅ Socket ${socket.id} autenticado como user ${userId} y unido a la sala ${userRoom}`);
                 
-                // Notificar a los amigos que este usuario está AHORA en línea
-                notifyFriendsOfStatusChange(userId, true);
+                notifyFriendsOfStatusChange(userId, true, null);
             }
         } catch (error) {
-            console.log(`Fallo de autenticación para socket ${socket.id}`);
+            console.log(`❌ Fallo de autenticación para socket ${socket.id}`);
         }
     });
-    // --- FIN DE LA NUEVA LÓGICA ---
-
 
     socket.on('update_current_app', (packageName) => {
-        console.log(`🔔 BACKEND-STATUS: Evento 'update_current_app' recibido del socket ${socket.id}. Paquete: "${packageName}"`);
-        if (onlineUsers.has(socket.id)) {
+        // ==========================================================
+        // === ¡AQUÍ ESTÁ LA CORRECCIÓN CLAVE! ===
+        // ==========================================================
+        // Verificamos si hemos adjuntado `userId` al socket durante la autenticación.
+        if (socket.userId) {
             const userData = onlineUsers.get(socket.id);
-            if (userData.currentApp !== packageName) {
-                console.log(`- El estado de la app para User ${userData.userId} cambió de "${userData.currentApp}" a "${packageName}".`);
-                userData.currentApp = packageName;
-                onlineUsers.set(socket.id, userData);
-                notifyFriendsOfStatusChange(userData.userId, true, packageName);
-            } else {
-                console.log(`- El estado de la app para User ${userData.userId} no ha cambiado. No se notifica.`);
+            // Doble verificación por si acaso
+            if (userData && userData.userId === socket.userId) {
+                console.log(`🔔 BACKEND-STATUS: Evento 'update_current_app' recibido de User ${socket.userId}. Paquete: "${packageName}"`);
+                
+                if (userData.currentApp !== packageName) {
+                    console.log(`- El estado de la app para User ${socket.userId} cambió de "${userData.currentApp}" a "${packageName}".`);
+                    userData.currentApp = packageName;
+                    onlineUsers.set(socket.id, userData);
+                    notifyFriendsOfStatusChange(socket.userId, true, packageName);
+                } else {
+                    console.log(`- El estado de la app para User ${socket.userId} no ha cambiado.`);
+                }
             }
         } else {
-            console.warn(`🟡 BACKEND-STATUS: Se recibió 'update_current_app' de un socket no autenticado.`);
+            console.warn(`🟡 BACKEND-STATUS: Se recibió 'update_current_app' de un socket NO AUTENTICADO (${socket.id}). Evento ignorado.`);
         }
+        // ==========================================================
     });
-    
+
 
     // El cliente se une a una sala privada al conectarse
     socket.on('join_room', (roomName) => {
@@ -294,13 +304,11 @@ io.on('connection', (socket) => {
 
 
     socket.on('disconnect', () => {
-        console.log('🔌 Un usuario se ha desconectado:', socket.id);
-        const userId = onlineUsers.get(socket.id);
-        if (userId) {
-            onlineUsers.delete(socket.id); // Eliminar del mapa
-            // Notificar a los amigos que este usuario está AHORA desconectado
-            notifyFriendsOfStatusChange(userId, false);
-    }
+        console.log(`🔌 Un usuario se ha desconectado: ${socket.id}`);
+        if (socket.userId) { // Usamos la propiedad que adjuntamos
+            onlineUsers.delete(socket.id);
+            notifyFriendsOfStatusChange(socket.userId, false, null);
+        }
     });
     });
 
