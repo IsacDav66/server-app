@@ -413,5 +413,44 @@ router.get('/:userId/following', (req, res, next) => softProtect(req, res, next,
     }
 });
 
+
+
+// ==========================================================
+    // === ¡NUEVA RUTA PARA OBTENER LA LISTA DE AMIGOS MUTUOS! ===
+    // ==========================================================
+    router.get('/friends', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const loggedInUserId = req.user.userId;
+
+        try {
+            // Esta consulta utiliza un INNER JOIN con la misma tabla para encontrar seguimientos recíprocos.
+            const query = `
+                SELECT
+                    u.id,
+                    u.username,
+                    u.profile_pic_url
+                FROM followersapp f1
+                INNER JOIN followersapp f2 ON f1.follower_id = f2.following_id AND f1.following_id = f2.follower_id
+                JOIN usersapp u ON f1.following_id = u.id
+                WHERE f1.follower_id = $1;
+            `;
+            
+            const result = await pool.query(query, [loggedInUserId]);
+            
+            // Ahora, enriquecemos el resultado con el estado en línea
+            const onlineUsers = req.app.get('onlineUsers'); // Obtenemos el mapa de usuarios en línea
+            const friendsWithStatus = result.rows.map(friend => ({
+                ...friend,
+                is_online: Array.from(onlineUsers.values()).includes(friend.id)
+            }));
+
+            res.status(200).json({ success: true, friends: friendsWithStatus });
+        } catch (error) {
+            console.error('Error al obtener la lista de amigos:', error.stack);
+            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        }
+    });
+
+
+
 return router;
 };

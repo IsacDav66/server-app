@@ -102,21 +102,54 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 
+// --- CREA UN MAPA PARA RASTREAR USUARIOS EN LÍNEA ---
+const onlineUsers = new Map(); // K: socket.id, V: userId
+app.set('onlineUsers', onlineUsers); // Hacemos el mapa accesible en las rutas
 
 // --- LÓGICA DE WEBSOCKETS (Pega esto después de tus middlewares) ---
 io.on('connection', (socket) => {
     console.log('🔌 Un usuario se ha conectado:', socket.id);
 
-    // --- NUEVA LÓGICA DE AUTENTICACIÓN Y SALA ---
-    // El cliente debe emitir este evento justo después de conectarse
+    const notifyFriendsOfStatusChange = async (userId, isOnline) => {
+        try {
+            // 1. Encontrar los amigos de este usuario
+            const query = `
+                SELECT f1.follower_id as friend_id
+                FROM followersapp f1
+                INNER JOIN followersapp f2 ON f1.follower_id = f2.following_id AND f1.following_id = f2.follower_id
+                WHERE f1.following_id = $1;
+            `;
+            const result = await pool.query(query, [userId]);
+            const friends = result.rows;
+            
+            // 2. Emitir la actualización a cada amigo que esté conectado
+            friends.forEach(friend => {
+                const friendRoom = `user-${friend.friend_id}`;
+                const payload = { userId: userId, isOnline: isOnline };
+                io.to(friendRoom).emit('friend_status_update', payload);
+            });
+
+            if (friends.length > 0) {
+                 console.log(`📢 Notificando a ${friends.length} amigo(s) sobre el estado de ${userId}: ${isOnline ? 'Online' : 'Offline'}`);
+            }
+        } catch (error) {
+            console.error("Error al notificar a amigos:", error);
+        }
+    };
+
     socket.on('authenticate', (token) => {
         try {
             const jwt = require('jsonwebtoken');
             const decoded = jwt.verify(token, JWT_SECRET);
             if (decoded.userId) {
-                const userRoom = `user-${decoded.userId}`;
+                const userId = decoded.userId;
+                const userRoom = `user-${userId}`;
                 socket.join(userRoom);
-                console.log(`Socket ${socket.id} autenticado y unido a la sala ${userRoom}`);
+                onlineUsers.set(socket.id, userId); // Añadir al mapa de usuarios en línea
+                console.log(`Socket ${socket.id} autenticado como user ${userId} y unido a la sala ${userRoom}`);
+                
+                // Notificar a los amigos que este usuario está AHORA en línea
+                notifyFriendsOfStatusChange(userId, true);
             }
         } catch (error) {
             console.log(`Fallo de autenticación para socket ${socket.id}`);
@@ -240,8 +273,14 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         console.log('🔌 Un usuario se ha desconectado:', socket.id);
+        const userId = onlineUsers.get(socket.id);
+        if (userId) {
+            onlineUsers.delete(socket.id); // Eliminar del mapa
+            // Notificar a los amigos que este usuario está AHORA desconectado
+            notifyFriendsOfStatusChange(userId, false);
+    }
     });
-});
+    });
 
 
 
