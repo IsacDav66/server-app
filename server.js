@@ -127,7 +127,12 @@ io.on('connection', (socket) => {
                 return;
             }
 
-            const payload = { userId: userId, isOnline: isOnline, currentApp: currentApp };
+            const payload = { 
+                userId: userId, 
+                isOnline: isOnline,
+                currentApp: currentApp ? currentApp.name : null,
+                currentAppPackage: currentApp ? currentApp.package : null
+            };
             console.log('➡️ BACKEND-STATUS: Preparando para emitir el payload:', payload);
 
             friends.forEach(friend => {
@@ -162,31 +167,18 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('update_current_app', (packageName) => {
-        // ==========================================================
-        // === ¡AQUÍ ESTÁ LA CORRECCIÓN CLAVE! ===
-        // ==========================================================
-        // Verificamos si hemos adjuntado `userId` al socket durante la autenticación.
+    socket.on('update_current_app', (appData) => { // Ahora esperamos un objeto
         if (socket.userId) {
             const userData = onlineUsers.get(socket.id);
-            // Doble verificación por si acaso
-            if (userData && userData.userId === socket.userId) {
-                console.log(`🔔 BACKEND-STATUS: Evento 'update_current_app' recibido de User ${socket.userId}. Paquete: "${packageName}"`);
-                
-                if (userData.currentApp !== packageName) {
-                    console.log(`- El estado de la app para User ${socket.userId} cambió de "${userData.currentApp}" a "${packageName}".`);
-                    userData.currentApp = packageName;
-                    onlineUsers.set(socket.id, userData);
-                    notifyFriendsOfStatusChange(socket.userId, true, packageName);
-                } else {
-                    console.log(`- El estado de la app para User ${socket.userId} no ha cambiado.`);
-                }
+            // Comparamos el nombre del paquete para ver si ha cambiado
+            if (userData.currentApp?.package !== appData?.package) {
+                userData.currentApp = appData;
+                onlineUsers.set(socket.id, userData);
+                notifyFriendsOfStatusChange(socket.userId, true, appData);
             }
-        } else {
-            console.warn(`🟡 BACKEND-STATUS: Se recibió 'update_current_app' de un socket NO AUTENTICADO (${socket.id}). Evento ignorado.`);
         }
-        // ==========================================================
     });
+
 
 
     // El cliente se une a una sala privada al conectarse
