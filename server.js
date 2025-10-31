@@ -111,7 +111,7 @@ io.on('connection', (socket) => {
     console.log('🔌 Un usuario se ha conectado:', socket.id);
 
     const notifyFriendsOfStatusChange = async (userId, isOnline, currentAppInfo = null) => {
-        console.log(`📢 BACKEND-STATUS: Intentando notificar a amigos de User ${userId}. Estado: ${isOnline}, App: ${currentApp}`);
+        console.log(`📢 BACKEND-STATUS: Intentando notificar a amigos de User ${userId}. Estado: ${isOnline}, App: ${currentAppInfo ? currentAppInfo.name : null}`);
         try {
             const query = `
                 SELECT f1.follower_id as friend_id
@@ -127,13 +127,19 @@ io.on('connection', (socket) => {
                 return;
             }
 
+            // ==========================================================
+            // === ¡AQUÍ ESTÁ LA CORRECCIÓN! ===
+            // ==========================================================
+            // Usamos la variable correcta 'currentAppInfo' que recibe la función.
             const payload = { 
                 userId: userId, 
                 isOnline: isOnline,
                 currentApp: currentAppInfo ? currentAppInfo.name : null,
                 currentAppIcon: currentAppInfo ? currentAppInfo.icon : null,
-                currentAppPackage: currentAppInfo ? currentAppInfo.package : null // Enviamos el paquete también
+                currentAppPackage: currentAppInfo ? currentAppInfo.package : null
             };
+            // ==========================================================
+            
             console.log('➡️ BACKEND-STATUS: Preparando para emitir el payload:', payload);
 
             friends.forEach(friend => {
