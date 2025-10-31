@@ -110,7 +110,7 @@ app.set('onlineUsers', onlineUsers); // Hacemos el mapa accesible en las rutas
 io.on('connection', (socket) => {
     console.log('🔌 Un usuario se ha conectado:', socket.id);
 
-    const notifyFriendsOfStatusChange = async (userId, isOnline, currentApp = null) => {
+    const notifyFriendsOfStatusChange = async (userId, isOnline, currentAppInfo = null) => {
         console.log(`📢 BACKEND-STATUS: Intentando notificar a amigos de User ${userId}. Estado: ${isOnline}, App: ${currentApp}`);
         try {
             const query = `
@@ -130,8 +130,9 @@ io.on('connection', (socket) => {
             const payload = { 
                 userId: userId, 
                 isOnline: isOnline,
-                currentApp: currentApp ? currentApp.name : null,
-                currentAppPackage: currentApp ? currentApp.package : null
+                currentApp: currentAppInfo ? currentAppInfo.name : null,
+                currentAppIcon: currentAppInfo ? currentAppInfo.icon : null,
+                currentAppPackage: currentAppInfo ? currentAppInfo.package : null // Enviamos el paquete también
             };
             console.log('➡️ BACKEND-STATUS: Preparando para emitir el payload:', payload);
 
@@ -167,14 +168,48 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('update_current_app', (appData) => { // Ahora esperamos un objeto
+    socket.on('update_current_app', async (appData) => { // La función ahora es async
         if (socket.userId) {
+            let finalAppData = null;
+            // Si recibimos datos de una app válida...
+            if (appData && appData.package) {
+                try {
+                    // Buscamos la app en nuestra base de datos
+                    const result = await pool.query('SELECT * FROM detected_apps WHERE package_name = $1', [appData.package]);
+                    
+                    if (result.rows.length > 0) {
+                        // ¡Encontrada! Usamos los datos de la BD
+                        const dbApp = result.rows[0];
+                        finalAppData = {
+                            name: dbApp.app_name,
+                            package: dbApp.package_name,
+                            icon: dbApp.icon_url
+                        };
+                    } else {
+                        // No encontrada. Usamos los datos que nos envió el cliente (nombre nativo)
+                        // y notificamos que debe ser registrada.
+                        finalAppData = {
+                            name: appData.name, // El nombre nativo
+                            package: appData.package,
+                            icon: null,
+                            unregistered: true // Flag para que la UI del overlay reaccione
+                        };
+                    }
+
+                } catch (dbError) {
+                    console.error("Error al buscar app en la BD:", dbError);
+                    // Si la BD falla, usamos el nombre nativo como fallback.
+                    finalAppData = { name: appData.name, package: appData.package, icon: null };
+                }
+            }
+            
+            // Comparamos y actualizamos el estado
             const userData = onlineUsers.get(socket.id);
-            // Comparamos el nombre del paquete para ver si ha cambiado
-            if (userData.currentApp?.package !== appData?.package) {
-                userData.currentApp = appData;
+            if (userData && (userData.currentApp?.package !== finalAppData?.package)) {
+                userData.currentApp = finalAppData;
                 onlineUsers.set(socket.id, userData);
-                notifyFriendsOfStatusChange(socket.userId, true, appData);
+                // Pasamos el objeto final al notificador
+                notifyFriendsOfStatusChange(socket.userId, true, finalAppData);
             }
         }
     });
