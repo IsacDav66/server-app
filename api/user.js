@@ -228,21 +228,23 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
     // ----------------------------------------------------
     // NUEVA RUTA: Seguir / Dejar de seguir a un usuario
     // ----------------------------------------------------
-    // --- RUTA PARA SEGUIR / DEJAR DE SEGUIR A UN USUARIO (VERSIÓN FINAL CON DEPURACIÓN DE IMAGEN) ---
+    // --- RUTA DE SEGUIMIENTO CON PAYLOAD DE NOTIFICACIÓN UNIFICADO ---
     router.post('/follow/:userId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const followerId = req.user.userId;
         const followingId = parseInt(req.params.userId, 10);
 
-        // 1. Validaciones de la Petición
         if (isNaN(followingId) || followerId === followingId) {
             return res.status(400).json({ success: false, message: 'Solicitud inválida.' });
         }
 
         try {
+            // Lógica de "Dejar de Seguir" (sin cambios)
             const deleteResult = await pool.query('DELETE FROM followersapp WHERE follower_id = $1 AND following_id = $2', [followerId, followingId]);
             if (deleteResult.rowCount > 0) {
                 return res.status(200).json({ success: true, action: 'unfollowed' });
             }
+
+            // Lógica de "Seguir" (sin cambios)
             await pool.query('INSERT INTO followersapp (follower_id, following_id) VALUES ($1, $2)', [followerId, followingId]);
             
             const senderData = (await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [followerId])).rows[0];
@@ -268,53 +270,55 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
 
             // 5. Lógica de NOTIFICACIÓN PUSH (Firebase Cloud Messaging) con imagen
             // --- LÓGICA DE NOTIFICACIÓN PUSH (CON ESTRUCTURA CORREGIDA) ---
-             try {
+            try {
                 const tokenResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [followingId]);
                 const userToNotify = tokenResult.rows[0];
 
                 if (userToNotify && userToNotify.fcm_token) {
                     
+                    // ==========================================================
+                    // === ¡AQUÍ ESTÁ LA CORRECCIÓN ESTRUCTURAL! ===
+                    // ==========================================================
+                    // Construimos un payload de "SOLO DATOS", sin el campo "notification".
                     const message = {
                         token: userToNotify.fcm_token,
-                        notification: {
-                            title: '¡Nuevo Seguidor!',
-                            body: `${senderData.username} ha comenzado a seguirte.`
-                        },
-                        // ==========================================================
-                        // === ¡AQUÍ ESTÁ LA MODIFICACIÓN CLAVE! ===
-                        // ==========================================================
                         data: {
-                        senderId: String(followerId),
-                        // Creamos la URL de destino que el frontend usará para navegar.
-                        // OJO: Usamos la ruta relativa, sin el dominio.
-                        openUrl: `user_profile.html?id=${followerId}` 
+                            // Datos para que el cliente construya la notificación
+                            title: '¡Nuevo Seguidor!',
+                            body: `${senderData.username} ha comenzado a seguirte.`,
+                            
+                            // Los campos que faltaban y que nuestro servicio Java requiere
+                            channelId: 'followers_channel', // El ID del canal para seguidores
+                            groupId: `followers-${followingId}`, // Un ID de grupo para todas las notificaciones de seguidor de este usuario
+
+                            // Datos adicionales para la acción de clic y el icono
+                            senderId: String(followerId),
+                            openUrl: `user_profile.html?id=${followerId}`
                         },
-                        // ==========================================================
                         android: {
-                            notification: {}
+                            priority: 'high'
                         }
                     };
+                    // ==========================================================
 
-                    const serverUrl = process.env.PUBLIC_SERVER_URL;
-                    const profilePicPath = senderData.profile_pic_url;
-
-                    if (serverUrl && profilePicPath) {
-                        const fullImageUrl = (serverUrl + profilePicPath).trim();
-                        message.android.notification.imageUrl = fullImageUrl;
-                        message.data.imageUrl = fullImageUrl; // También lo enviamos en data para el frontend
+                    // Añadir la URL de la imagen directamente al campo `data`
+                    if (senderData.profile_pic_url) {
+                        const fullImageUrl = (process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url).trim();
+                        message.data.imageUrl = fullImageUrl;
                     }
                     
                     await admin.messaging().send(message);
-                    console.log(`✅ PUSH: Notificación con acción de clic enviada al usuario ${followingId}`);
+                    console.log(`Notificación de DATOS de seguidor enviada al usuario ${followingId}`);
                 }
             } catch (pushError) {
-                console.error("❌ PUSH: Error al enviar la notificación push (FCM):", pushError);
+                console.error("❌ PUSH: Error al enviar la notificación push de seguidor:", pushError);
             }
             
             return res.status(201).json({ success: true, action: 'followed' });
 
         } catch (error) {
             console.error('❌ Error crítico en la ruta /follow:', error.stack);
+            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
         }
     });
 
