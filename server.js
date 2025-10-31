@@ -409,6 +409,18 @@ async function initDatabase() {
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
     `;
+    
+    // AÑADE ESTA QUERY
+    const detectedAppsQuery = `
+        CREATE TABLE IF NOT EXISTS detected_apps (
+            package_name VARCHAR(255) PRIMARY KEY,
+            app_name VARCHAR(100) NOT NULL,
+            icon_url VARCHAR(255),
+            added_by_user_id INTEGER REFERENCES usersapp(id),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
+
 
     try {
         await pool.query(usersQuery);
@@ -429,6 +441,10 @@ async function initDatabase() {
         
         await pool.query(notificationsQuery);
         console.log('✅ Tabla "notificationsapp" verificada/creada.');
+        
+        // AÑADE ESTA LLAMADA
+        await pool.query(detectedAppsQuery);
+        console.log('✅ Tabla "detected_apps" verificada/creada.');
     } catch (err) {
         console.error('❌ Error al inicializar la base de datos:', err.stack);
     }
@@ -447,8 +463,13 @@ const chatRoutes = require('./api/chat'); // <-- AÑADE
 
 // --- AÑADE LA NUEVA RUTA ---
 const notificationRoutes = require('./api/notifications');
+const appRoutes = require('./api/apps'); // <-- AÑADE ESTA LÍNEA
+
+
 app.set('socketio', io); // <-- AÑADE ESTA LÍNEA
 app.use('/api/notifications', notificationRoutes(pool, JWT_SECRET));
+app.use('/api/apps', appRoutes(pool, JWT_SECRET)); // <-- AÑADE ESTA LÍNEA
+
 app.use('/api/chat', chatRoutes(pool, JWT_SECRET, io)); // <-- Pasamos 'io' como argumento
 
 // Manejador de Errores Final
