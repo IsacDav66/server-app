@@ -463,6 +463,27 @@ async function initDatabase() {
     `;
 
 
+    // --- AÑADE ESTE BLOQUE COMPLETO AL FINAL DE LA FUNCIÓN ---
+    // TABLA DE MUNDOS ACTIVOS (active_worlds)
+    const activeWorldsQuery = `
+        CREATE TABLE IF NOT EXISTS active_worlds (
+            world_id SERIAL PRIMARY KEY,
+            host_user_id INTEGER UNIQUE NOT NULL REFERENCES usersapp(id) ON DELETE CASCADE,
+            world_name VARCHAR(255) NOT NULL,
+            player_count INTEGER DEFAULT 0,
+            max_players INTEGER DEFAULT 8,
+            game_version VARCHAR(50),
+            public_ip VARCHAR(45) NOT NULL,
+            public_port INTEGER NOT NULL,
+            last_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
+
+    const activeWorldsIndexQuery = `
+        CREATE INDEX IF NOT EXISTS idx_host_user_id ON active_worlds (host_user_id);
+    `;
+
+
     try {
         await pool.query(usersQuery);
         console.log('✅ Tabla "usersapp" verificada/creada.');
@@ -486,6 +507,15 @@ async function initDatabase() {
         // AÑADE ESTA LLAMADA
         await pool.query(detectedAppsQuery);
         console.log('✅ Tabla "detected_apps" verificada/creada.');
+    
+        
+        // --- AÑADE ESTAS LÍNEAS AL FINAL DEL BLOQUE try ---
+        await pool.query(activeWorldsQuery);
+        console.log('✅ Tabla "active_worlds" verificada/creada.');
+        await pool.query(activeWorldsIndexQuery);
+        console.log('✅ Índice para "active_worlds" verificado/creado.');
+        // --- FIN DE LAS LÍNEAS A AÑADIR ---
+        
     } catch (err) {
         console.error('❌ Error al inicializar la base de datos:', err.stack);
     }
@@ -505,6 +535,9 @@ const chatRoutes = require('./api/chat'); // <-- AÑADE
 // --- AÑADE LA NUEVA RUTA ---
 const notificationRoutes = require('./api/notifications');
 const appRoutes = require('./api/apps'); // <-- AÑADE ESTA LÍNEA
+
+const worldRoutes = require('./api/worlds'); // <-- AÑADE ESTA LÍNEA
+app.use('/api/worlds', worldRoutes(pool, JWT_SECRET)); // <-- AÑADE ESTA LÍNEA
 
 
 app.set('socketio', io); // <-- AÑADE ESTA LÍNEA
