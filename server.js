@@ -390,11 +390,14 @@ io.emit('lan_worlds_update', worldsForClient);
     });
 
     // ESTE ES EL EVENTO MÁS IMPORTANTE: EL RELAY
-    socket.on('relay_packet', (data) => {
-        // 'data' contiene el roomId y el paquete de datos UDP (enviado como un Buffer o Base64)
-        if (socket.rooms.has(data.roomId)) {
-            // Reenvía el paquete a todos los demás en la sala, excepto al remitente original.
-            socket.to(data.roomId).emit('packet_from_server', data.packet);
+    socket.on('packet', (packet) => {
+        // Buscamos la primera sala a la que pertenece el socket que empieza con "lan_"
+        const roomId = Array.from(socket.rooms).find(room => room.startsWith('lan_'));
+        
+        if (roomId) {
+            // Reenvía el paquete binario a todos los demás en la sala.
+            // 'volatile' es una optimización: si un paquete se pierde, no se reintenta (ideal para UDP).
+            socket.to(roomId).volatile.emit('packet', packet);
         }
     });
 
