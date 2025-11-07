@@ -364,7 +364,12 @@ io.on('connection', (socket) => {
         socket.join(roomId);
         
         // Notificar a todos que hay un nuevo mundo disponible
-        io.emit('lan_worlds_update', Array.from(lanWorlds.values()));
+        const worldsForClient = Array.from(lanWorlds.entries()).map(([roomId, worldData]) => ({
+    roomId: roomId,
+    host: worldData.host,
+    players: worldData.players // Mantenemos el array completo por ahora
+}));
+io.emit('lan_worlds_update', worldsForClient);
         console.log(`[LAN] Usuario ${socket.username} ha creado la sala ${roomId}`);
     });
 
@@ -374,7 +379,12 @@ io.on('connection', (socket) => {
             socket.join(roomId);
 
             // Notificar a todos la actualización de jugadores
-            io.emit('lan_worlds_update', Array.from(lanWorlds.values()));
+            const worldsForClient = Array.from(lanWorlds.entries()).map(([roomId, worldData]) => ({
+            roomId: roomId,
+            host: worldData.host,
+            players: worldData.players
+        }));
+        io.emit('lan_worlds_update', worldsForClient);
             console.log(`[LAN] Usuario ${socket.username} se ha unido a la sala ${roomId}`);
         }
     });
@@ -396,20 +406,25 @@ io.on('connection', (socket) => {
         }
         // Limpiar salas de LAN
         lanWorlds.forEach((world, roomId) => {
-            // Si el que se desconecta es el host, se cierra la sala
-            if (world.host.id === socket.userId) {
-                lanWorlds.delete(roomId);
-                io.emit('lan_worlds_update', Array.from(lanWorlds.values()));
-                console.log(`[LAN] Sala ${roomId} cerrada porque el host se desconectó.`);
-            } else {
-                // Si es un jugador, simplemente lo quitamos de la lista
-                const index = world.players.indexOf(socket.id);
-                if (index > -1) {
-                    world.players.splice(index, 1);
-                    io.emit('lan_worlds_update', Array.from(lanWorlds.values()));
-                }
+        if (world.host.id === socket.userId) {
+            lanWorlds.delete(roomId);
+            
+            // REEMPLAZA AQUÍ
+            const worldsForClient = Array.from(lanWorlds.entries()).map(([rId, wData]) => ({ roomId: rId, host: wData.host, players: wData.players }));
+            io.emit('lan_worlds_update', worldsForClient);
+
+            console.log(`[LAN] Sala ${roomId} cerrada porque el host se desconectó.`);
+        } else {
+            const index = world.players.indexOf(socket.id);
+            if (index > -1) {
+                world.players.splice(index, 1);
+                
+                // Y REEMPLAZA AQUÍ TAMBIÉN
+                const worldsForClient = Array.from(lanWorlds.entries()).map(([rId, wData]) => ({ roomId: rId, host: wData.host, players: wData.players }));
+                io.emit('lan_worlds_update', worldsForClient);
             }
-        });
+        }
+    });
     });
     });
 
