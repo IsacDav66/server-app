@@ -154,25 +154,38 @@ io.on('connection', (socket) => {
         }
     };
 
-    socket.on('authenticate', (token) => {
+    socket.on('authenticate', async (token) => { // <-- Se convierte en una función async
         try {
             const jwt = require('jsonwebtoken');
             const decoded = jwt.verify(token, JWT_SECRET);
             if (decoded.userId) {
                 const userId = decoded.userId;
+
+                // --- INICIO DE LA NUEVA LÓGICA ---
+                const userQuery = 'SELECT username, profile_pic_url FROM usersapp WHERE id = $1';
+                const userResult = await pool.query(userQuery, [userId]);
                 
-                // Asociamos el userId con el socket
-                socket.userId = userId; // <-- AÑADIMOS EL userId DIRECTAMENTE AL OBJETO SOCKET
+                if (userResult.rows.length === 0) {
+                    console.log(`❌ Fallo de autenticación: Usuario ${userId} no encontrado en la BD.`);
+                    return;
+                }
+                const userData = userResult.rows[0];
+
+                // Adjuntamos todos los datos que necesitamos al objeto socket
+                socket.userId = userId;
+                socket.username = userData.username; // <-- La solución para el "undefined"
+                socket.avatarUrl = userData.profile_pic_url; // <-- Lo necesitaremos para mostrar la imagen del host
+                // --- FIN DE LA NUEVA LÓGICA ---
 
                 const userRoom = `user-${userId}`;
                 socket.join(userRoom);
                 onlineUsers.set(socket.id, { userId: userId, currentApp: null });
-                console.log(`✅ Socket ${socket.id} autenticado como user ${userId} y unido a la sala ${userRoom}`);
+                console.log(`✅ Socket ${socket.id} autenticado como user ${socket.username} y unido a la sala ${userRoom}`);
                 
                 notifyFriendsOfStatusChange(userId, true, null);
             }
         } catch (error) {
-            console.log(`❌ Fallo de autenticación para socket ${socket.id}`);
+            console.log(`❌ Fallo de autenticación para socket ${socket.id}: ${error.message}`);
         }
     });
 
