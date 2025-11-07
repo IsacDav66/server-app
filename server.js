@@ -32,6 +32,8 @@ const io = new Server(server, {
     path: "/app/socket.io/"
 });
 
+const lanWorlds = new Map(); // K: roomId, V: { host: { id, username, avatar }, players: [socketId] }
+
 // ==========================================================
 // === ¡AQUÍ ESTÁ LA LÍNEA MÁGICA QUE SOLUCIONA EL BUG! ===
 // ==========================================================
@@ -334,7 +336,44 @@ io.on('connection', (socket) => {
         }
     });
 
+        socket.on('host_lan_world', () => {
+        if (!socket.userId) return; // Solo usuarios autenticados
 
+        const roomId = `lan_${socket.userId}`;
+        lanWorlds.set(roomId, {
+            host: { 
+                id: socket.userId, 
+                username: socket.username, // Deberás adjuntar estos datos al socket al autenticar
+                avatar: socket.avatarUrl 
+            },
+            players: [socket.id]
+        });
+        socket.join(roomId);
+        
+        // Notificar a todos que hay un nuevo mundo disponible
+        io.emit('lan_worlds_update', Array.from(lanWorlds.values()));
+        console.log(`[LAN] Usuario ${socket.username} ha creado la sala ${roomId}`);
+    });
+
+    socket.on('join_lan_world', ({ roomId }) => {
+        if (lanWorlds.has(roomId)) {
+            lanWorlds.get(roomId).players.push(socket.id);
+            socket.join(roomId);
+
+            // Notificar a todos la actualización de jugadores
+            io.emit('lan_worlds_update', Array.from(lanWorlds.values()));
+            console.log(`[LAN] Usuario ${socket.username} se ha unido a la sala ${roomId}`);
+        }
+    });
+
+    // ESTE ES EL EVENTO MÁS IMPORTANTE: EL RELAY
+    socket.on('relay_packet', (data) => {
+        // 'data' contiene el roomId y el paquete de datos UDP (enviado como un Buffer o Base64)
+        if (socket.rooms.has(data.roomId)) {
+            // Reenvía el paquete a todos los demás en la sala, excepto al remitente original.
+            socket.to(data.roomId).emit('packet_from_server', data.packet);
+        }
+    });
 
     socket.on('disconnect', () => {
         console.log(`🔌 Un usuario se ha desconectado: ${socket.id}`);
@@ -342,6 +381,22 @@ io.on('connection', (socket) => {
             onlineUsers.delete(socket.id);
             notifyFriendsOfStatusChange(socket.userId, false, null);
         }
+        // Limpiar salas de LAN
+        lanWorlds.forEach((world, roomId) => {
+            // Si el que se desconecta es el host, se cierra la sala
+            if (world.host.id === socket.userId) {
+                lanWorlds.delete(roomId);
+                io.emit('lan_worlds_update', Array.from(lanWorlds.values()));
+                console.log(`[LAN] Sala ${roomId} cerrada porque el host se desconectó.`);
+            } else {
+                // Si es un jugador, simplemente lo quitamos de la lista
+                const index = world.players.indexOf(socket.id);
+                if (index > -1) {
+                    world.players.splice(index, 1);
+                    io.emit('lan_worlds_update', Array.from(lanWorlds.values()));
+                }
+            }
+        });
     });
     });
 
