@@ -32,8 +32,6 @@ const io = new Server(server, {
     path: "/app/socket.io/"
 });
 
-const lanWorlds = new Map(); // K: roomId, V: { host: { id, username, avatar }, players: [socketId] }
-
 // ==========================================================
 // === ¡AQUÍ ESTÁ LA LÍNEA MÁGICA QUE SOLUCIONA EL BUG! ===
 // ==========================================================
@@ -154,38 +152,25 @@ io.on('connection', (socket) => {
         }
     };
 
-    socket.on('authenticate', async (token) => { // <-- Se convierte en una función async
+    socket.on('authenticate', (token) => {
         try {
             const jwt = require('jsonwebtoken');
             const decoded = jwt.verify(token, JWT_SECRET);
             if (decoded.userId) {
                 const userId = decoded.userId;
-
-                // --- INICIO DE LA NUEVA LÓGICA ---
-                const userQuery = 'SELECT username, profile_pic_url FROM usersapp WHERE id = $1';
-                const userResult = await pool.query(userQuery, [userId]);
                 
-                if (userResult.rows.length === 0) {
-                    console.log(`❌ Fallo de autenticación: Usuario ${userId} no encontrado en la BD.`);
-                    return;
-                }
-                const userData = userResult.rows[0];
-
-                // Adjuntamos todos los datos que necesitamos al objeto socket
-                socket.userId = userId;
-                socket.username = userData.username; // <-- La solución para el "undefined"
-                socket.avatarUrl = userData.profile_pic_url; // <-- Lo necesitaremos para mostrar la imagen del host
-                // --- FIN DE LA NUEVA LÓGICA ---
+                // Asociamos el userId con el socket
+                socket.userId = userId; // <-- AÑADIMOS EL userId DIRECTAMENTE AL OBJETO SOCKET
 
                 const userRoom = `user-${userId}`;
                 socket.join(userRoom);
                 onlineUsers.set(socket.id, { userId: userId, currentApp: null });
-                console.log(`✅ Socket ${socket.id} autenticado como user ${socket.username} y unido a la sala ${userRoom}`);
+                console.log(`✅ Socket ${socket.id} autenticado como user ${userId} y unido a la sala ${userRoom}`);
                 
                 notifyFriendsOfStatusChange(userId, true, null);
             }
         } catch (error) {
-            console.log(`❌ Fallo de autenticación para socket ${socket.id}: ${error.message}`);
+            console.log(`❌ Fallo de autenticación para socket ${socket.id}`);
         }
     });
 
@@ -349,57 +334,7 @@ io.on('connection', (socket) => {
         }
     });
 
-        socket.on('host_lan_world', () => {
-        if (!socket.userId) return; // Solo usuarios autenticados
 
-        const roomId = `lan_${socket.userId}`;
-        lanWorlds.set(roomId, {
-            host: { 
-                id: socket.userId, 
-                username: socket.username, // Deberás adjuntar estos datos al socket al autenticar
-                avatar: socket.avatarUrl 
-            },
-            players: [socket.id]
-        });
-        socket.join(roomId);
-        
-        // Notificar a todos que hay un nuevo mundo disponible
-        const worldsForClient = Array.from(lanWorlds.entries()).map(([roomId, worldData]) => ({
-    roomId: roomId,
-    host: worldData.host,
-    players: worldData.players // Mantenemos el array completo por ahora
-}));
-io.emit('lan_worlds_update', worldsForClient);
-        console.log(`[LAN] Usuario ${socket.username} ha creado la sala ${roomId}`);
-    });
-
-    socket.on('join_lan_world', ({ roomId }) => {
-        if (lanWorlds.has(roomId)) {
-            lanWorlds.get(roomId).players.push(socket.id);
-            socket.join(roomId);
-
-            // Notificar a todos la actualización de jugadores
-            const worldsForClient = Array.from(lanWorlds.entries()).map(([roomId, worldData]) => ({
-            roomId: roomId,
-            host: worldData.host,
-            players: worldData.players
-        }));
-        io.emit('lan_worlds_update', worldsForClient);
-            console.log(`[LAN] Usuario ${socket.username} se ha unido a la sala ${roomId}`);
-        }
-    });
-
-    // ESTE ES EL EVENTO MÁS IMPORTANTE: EL RELAY
-    socket.on('packet', (packet) => {
-        // Buscamos la primera sala a la que pertenece el socket que empieza con "lan_"
-        const roomId = Array.from(socket.rooms).find(room => room.startsWith('lan_'));
-        
-        if (roomId) {
-            // Reenvía el paquete binario a todos los demás en la sala.
-            // 'volatile' es una optimización: si un paquete se pierde, no se reintenta (ideal para UDP).
-            socket.to(roomId).volatile.emit('packet', packet);
-        }
-    });
 
     socket.on('disconnect', () => {
         console.log(`🔌 Un usuario se ha desconectado: ${socket.id}`);
@@ -407,27 +342,6 @@ io.emit('lan_worlds_update', worldsForClient);
             onlineUsers.delete(socket.id);
             notifyFriendsOfStatusChange(socket.userId, false, null);
         }
-        // Limpiar salas de LAN
-        lanWorlds.forEach((world, roomId) => {
-        if (world.host.id === socket.userId) {
-            lanWorlds.delete(roomId);
-            
-            // REEMPLAZA AQUÍ
-            const worldsForClient = Array.from(lanWorlds.entries()).map(([rId, wData]) => ({ roomId: rId, host: wData.host, players: wData.players }));
-            io.emit('lan_worlds_update', worldsForClient);
-
-            console.log(`[LAN] Sala ${roomId} cerrada porque el host se desconectó.`);
-        } else {
-            const index = world.players.indexOf(socket.id);
-            if (index > -1) {
-                world.players.splice(index, 1);
-                
-                // Y REEMPLAZA AQUÍ TAMBIÉN
-                const worldsForClient = Array.from(lanWorlds.entries()).map(([rId, wData]) => ({ roomId: rId, host: wData.host, players: wData.players }));
-                io.emit('lan_worlds_update', worldsForClient);
-            }
-        }
-    });
     });
     });
 
