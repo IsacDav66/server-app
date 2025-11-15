@@ -452,15 +452,20 @@ async function initDatabase() {
     `;
     
     // AÑADE ESTA QUERY
+     // AÑADE ESTA QUERY
     const detectedAppsQuery = `
         CREATE TABLE IF NOT EXISTS detected_apps (
             package_name VARCHAR(255) PRIMARY KEY,
             app_name VARCHAR(100) NOT NULL,
             icon_url VARCHAR(255),
             added_by_user_id INTEGER REFERENCES usersapp(id),
+            is_game BOOLEAN DEFAULT NULL, -- <-- ¡NUEVA COLUMNA!
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
     `;
+
+
+    
 
 
     try {
