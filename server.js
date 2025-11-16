@@ -175,49 +175,64 @@ io.on('connection', (socket) => {
     });
 
     socket.on('update_current_app', async (appData) => {
-        if (socket.userId) {
-            let finalAppData = null;
-            if (appData && appData.package) {
-                try {
-                    const result = await pool.query('SELECT * FROM detected_apps WHERE package_name = $1', [appData.package]);
-                    
-                    if (result.rows.length > 0) {
-                        const dbApp = result.rows[0];
-                        finalAppData = { name: dbApp.app_name, package: dbApp.package_name, icon: dbApp.icon_url, is_game: dbApp.is_game };
+        if (!socket.userId) return; // Salir si el socket no está autenticado
 
-                        // ==========================================================
-                        // === ¡NUEVA LÓGICA PARA REGISTRAR EL JUEGO JUGADO! ===
-                        // ==========================================================
-                        // Si la app detectada es un juego, lo registramos para el usuario.
-                        if (dbApp.is_game === true) {
-                            const upsertQuery = `
-                                INSERT INTO user_played_games (user_id, package_name, last_played_at)
-                                VALUES ($1, $2, CURRENT_TIMESTAMP)
-                                ON CONFLICT (user_id, package_name)
-                                DO UPDATE SET last_played_at = CURRENT_TIMESTAMP;
-                            `;
-                            await pool.query(upsertQuery, [socket.userId, dbApp.package_name]);
-                            console.log(`🕹️  Juego registrado para User ${socket.userId}: ${dbApp.package_name}`);
-                        }
-                        // ==========================================================
+        let finalAppData = null;
 
-                    } else {
-                        finalAppData = { name: appData.name, package: appData.package, icon: null, unregistered: true };
-                    }
-                } catch (dbError) {
-                    console.error("Error al buscar app en la BD:", dbError);
-                    finalAppData = { name: appData.name, package: appData.package, icon: null };
+        // --- PASO 1: Determinar los datos de la app actual ---
+        if (appData && appData.package) {
+            try {
+                const result = await pool.query('SELECT * FROM detected_apps WHERE package_name = $1', [appData.package]);
+                
+                if (result.rows.length > 0) {
+                    const dbApp = result.rows[0];
+                    finalAppData = { name: dbApp.app_name, package: dbApp.package_name, icon: dbApp.icon_url, is_game: dbApp.is_game };
+                } else {
+                    finalAppData = { name: appData.name, package: appData.package, icon: null, unregistered: true };
                 }
-            }
-            
-            const userData = onlineUsers.get(socket.id);
-            if (userData && (userData.currentApp?.package !== finalAppData?.package)) {
-                userData.currentApp = finalAppData;
-                onlineUsers.set(socket.id, userData);
-                notifyFriendsOfStatusChange(socket.userId, true, finalAppData);
+            } catch (dbError) {
+                console.error("Error al buscar app en la BD:", dbError);
+                finalAppData = { name: appData.name, package: appData.package, icon: null };
             }
         }
+
+        // --- PASO 2: Lógica de la Base de Datos (SIEMPRE se ejecuta) ---
+        // Si la app detectada existe en nuestra BD y está marcada como juego,
+        // la registramos en el historial del usuario.
+        if (finalAppData && finalAppData.is_game === true) {
+            try {
+                const upsertQuery = `
+                    INSERT INTO user_played_games (user_id, package_name, last_played_at)
+                    VALUES ($1, $2, CURRENT_TIMESTAMP)
+                    ON CONFLICT (user_id, package_name)
+                    DO UPDATE SET last_played_at = CURRENT_TIMESTAMP;
+                `;
+                await pool.query(upsertQuery, [socket.userId, finalAppData.package]);
+                console.log(`✅ [DB LOG] Juego registrado/actualizado para User ${socket.userId}: ${finalAppData.package}`);
+            } catch(dbError) {
+                console.error(`❌ [DB LOG] Error al registrar juego para User ${socket.userId}:`, dbError);
+            }
+        }
+
+        // --- PASO 3: Lógica de Notificación a Amigos (SOLO si la app cambió) ---
+        // Obtenemos el estado actual del usuario del mapa en memoria.
+        const userData = onlineUsers.get(socket.id);
+        
+        // Comparamos el paquete de la app anterior con el de la nueva.
+        if (userData && (userData.currentApp?.package !== finalAppData?.package)) {
+            console.log(`🔄 [STATE CHANGE] User ${socket.userId} cambió de app: ${userData.currentApp?.package || 'ninguna'} -> ${finalAppData?.package || 'ninguna'}`);
+            
+            // Actualizamos el mapa en memoria con la nueva app.
+            userData.currentApp = finalAppData;
+            onlineUsers.set(socket.id, userData);
+            
+            // Notificamos a los amigos sobre el cambio de estado.
+            notifyFriendsOfStatusChange(socket.userId, true, finalAppData);
+        } else {
+            console.log(`✔️ [NO CHANGE] User ${socket.userId} sigue en la misma app. No se notifica a amigos.`);
+        }
     });
+
 
 
 
