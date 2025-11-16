@@ -454,6 +454,36 @@ router.get('/:userId/following', (req, res, next) => softProtect(req, res, next,
         }
     });
 
+// ==========================================================
+// === ¡NUEVA RUTA PARA OBTENER LOS JUEGOS JUGADOS! ===
+// ==========================================================
+router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    const targetUserId = parseInt(req.params.userId);
+
+    if (isNaN(targetUserId)) {
+        return res.status(400).json({ success: false, message: 'ID de usuario inválido.' });
+    }
+
+    try {
+        const query = `
+            SELECT
+                da.app_name,
+                da.package_name,
+                da.icon_url
+            FROM user_played_games upg
+            JOIN detected_apps da ON upg.package_name = da.package_name
+            WHERE upg.user_id = $1
+            ORDER BY upg.last_played_at DESC;
+        `;
+        const result = await pool.query(query, [targetUserId]);
+        res.status(200).json({ success: true, games: result.rows });
+    } catch (error) {
+        console.error('Error al obtener los juegos jugados:', error.stack);
+        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+    }
+});
+// ==========================================================
+
 
 
 return router;

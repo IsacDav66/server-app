@@ -174,51 +174,51 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('update_current_app', async (appData) => { // La función ahora es async
+    socket.on('update_current_app', async (appData) => {
         if (socket.userId) {
             let finalAppData = null;
-            // Si recibimos datos de una app válida...
             if (appData && appData.package) {
                 try {
-                    // Buscamos la app en nuestra base de datos
                     const result = await pool.query('SELECT * FROM detected_apps WHERE package_name = $1', [appData.package]);
                     
                     if (result.rows.length > 0) {
-                        // ¡Encontrada! Usamos los datos de la BD
                         const dbApp = result.rows[0];
-                        finalAppData = {
-                            name: dbApp.app_name,
-                            package: dbApp.package_name,
-                            icon: dbApp.icon_url
-                        };
-                    } else {
-                        // No encontrada. Usamos los datos que nos envió el cliente (nombre nativo)
-                        // y notificamos que debe ser registrada.
-                        finalAppData = {
-                            name: appData.name, // El nombre nativo
-                            package: appData.package,
-                            icon: null,
-                            unregistered: true // Flag para que la UI del overlay reaccione
-                        };
-                    }
+                        finalAppData = { name: dbApp.app_name, package: dbApp.package_name, icon: dbApp.icon_url, is_game: dbApp.is_game };
 
+                        // ==========================================================
+                        // === ¡NUEVA LÓGICA PARA REGISTRAR EL JUEGO JUGADO! ===
+                        // ==========================================================
+                        // Si la app detectada es un juego, lo registramos para el usuario.
+                        if (dbApp.is_game === true) {
+                            const upsertQuery = `
+                                INSERT INTO user_played_games (user_id, package_name, last_played_at)
+                                VALUES ($1, $2, CURRENT_TIMESTAMP)
+                                ON CONFLICT (user_id, package_name)
+                                DO UPDATE SET last_played_at = CURRENT_TIMESTAMP;
+                            `;
+                            await pool.query(upsertQuery, [socket.userId, dbApp.package_name]);
+                            console.log(`🕹️  Juego registrado para User ${socket.userId}: ${dbApp.package_name}`);
+                        }
+                        // ==========================================================
+
+                    } else {
+                        finalAppData = { name: appData.name, package: appData.package, icon: null, unregistered: true };
+                    }
                 } catch (dbError) {
                     console.error("Error al buscar app en la BD:", dbError);
-                    // Si la BD falla, usamos el nombre nativo como fallback.
                     finalAppData = { name: appData.name, package: appData.package, icon: null };
                 }
             }
             
-            // Comparamos y actualizamos el estado
             const userData = onlineUsers.get(socket.id);
             if (userData && (userData.currentApp?.package !== finalAppData?.package)) {
                 userData.currentApp = finalAppData;
                 onlineUsers.set(socket.id, userData);
-                // Pasamos el objeto final al notificador
                 notifyFriendsOfStatusChange(socket.userId, true, finalAppData);
             }
         }
     });
+
 
 
 
@@ -464,6 +464,18 @@ async function initDatabase() {
         );
     `;
 
+     // ==========================================================
+    // === ¡NUEVA TABLA PARA REGISTRAR JUEGOS JUGADOS! ===
+    // ==========================================================
+    const userPlayedGamesQuery = `
+        CREATE TABLE IF NOT EXISTS user_played_games (
+            user_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
+            package_name VARCHAR(255) REFERENCES detected_apps(package_name) ON DELETE CASCADE NOT NULL,
+            last_played_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, package_name)
+        );
+    `;
+    // ==========================================================
 
     
 
@@ -491,6 +503,11 @@ async function initDatabase() {
         // AÑADE ESTA LLAMADA
         await pool.query(detectedAppsQuery);
         console.log('✅ Tabla "detected_apps" verificada/creada.');
+    
+        // --- AÑADE ESTA LLAMADA ---
+        await pool.query(userPlayedGamesQuery);
+        console.log('✅ Tabla "user_played_games" verificada/creada.');
+
     } catch (err) {
         console.error('❌ Error al inicializar la base de datos:', err.stack);
     }
