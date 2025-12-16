@@ -174,43 +174,67 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('update_current_app', async (appData) => {
-        if (!socket.userId) return; // Salir si el socket no está autenticado
+     socket.on('update_current_app', async (appData) => {
+        // Salir si el socket no está autenticado
+        if (!socket.userId) return;
 
         let finalAppData = null;
 
         // --- PASO 1: Determinar los datos de la app actual ---
         if (appData && appData.package) {
             try {
+                // Buscamos la app en nuestra base de datos
                 const result = await pool.query('SELECT * FROM detected_apps WHERE package_name = $1', [appData.package]);
                 
+                // Si la app existe en nuestra base de datos
                 if (result.rows.length > 0) {
                     const dbApp = result.rows[0];
-                    finalAppData = { name: dbApp.app_name, package: dbApp.package_name, icon: dbApp.icon_url, is_game: dbApp.is_game };
+                    finalAppData = { 
+                        name: dbApp.app_name, 
+                        package: dbApp.package_name, 
+                        icon: dbApp.icon_url, 
+                        is_game: dbApp.is_game 
+                    };
+
+                    // --- PASO 2.A: Lógica de la Base de Datos (SIEMPRE se ejecuta si la app está registrada) ---
+                    try {
+                        // Siempre actualizamos el historial de apps vistas por el usuario
+                        const upsertHistoryQuery = `
+                            INSERT INTO user_app_history (user_id, package_name, last_seen_at)
+                            VALUES ($1, $2, CURRENT_TIMESTAMP)
+                            ON CONFLICT (user_id, package_name)
+                            DO UPDATE SET last_seen_at = CURRENT_TIMESTAMP;
+                        `;
+                        await pool.query(upsertHistoryQuery, [socket.userId, dbApp.package_name]);
+                        
+                        // Si la app detectada está confirmada como un juego, la registramos en la tabla de juegos jugados.
+                        if (dbApp.is_game === true) {
+                            const upsertGameQuery = `
+                                INSERT INTO user_played_games (user_id, package_name, last_played_at)
+                                VALUES ($1, $2, CURRENT_TIMESTAMP)
+                                ON CONFLICT (user_id, package_name)
+                                DO UPDATE SET last_played_at = CURRENT_TIMESTAMP;
+                            `;
+                            await pool.query(upsertGameQuery, [socket.userId, dbApp.package_name]);
+                            console.log(`🕹️  [DB LOG] Juego registrado/actualizado para User ${socket.userId}: ${dbApp.package_name}`);
+                        }
+                    } catch(dbError) {
+                        console.error(`❌ [DB LOG] Error al registrar historial/juego para User ${socket.userId}:`, dbError);
+                    }
+
                 } else {
-                    finalAppData = { name: appData.name, package: appData.package, icon: null, unregistered: true };
+                    // Si la app NO existe en nuestra base de datos
+                    finalAppData = { 
+                        name: appData.name, 
+                        package: appData.package, 
+                        icon: null, 
+                        unregistered: true 
+                    };
                 }
             } catch (dbError) {
-                console.error("Error al buscar app en la BD:", dbError);
+                console.error("❌ Error al buscar app en la BD:", dbError);
+                // Si la BD falla, usamos el nombre nativo como fallback.
                 finalAppData = { name: appData.name, package: appData.package, icon: null };
-            }
-        }
-
-        // --- PASO 2: Lógica de la Base de Datos (SIEMPRE se ejecuta) ---
-        // Si la app detectada existe en nuestra BD y está marcada como juego,
-        // la registramos en el historial del usuario.
-        if (finalAppData && finalAppData.is_game === true) {
-            try {
-                const upsertQuery = `
-                    INSERT INTO user_played_games (user_id, package_name, last_played_at)
-                    VALUES ($1, $2, CURRENT_TIMESTAMP)
-                    ON CONFLICT (user_id, package_name)
-                    DO UPDATE SET last_played_at = CURRENT_TIMESTAMP;
-                `;
-                await pool.query(upsertQuery, [socket.userId, finalAppData.package]);
-                console.log(`✅ [DB LOG] Juego registrado/actualizado para User ${socket.userId}: ${finalAppData.package}`);
-            } catch(dbError) {
-                console.error(`❌ [DB LOG] Error al registrar juego para User ${socket.userId}:`, dbError);
             }
         }
 
@@ -228,8 +252,6 @@ io.on('connection', (socket) => {
             
             // Notificamos a los amigos sobre el cambio de estado.
             notifyFriendsOfStatusChange(socket.userId, true, finalAppData);
-        } else {
-            console.log(`✔️ [NO CHANGE] User ${socket.userId} sigue en la misma app. No se notifica a amigos.`);
         }
     });
 
@@ -493,6 +515,18 @@ async function initDatabase() {
     // ==========================================================
 
     
+     // ==========================================================
+    // === ¡NUEVA TABLA PARA EL HISTORIAL DE APPS DEL USUARIO! ===
+    // ==========================================================
+    const userAppHistoryQuery = `
+        CREATE TABLE IF NOT EXISTS user_app_history (
+            user_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
+            package_name VARCHAR(255) REFERENCES detected_apps(package_name) ON DELETE CASCADE NOT NULL,
+            last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, package_name)
+        );
+    `;
+    // ==========================================================
 
 
     try {
@@ -523,6 +557,10 @@ async function initDatabase() {
         await pool.query(userPlayedGamesQuery);
         console.log('✅ Tabla "user_played_games" verificada/creada.');
 
+        // --- AÑADE ESTA LLAMADA ---
+        await pool.query(userAppHistoryQuery);
+        console.log('✅ Tabla "user_app_history" verificada/creada.');
+        
     } catch (err) {
         console.error('❌ Error al inicializar la base de datos:', err.stack);
     }

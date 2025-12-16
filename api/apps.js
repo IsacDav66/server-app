@@ -80,5 +80,30 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
+    // ======================================================================
+    // === ¡NUEVA RUTA PARA OBTENER APPS PENDIENTES DE CATEGORIZACIÓN! ===
+    // ======================================================================
+    router.get('/uncategorized', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const userId = req.user.userId;
+
+        try {
+            const query = `
+                SELECT
+                    da.app_name,
+                    da.package_name,
+                    da.icon_url
+                FROM user_app_history upg
+                JOIN detected_apps da ON upg.package_name = da.package_name
+                WHERE upg.user_id = $1 AND da.is_game IS NULL
+                ORDER BY upg.last_seen_at DESC;
+            `;
+            const result = await pool.query(query, [userId]);
+            res.status(200).json({ success: true, apps: result.rows });
+        } catch (error) {
+            console.error("Error al obtener apps sin categorizar:", error);
+            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        }
+    });
+
     return router;
 };
