@@ -175,18 +175,16 @@ io.on('connection', (socket) => {
     });
 
      socket.on('update_current_app', async (appData) => {
-        // Salir si el socket no está autenticado
         if (!socket.userId) return;
 
-        let finalAppData = null;
+        // --- LOG 5: Confirmar la recepción del evento en el backend ---
+        console.log(`[SERVER LOG] Evento 'update_current_app' RECIBIDO de User ${socket.userId}. Data:`, appData);
 
-        // --- PASO 1: Determinar los datos de la app actual ---
+        let finalAppData = null;
         if (appData && appData.package) {
             try {
-                // Buscamos la app en nuestra base de datos
                 const result = await pool.query('SELECT * FROM detected_apps WHERE package_name = $1', [appData.package]);
                 
-                // Si la app existe en nuestra base de datos
                 if (result.rows.length > 0) {
                     const dbApp = result.rows[0];
                     finalAppData = { 
@@ -196,19 +194,20 @@ io.on('connection', (socket) => {
                         is_game: dbApp.is_game 
                     };
 
-                    // --- PASO 2.A: Lógica de la Base de Datos (SIEMPRE se ejecuta si la app está registrada) ---
-                    try {
+                    // --- LOG 6: Confirmar que se está intentando guardar en el historial ---
+                    console.log(`[SERVER LOG] App encontrada en BD: '${dbApp.app_name}'. Intentando registrar en historial...`);
+                try {
                         // Siempre actualizamos el historial de apps vistas por el usuario
-                        const upsertHistoryQuery = `
-                            INSERT INTO user_app_history (user_id, package_name, last_seen_at)
-                            VALUES ($1, $2, CURRENT_TIMESTAMP)
-                            ON CONFLICT (user_id, package_name)
-                            DO UPDATE SET last_seen_at = CURRENT_TIMESTAMP;
-                        `;
-                        await pool.query(upsertHistoryQuery, [socket.userId, dbApp.package_name]);
-                        
-                        // Si la app detectada está confirmada como un juego, la registramos en la tabla de juegos jugados.
-                        if (dbApp.is_game === true) {
+                    const upsertHistoryQuery = `
+                        INSERT INTO user_app_history (user_id, package_name, last_seen_at)
+                        VALUES ($1, $2, CURRENT_TIMESTAMP)
+                        ON CONFLICT (user_id, package_name)
+                        DO UPDATE SET last_seen_at = CURRENT_TIMESTAMP;
+                    `;
+                    await pool.query(upsertHistoryQuery, [socket.userId, dbApp.package_name]);
+                    console.log(`[SERVER LOG] ¡Éxito! Historial actualizado para User ${socket.userId}.`);
+                    
+                    if (dbApp.is_game === true) {
                             const upsertGameQuery = `
                                 INSERT INTO user_played_games (user_id, package_name, last_played_at)
                                 VALUES ($1, $2, CURRENT_TIMESTAMP)
