@@ -570,26 +570,31 @@ initDatabase();
 const authRoutes = require('./api/auth');
 const userRoutes = require('./api/user'); 
 const postRoutes = require('./api/post');
+const chatRoutes = require('./api/chat');
+const notificationRoutes = require('./api/notifications');
+const appRoutes = require('./api/apps');
+// ==========================================================
+// === ¡ORDEN DE RUTAS CORREGIDO! ===
+// ==========================================================
+// Montamos las rutas más específicas primero.
 app.use('/api/auth', authRoutes(pool, JWT_SECRET)); 
-app.use('/api/user', userRoutes(pool, JWT_SECRET)); 
 app.use('/api/posts', postRoutes(pool, JWT_SECRET));
+app.use('/api/notifications', notificationRoutes(pool, JWT_SECRET));
+app.use('/api/apps', appRoutes(pool, JWT_SECRET)); // <-- `apps` va ANTES que `user`
+app.use('/api/chat', chatRoutes(pool, JWT_SECRET, io));
 
-const chatRoutes = require('./api/chat'); // <-- AÑADE
+// La ruta genérica `/api/user/:userId` va al final para no interceptar otras.
+app.use('/api/user', userRoutes(pool, JWT_SECRET)); 
+// ==========================================================
 
 // --- AÑADE LA NUEVA RUTA ---
-const notificationRoutes = require('./api/notifications');
-const appRoutes = require('./api/apps'); // <-- AÑADE ESTA LÍNEA
 // ==========================================================
 // === ¡AQUÍ ESTÁ LA CORRECCIÓN EN EL SERVIDOR! ===
 // ==========================================================
 // Montamos todas nuestras rutas bajo el prefijo '/api'
 const apiRouter = express.Router();
 
-app.set('socketio', io); // <-- AÑADE ESTA LÍNEA
-app.use('/api/notifications', notificationRoutes(pool, JWT_SECRET));
-app.use('/api/apps', appRoutes(pool, JWT_SECRET)); // <-- AÑADE ESTA LÍNEA
 
-app.use('/api/chat', chatRoutes(pool, JWT_SECRET, io)); // <-- Pasamos 'io' como argumento
 // Y ahora montamos este router principal en la raíz de la app.
 // Cuando el proxy redirija a /app, Express verá la ruta como si fuera solo '/'.
 app.use(apiRouter);

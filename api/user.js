@@ -471,6 +471,7 @@ router.get('/:userId/following', (req, res, next) => softProtect(req, res, next,
     });
 
 // RUTA PARA OBTENER SOLO LOS JUEGOS JUGADOS (CON LOGS DE DEPURACIÓN)
+// RUTA PARA OBTENER SOLO LOS JUEGOS JUGADOS (CON CORRECCIÓN DE SINTAXIS)
 router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
     const targetUserId = parseInt(req.params.userId);
 
@@ -489,23 +490,16 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
             WHERE upg.user_id = $1
             ORDER BY upg.last_played_at DESC;
         `;
-
-        // --- LOG 1: VERIFICAR LA CONSULTA ---
-        console.log(`[API /played-games] Buscando juegos para userId: ${targetUserId}`);
         
+        console.log(`[API /played-games] Buscando juegos para userId: ${targetUserId}`);
         const result = await pool.query(query, [targetUserId]);
-
-        // --- LOG 2: VERIFICAR EL RESULTADO DE LA BASE DE DATOS ---
         console.log(`[API /played-games] Filas encontradas en la BD: ${result.rowCount}`);
-        if (result.rowCount > 0) {
-            console.log(`[API /played-games] Datos encontrados:`, result.rows);
-        }
         
         res.status(200).json({ success: true, games: result.rows });
-    } catch (error) {
+    } catch (error) { // <-- ¡LLAVES AÑADIDAS AQUÍ!
         console.error("Error al obtener los juegos jugados del usuario:", error);
         res.status(500).json({ success: false, message: 'Error interno del servidor.' });
-    }
+    } // <-- ¡LLAVES AÑADIDAS AQUÍ!
 });
 // ==========================================================
 
