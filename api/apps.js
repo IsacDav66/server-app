@@ -60,21 +60,28 @@ module.exports = (pool, JWT_SECRET) => {
     });
 
     // RUTA PARA OBTENER EL HISTORIAL COMPLETO DE APPS
+    // RUTA PARA OBTENER EL HISTORIAL COMPLETO DE APPS (VERSIÓN ROBUSTA)
     router.get('/history', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const userId = req.user.userId;
         try {
+            // Esta consulta usa un LEFT JOIN para asegurarse de que obtengamos resultados
+            // incluso si hay alguna inconsistencia de datos.
             const query = `
                 SELECT
                     da.app_name,
                     da.package_name,
                     da.icon_url,
                     da.is_game
-                FROM user_app_history upg
-                JOIN detected_apps da ON upg.package_name = da.package_name
+                FROM user_app_history AS upg
+                LEFT JOIN detected_apps AS da ON upg.package_name = da.package_name
                 WHERE upg.user_id = $1
                 ORDER BY upg.last_seen_at DESC;
             `;
             const result = await pool.query(query, [userId]);
+            
+            // Log para depuración en el servidor
+            console.log(`[API /history] Encontradas ${result.rowCount} apps para el usuario ${userId}`);
+
             res.status(200).json({ success: true, apps: result.rows });
         } catch (error) {
             console.error("Error al obtener el historial de apps:", error);
