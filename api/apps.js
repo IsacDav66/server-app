@@ -5,18 +5,53 @@ const { protect } = require('../middleware/auth');
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
 
-    // RUTA PARA OBTENER INFO DE UNA APP
-    router.get('/:packageName', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const { packageName } = req.params;
+    // ==========================================================
+    // === RUTAS ESPECÍFICAS (van primero) ===
+    // ==========================================================
+
+    // RUTA PARA OBTENER EL HISTORIAL COMPLETO DE APPS
+    router.get('/history', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const userId = req.user.userId;
         try {
-            const result = await pool.query('SELECT package_name, app_name, icon_url, is_game FROM detected_apps WHERE package_name = $1', [packageName]);
-            if (result.rows.length > 0) {
-                res.status(200).json({ success: true, found: true, app: result.rows[0] });
-            } else {
-                res.status(200).json({ success: true, found: false });
-            }
+            const query = `
+                SELECT
+                    da.app_name,
+                    da.package_name,
+                    da.icon_url,
+                    da.is_game
+                FROM user_app_history AS upg
+                LEFT JOIN detected_apps AS da ON upg.package_name = da.package_name
+                WHERE upg.user_id = $1
+                ORDER BY upg.last_seen_at DESC;
+            `;
+            const result = await pool.query(query, [userId]);
+            console.log(`[API /history] Encontradas ${result.rowCount} apps para el usuario ${userId}`);
+            res.status(200).json({ success: true, apps: result.rows });
         } catch (error) {
-            res.status(500).json({ success: false, message: 'Error interno.' });
+            console.error("Error al obtener el historial de apps:", error);
+            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        }
+    });
+    
+    // RUTA PARA OBTENER APPS PENDIENTES DE CATEGORIZACIÓN
+    router.get('/uncategorized', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const userId = req.user.userId;
+        try {
+            const query = `
+                SELECT
+                    da.app_name,
+                    da.package_name,
+                    da.icon_url
+                FROM user_app_history upg
+                JOIN detected_apps da ON upg.package_name = da.package_name
+                WHERE upg.user_id = $1 AND da.is_game IS NULL
+                ORDER BY upg.last_seen_at DESC;
+            `;
+            const result = await pool.query(query, [userId]);
+            res.status(200).json({ success: true, apps: result.rows });
+        } catch (error) {
+            console.error("Error al obtener apps sin categorizar:", error);
+            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
         }
     });
 
@@ -58,56 +93,23 @@ module.exports = (pool, JWT_SECRET) => {
             res.status(500).json({ success: false, message: 'Error interno del servidor.' });
         }
     });
-
-    // RUTA PARA OBTENER EL HISTORIAL COMPLETO DE APPS
-    // RUTA PARA OBTENER EL HISTORIAL COMPLETO DE APPS (VERSIÓN ROBUSTA)
-    router.get('/history', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const userId = req.user.userId;
+    
+    // ==========================================================
+    // === RUTA GENÉRICA (va al final) ===
+    // ==========================================================
+    
+    // RUTA PARA OBTENER INFO DE UNA APP ESPECÍFICA
+    router.get('/:packageName', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const { packageName } = req.params;
         try {
-            // Esta consulta usa un LEFT JOIN para asegurarse de que obtengamos resultados
-            // incluso si hay alguna inconsistencia de datos.
-            const query = `
-                SELECT
-                    da.app_name,
-                    da.package_name,
-                    da.icon_url,
-                    da.is_game
-                FROM user_app_history AS upg
-                LEFT JOIN detected_apps AS da ON upg.package_name = da.package_name
-                WHERE upg.user_id = $1
-                ORDER BY upg.last_seen_at DESC;
-            `;
-            const result = await pool.query(query, [userId]);
-            
-            // Log para depuración en el servidor
-            console.log(`[API /history] Encontradas ${result.rowCount} apps para el usuario ${userId}`);
-
-            res.status(200).json({ success: true, apps: result.rows });
+            const result = await pool.query('SELECT package_name, app_name, icon_url, is_game FROM detected_apps WHERE package_name = $1', [packageName]);
+            if (result.rows.length > 0) {
+                res.status(200).json({ success: true, found: true, app: result.rows[0] });
+            } else {
+                res.status(200).json({ success: true, found: false });
+            }
         } catch (error) {
-            console.error("Error al obtener el historial de apps:", error);
-            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
-        }
-    });
-
-    // RUTA PARA OBTENER APPS PENDIENTES DE CATEGORIZACIÓN
-    router.get('/uncategorized', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const userId = req.user.userId;
-        try {
-            const query = `
-                SELECT
-                    da.app_name,
-                    da.package_name,
-                    da.icon_url
-                FROM user_app_history upg
-                JOIN detected_apps da ON upg.package_name = da.package_name
-                WHERE upg.user_id = $1 AND da.is_game IS NULL
-                ORDER BY upg.last_seen_at DESC;
-            `;
-            const result = await pool.query(query, [userId]);
-            res.status(200).json({ success: true, apps: result.rows });
-        } catch (error) {
-            console.error("Error al obtener apps sin categorizar:", error);
-            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+            res.status(500).json({ success: false, message: 'Error interno.' });
         }
     });
 
