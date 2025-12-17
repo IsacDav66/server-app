@@ -35,21 +35,37 @@ module.exports = (pool, JWT_SECRET) => {
 
     // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario
     // REEMPLAZA tu ruta /profile/:userId con esta
+    // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario (VERSIÓN MEJORADA)
     router.get('/profile/:userId', (req, res, next) => softProtect(req, res, next, JWT_SECRET), async (req, res) => {
         const userId = parseInt(req.params.userId, 10);
-        const loggedInUserId = req.user ? req.user.userId : null; // Obtenemos el ID del visitante
+        const loggedInUserId = req.user ? req.user.userId : null;
 
         if (isNaN(userId)) return res.status(400).json({ success: false, message: 'El ID de usuario no es válido.' });
 
         try {
+            // Consulta mejorada con una subconsulta para obtener el último juego
             const query = `
                 SELECT 
                     u.id, u.username, u.profile_pic_url, u.bio, u.cover_pic_url, u.bio_bg_url,
                     (SELECT COUNT(*) FROM postapp WHERE user_id = u.id) AS post_count,
                     (SELECT COUNT(*) FROM followersapp WHERE following_id = u.id) AS followers_count,
                     (SELECT COUNT(*) FROM followersapp WHERE follower_id = u.id) AS following_count,
-                    -- ¡LA LÍNEA CLAVE! Comprueba si el usuario logueado sigue a este perfil
-                    EXISTS(SELECT 1 FROM followersapp WHERE follower_id = $2 AND following_id = $1) AS is_followed_by_user
+                    EXISTS(SELECT 1 FROM followersapp WHERE follower_id = $2 AND following_id = $1) AS is_followed_by_user,
+                    
+                    -- Subconsulta para obtener el nombre y la fecha del último juego jugado
+                    (SELECT da.app_name 
+                    FROM user_played_games upg
+                    JOIN detected_apps da ON upg.package_name = da.package_name
+                    WHERE upg.user_id = $1
+                    ORDER BY upg.last_played_at DESC
+                    LIMIT 1) AS last_played_game,
+                    
+                    (SELECT upg.last_played_at
+                    FROM user_played_games upg
+                    WHERE upg.user_id = $1
+                    ORDER BY upg.last_played_at DESC
+                    LIMIT 1) AS last_played_at
+
                 FROM usersapp u
                 WHERE u.id = $1;
             `;
