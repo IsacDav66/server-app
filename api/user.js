@@ -7,6 +7,8 @@ const uploadMiddleware = require('../middleware/upload');
 const uploadCoverMiddleware = require('../middleware/uploadCover');
 const uploadBioImageMiddleware = require('../middleware/uploadBioImage'); // <-- 2. IMPORTAR NUEVO MIDDLEWARE
 const processImage = require('../middleware/processImage');
+const uploadPlayerCardCoverMiddleware = require('../middleware/uploadPlayerCardCover');
+
 const path = require('path');
 // EN LA PARTE SUPERIOR DEL ARCHIVO, JUNTO A LOS OTROS REQUIRES
 const admin = require('firebase-admin'); // <-- SOLO NECESITAS IMPORTARLO
