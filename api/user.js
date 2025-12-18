@@ -560,25 +560,41 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
     // ==========================================================
     // === ¡NUEVA RUTA PARA OBTENER LAS TARJETAS DE UN USUARIO! ===
     // ==========================================================
-    // RUTA PARA OBTENER LAS TARJETAS DE UN USUARIO (MODIFICADA)
+    // RUTA PARA OBTENER LAS TARJETAS DE UN USUARIO (VERSIÓN FINAL Y CORREGIDA)
     router.get('/:userId/player-cards', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const targetUserId = parseInt(req.params.userId);
         if (isNaN(targetUserId)) return res.status(400).json({ success: false, message: 'ID de usuario inválido.' });
 
         try {
+            // ==========================================================
+            // === ¡CONSULTA CORREGIDA! ===
+            // ==========================================================
+            // Especificamos cada columna para evitar ambigüedades.
+            // Aseguramos que 'card_id' se seleccione explícitamente.
             const query = `
                 SELECT 
-                    pc.*,
+                    pc.card_id, 
+                    pc.user_id, 
+                    pc.package_name, 
+                    pc.in_game_username, 
+                    pc.in_game_id, 
+                    pc.invite_link, 
+                    pc.cover_image_url,
                     da.app_name,
                     da.icon_url
                 FROM player_cards pc
                 JOIN detected_apps da ON pc.package_name = da.package_name
                 WHERE pc.user_id = $1
-                ORDER BY pc.display_order ASC; -- <-- ¡ORDENAMOS POR LA NUEVA COLUMNA!
+                ORDER BY pc.display_order ASC;
             `;
+            // ==========================================================
+
             const result = await pool.query(query, [targetUserId]);
             res.status(200).json({ success: true, cards: result.rows });
-        } catch (error) { /* ... */ }
+        } catch (error) {
+            console.error("Error al obtener las tarjetas de jugador:", error);
+            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        }
     });
 
     // ==========================================================
