@@ -504,5 +504,75 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
 // ==========================================================
 
 
-return router;
+// ==========================================================
+    // === ¡NUEVA RUTA PARA CREAR/ACTUALIZAR UNA TARJETA DE JUGADOR! ===
+    // ==========================================================
+    router.post('/player-cards',
+        (req, res, next) => protect(req, res, next, JWT_SECRET),
+        uploadPlayerCardCoverMiddleware, // Middleware para el archivo
+        processImage('card_cover'), // Reutilizamos processImage para optimizar
+        async (req, res) => {
+            const userId = req.user.userId;
+            const { packageName, inGameUsername, inGameId, inviteLink } = req.body;
+            let coverImageUrl = req.body.existingCoverUrl || null; // Conservar imagen si no se sube una nueva
+
+            if (!packageName) {
+                return res.status(400).json({ success: false, message: 'Falta el nombre del paquete del juego.' });
+            }
+
+            // Si se subió un nuevo archivo, usamos su ruta
+            if (req.file) {
+                coverImageUrl = `/uploads/card_cover_images/${req.file.filename}`;
+            }
+
+            try {
+                // Usamos INSERT ON CONFLICT (UPSERT) para crear o actualizar la tarjeta
+                const query = `
+                    INSERT INTO player_cards (user_id, package_name, in_game_username, in_game_id, invite_link, cover_image_url, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+                    ON CONFLICT (user_id, package_name)
+                    DO UPDATE SET
+                        in_game_username = EXCLUDED.in_game_username,
+                        in_game_id = EXCLUDED.in_game_id,
+                        invite_link = EXCLUDED.invite_link,
+                        cover_image_url = EXCLUDED.cover_image_url,
+                        updated_at = CURRENT_TIMESTAMP
+                    RETURNING *;
+                `;
+                const result = await pool.query(query, [userId, packageName, inGameUsername, inGameId, inviteLink, coverImageUrl]);
+                res.status(200).json({ success: true, message: 'Tarjeta de jugador guardada.', card: result.rows[0] });
+            } catch (error) {
+                console.error("Error al guardar la tarjeta de jugador:", error);
+                res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+            }
+        }
+    );
+
+    // ==========================================================
+    // === ¡NUEVA RUTA PARA OBTENER LAS TARJETAS DE UN USUARIO! ===
+    // ==========================================================
+    router.get('/:userId/player-cards', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const targetUserId = parseInt(req.params.userId);
+        if (isNaN(targetUserId)) return res.status(400).json({ success: false, message: 'ID de usuario inválido.' });
+
+        try {
+            const query = `
+                SELECT 
+                    pc.*,
+                    da.app_name,
+                    da.icon_url
+                FROM player_cards pc
+                JOIN detected_apps da ON pc.package_name = da.package_name
+                WHERE pc.user_id = $1
+                ORDER BY pc.updated_at DESC;
+            `;
+            const result = await pool.query(query, [targetUserId]);
+            res.status(200).json({ success: true, cards: result.rows });
+        } catch (error) {
+            console.error("Error al obtener las tarjetas de jugador:", error);
+            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        }
+    });
+
+    return router;
 };

@@ -526,7 +526,24 @@ async function initDatabase() {
         );
     `;
     // ==========================================================
-
+    // ==========================================================
+    // === ¡NUEVA TABLA PARA LAS TARJETAS DE JUGADOR! ===
+    // ==========================================================
+    const playerCardsQuery = `
+        CREATE TABLE IF NOT EXISTS player_cards (
+            card_id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
+            package_name VARCHAR(255) REFERENCES detected_apps(package_name) ON DELETE CASCADE NOT NULL,
+            in_game_username VARCHAR(100),
+            in_game_id VARCHAR(100),
+            invite_link TEXT,
+            cover_image_url VARCHAR(255),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (user_id, package_name) -- Un usuario solo puede tener una tarjeta por juego
+        );
+    `;
+    // ==========================================================
 
     try {
         await pool.query(usersQuery);
@@ -559,7 +576,9 @@ async function initDatabase() {
         // --- AÑADE ESTA LLAMADA ---
         await pool.query(userAppHistoryQuery);
         console.log('✅ Tabla "user_app_history" verificada/creada.');
-        
+        // --- AÑADE ESTA LLAMADA ---
+        await pool.query(playerCardsQuery);
+        console.log('✅ Tabla "player_cards" verificada/creada.');
     } catch (err) {
         console.error('❌ Error al inicializar la base de datos:', err.stack);
     }
