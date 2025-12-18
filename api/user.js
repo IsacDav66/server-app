@@ -586,7 +586,7 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
     // ==========================================================
     router.post('/player-cards/reorder', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const userId = req.user.userId;
-        const { orderedCardIds } = req.body; // Esperamos un array de IDs [3, 1, 2]
+        const { orderedCardIds } = req.body;
 
         if (!Array.isArray(orderedCardIds)) {
             return res.status(400).json({ success: false, message: 'Se esperaba un array de IDs.' });
@@ -594,32 +594,42 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
 
         const client = await pool.connect();
         try {
-            await client.query('BEGIN'); // Iniciar una transacción
+            await client.query('BEGIN');
 
-            // Creamos un array de promesas, una por cada actualización
-            const updatePromises = orderedCardIds.map((cardId, index) => {
+            const updatePromises = orderedCardIds.map((cardIdStr, index) => {
+                // ==========================================================
+                // === ¡AQUÍ ESTÁ LA VALIDACIÓN DE SEGURIDAD! ===
+                // ==========================================================
+                const cardId = parseInt(cardIdStr);
+
+                // Si cardId no es un número válido, simplemente saltamos esta iteración.
+                if (isNaN(cardId)) {
+                    console.warn(`[REORDER WARN] Se recibió un cardId inválido: '${cardIdStr}'. Se ignora.`);
+                    return Promise.resolve(); // Devuelve una promesa resuelta para no romper Promise.all
+                }
+                // ==========================================================
+                
                 const query = `
                     UPDATE player_cards 
                     SET display_order = $1 
                     WHERE card_id = $2 AND user_id = $3;
                 `;
-                // El `index` nos da el nuevo orden (0, 1, 2, ...)
-                return client.query(query, [index, parseInt(cardId), userId]);
+                return client.query(query, [index, cardId, userId]);
             });
 
-            // Esperamos a que todas las actualizaciones se completen
             await Promise.all(updatePromises);
 
-            await client.query('COMMIT'); // Confirmar la transacción
+            await client.query('COMMIT');
             res.status(200).json({ success: true, message: 'Orden guardado.' });
         } catch (error) {
-            await client.query('ROLLBACK'); // Deshacer en caso de error
+            await client.query('ROLLBACK');
             console.error("Error al reordenar las tarjetas:", error);
             res.status(500).json({ success: false, message: 'Error interno al guardar el orden.' });
         } finally {
-            client.release(); // Liberar la conexión
+            client.release();
         }
     });
+
 
     return router;
 };
