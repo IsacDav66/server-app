@@ -538,9 +538,13 @@ async function initDatabase() {
             in_game_id VARCHAR(100),
             invite_link TEXT,
             cover_image_url VARCHAR(255),
+            
+            -- ¡NUEVA COLUMNA PARA EL ORDEN! --
+            display_order INTEGER NOT NULL DEFAULT 0,
+
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE (user_id, package_name) -- Un usuario solo puede tener una tarjeta por juego
+            UNIQUE (user_id, package_name)
         );
     `;
     // ==========================================================

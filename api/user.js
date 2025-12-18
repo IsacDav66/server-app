@@ -509,26 +509,33 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
 // ==========================================================
     // === ¡NUEVA RUTA PARA CREAR/ACTUALIZAR UNA TARJETA DE JUGADOR! ===
     // ==========================================================
+    // RUTA PARA CREAR/ACTUALIZAR UNA TARJETA DE JUGADOR (VERSIÓN CORREGIDA)
     router.post('/player-cards',
         (req, res, next) => protect(req, res, next, JWT_SECRET),
-        uploadPlayerCardCoverMiddleware, // Middleware para el archivo
-        processImage('card_cover'), // Reutilizamos processImage para optimizar
+        uploadPlayerCardCoverMiddleware,
+        processImage('card_cover'),
         async (req, res) => {
             const userId = req.user.userId;
             const { packageName, inGameUsername, inGameId, inviteLink } = req.body;
-            let coverImageUrl = req.body.existingCoverUrl || null; // Conservar imagen si no se sube una nueva
+
+            // ==========================================================
+            // === ¡AQUÍ ESTÁ LA LÓGICA CORREGIDA! ===
+            // ==========================================================
+            // 1. Por defecto, usamos la URL de la imagen existente que nos envía el frontend.
+            let coverImageUrl = req.body.existingCoverUrl || null;
+
+            // 2. Si se subió un archivo NUEVO, sobrescribimos la URL con la nueva ruta.
+            if (req.file) {
+                coverImageUrl = `/uploads/card_cover_images/${req.file.filename}`;
+            }
+            // ==========================================================
 
             if (!packageName) {
                 return res.status(400).json({ success: false, message: 'Falta el nombre del paquete del juego.' });
             }
 
-            // Si se subió un nuevo archivo, usamos su ruta
-            if (req.file) {
-                coverImageUrl = `/uploads/card_cover_images/${req.file.filename}`;
-            }
-
             try {
-                // Usamos INSERT ON CONFLICT (UPSERT) para crear o actualizar la tarjeta
+                // La consulta UPSERT no necesita cambios, ya que usa la variable `coverImageUrl`
                 const query = `
                     INSERT INTO player_cards (user_id, package_name, in_game_username, in_game_id, invite_link, cover_image_url, updated_at)
                     VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
@@ -553,6 +560,7 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
     // ==========================================================
     // === ¡NUEVA RUTA PARA OBTENER LAS TARJETAS DE UN USUARIO! ===
     // ==========================================================
+    // RUTA PARA OBTENER LAS TARJETAS DE UN USUARIO (MODIFICADA)
     router.get('/:userId/player-cards', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const targetUserId = parseInt(req.params.userId);
         if (isNaN(targetUserId)) return res.status(400).json({ success: false, message: 'ID de usuario inválido.' });
@@ -566,13 +574,50 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
                 FROM player_cards pc
                 JOIN detected_apps da ON pc.package_name = da.package_name
                 WHERE pc.user_id = $1
-                ORDER BY pc.updated_at DESC;
+                ORDER BY pc.display_order ASC; -- <-- ¡ORDENAMOS POR LA NUEVA COLUMNA!
             `;
             const result = await pool.query(query, [targetUserId]);
             res.status(200).json({ success: true, cards: result.rows });
+        } catch (error) { /* ... */ }
+    });
+
+    // ==========================================================
+    // === ¡NUEVA RUTA PARA GUARDAR EL ORDEN DE LAS TARJETAS! ===
+    // ==========================================================
+    router.post('/player-cards/reorder', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const userId = req.user.userId;
+        const { orderedCardIds } = req.body; // Esperamos un array de IDs [3, 1, 2]
+
+        if (!Array.isArray(orderedCardIds)) {
+            return res.status(400).json({ success: false, message: 'Se esperaba un array de IDs.' });
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN'); // Iniciar una transacción
+
+            // Creamos un array de promesas, una por cada actualización
+            const updatePromises = orderedCardIds.map((cardId, index) => {
+                const query = `
+                    UPDATE player_cards 
+                    SET display_order = $1 
+                    WHERE card_id = $2 AND user_id = $3;
+                `;
+                // El `index` nos da el nuevo orden (0, 1, 2, ...)
+                return client.query(query, [index, parseInt(cardId), userId]);
+            });
+
+            // Esperamos a que todas las actualizaciones se completen
+            await Promise.all(updatePromises);
+
+            await client.query('COMMIT'); // Confirmar la transacción
+            res.status(200).json({ success: true, message: 'Orden guardado.' });
         } catch (error) {
-            console.error("Error al obtener las tarjetas de jugador:", error);
-            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+            await client.query('ROLLBACK'); // Deshacer en caso de error
+            console.error("Error al reordenar las tarjetas:", error);
+            res.status(500).json({ success: false, message: 'Error interno al guardar el orden.' });
+        } finally {
+            client.release(); // Liberar la conexión
         }
     });
 
