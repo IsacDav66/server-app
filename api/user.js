@@ -646,6 +646,38 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         }
     });
 
+// ==========================================================
+    // === ¡NUEVA RUTA PARA ELIMINAR UNA TARJETA DE JUGADOR! ===
+    // ==========================================================
+    router.delete('/player-cards/:cardId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const userId = req.user.userId;
+        const cardId = parseInt(req.params.cardId);
+
+        if (isNaN(cardId)) {
+            return res.status(400).json({ success: false, message: 'ID de tarjeta inválido.' });
+        }
+
+        try {
+            // La consulta DELETE solo tendrá éxito si el card_id coincide Y el user_id
+            // de la tarjeta coincide con el ID del usuario que hace la solicitud.
+            const deleteQuery = `
+                DELETE FROM player_cards 
+                WHERE card_id = $1 AND user_id = $2;
+            `;
+            const result = await pool.query(deleteQuery, [cardId, userId]);
+
+            // Si no se eliminó ninguna fila, significa que la tarjeta no existe o no pertenece al usuario.
+            if (result.rowCount === 0) {
+                return res.status(404).json({ success: false, message: 'No se encontró la tarjeta o no tienes permiso para eliminarla.' });
+            }
+
+            res.status(200).json({ success: true, message: 'Tarjeta de jugador eliminada.' });
+
+        } catch (error) {
+            console.error("Error al eliminar la tarjeta de jugador:", error);
+            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        }
+    });
 
     return router;
 };
