@@ -1,6 +1,7 @@
 // Archivo: /server/server.js (VERSIÓN CON CORS MANUAL)
 // Carga las variables de entorno del archivo .env
 require('dotenv').config({ path: './.env' }); 
+const fs = require('fs'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
 
 const express = require('express');
 // const cors = require('cors'); // Ya no se necesita
@@ -100,7 +101,25 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Servir archivos estáticos (sin cambios)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
+// --- ¡AÑADE ESTA LÍNEA PARA SERVIR LA CARPETA DE ACTUALIZACIONES! ---
+    app.use('/updates', express.static(path.join(__dirname, 'public', 'updates')));
+ // ==========================================================
+    // === ¡NUEVA RUTA PARA LA VERSIÓN DE LA APP! ===
+    // ==========================================================
+    const appRouter = express.Router();
+    appRouter.get('/latest-version', (req, res) => {
+        const versionFilePath = path.join(__dirname, 'public', 'updates', 'version.json');
+        fs.readFile(versionFilePath, 'utf8', (err, data) => {
+            if (err) {
+                console.error("Error al leer version.json:", err);
+                return res.status(500).json({ success: false, message: "No se pudo obtener la información de la versión." });
+            }
+            const versionInfo = JSON.parse(data);
+            // Añadimos la URL de descarga para que el cliente no tenga que construirla
+            versionInfo.downloadUrl = `${process.env.PUBLIC_SERVER_URL}/updates/app-release.apk`;
+            res.json({ success: true, ...versionInfo });
+        });
+    });
 
 // --- CREA UN MAPA PARA RASTREAR USUARIOS EN LÍNEA ---
 const onlineUsers = new Map(); // K: socket.id, V: userId
@@ -596,6 +615,7 @@ const postRoutes = require('./api/post');
 const chatRoutes = require('./api/chat');
 const notificationRoutes = require('./api/notifications');
 const appRoutes = require('./api/apps');
+
 // ==========================================================
 // === ¡ORDEN DE RUTAS CORREGIDO! ===
 // ==========================================================
@@ -608,6 +628,9 @@ app.use('/api/chat', chatRoutes(pool, JWT_SECRET, io));
 
 // La ruta genérica `/api/user/:userId` va al final para no interceptar otras.
 app.use('/api/user', userRoutes(pool, JWT_SECRET)); 
+
+app.use('/api/app', appRouter);
+
 // ==========================================================
 
 // --- AÑADE LA NUEVA RUTA ---
