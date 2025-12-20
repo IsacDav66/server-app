@@ -114,12 +114,14 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-     // ==========================================================
-    // === ¡AÑADIMOS LAS RUTAS DE GIPHY AQUÍ DENTRO! ===
+      // ==========================================================
+    // === ¡RUTAS DE GIPHY CON CORRECCIÓN DE SINTAXIS! ===
     // ==========================================================
     
-    // Middleware para verificar la API Key
-    router.use('/stickers/*', (req, res, next) => {
+    // Middleware para verificar la API Key.
+    // Se aplica a cualquier ruta que COMIENCE con /stickers.
+    // ¡SIN EL "/*" AL FINAL!
+    router.use('/stickers', (req, res, next) => {
         if (!process.env.GIPHY_API_KEY) {
             console.error("❌ GIPHY ERROR: GIPHY_API_KEY no está definida.");
             return res.status(500).json({ success: false, message: "La integración con GIPHY no está configurada." });
