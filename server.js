@@ -12,7 +12,8 @@ const http = require('http'); // <-- AÑADE ESTA LÍNEA
 const { Server } = require("socket.io"); // <-- AÑADE ESTA LÍNEA
 const admin = require('firebase-admin'); // <-- 1. IMPORTA FIREBASE ADMIN
 
-
+// --- ¡AÑADE ESTA LÍNEA PARA HACER PETICIONES HTTP DESDE EL BACKEND! ---
+const fetch = require('node-fetch');
 const app = express();
 const PORT = 3001;
 const INTERNAL_HOST = '0.0.0.0'; 
@@ -608,6 +609,41 @@ async function initDatabase() {
 }
 initDatabase();
 
+// ==========================================================
+// === ¡NUEVA RUTA PARA PROXY DE GIPHY! ===
+// ==========================================================
+const giphyRouter = express.Router();
+
+// Endpoint para buscar stickers
+giphyRouter.get('/stickers/search', async (req, res) => {
+    const searchTerm = req.query.q;
+    if (!searchTerm) {
+        return res.status(400).json({ message: 'Se requiere un término de búsqueda.' });
+    }
+    
+    const GIPHY_URL = `https://api.giphy.com/v1/stickers/search?api_key=${process.env.GIPHY_API_KEY}&q=${encodeURIComponent(searchTerm)}&limit=25&offset=0&rating=g&lang=es`;
+
+    try {
+        const giphyResponse = await fetch(GIPHY_URL);
+        const giphyData = await giphyResponse.json();
+        res.json(giphyData);
+    } catch (error) {
+        console.error("Error al contactar la API de GIPHY:", error);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+});
+
+// Endpoint para obtener stickers en tendencia
+giphyRouter.get('/stickers/trending', async (req, res) => {
+    const GIPHY_URL = `https://api.giphy.com/v1/stickers/trending?api_key=${process.env.GIPHY_API_KEY}&limit=25&rating=g`;
+    try {
+        const giphyResponse = await fetch(GIPHY_URL);
+        const giphyData = await giphyResponse.json();
+        res.json(giphyData);
+    } catch (error) { /* ... */ }
+});
+
+
 // Rutas
 const authRoutes = require('./api/auth');
 const userRoutes = require('./api/user'); 
@@ -630,7 +666,8 @@ app.use('/api/chat', chatRoutes(pool, JWT_SECRET, io));
 app.use('/api/user', userRoutes(pool, JWT_SECRET)); 
 
 app.use('/api/app', appRouter);
-
+// --- ¡AÑADE ESTA LÍNEA PARA MONTAR LA NUEVA RUTA! ---
+app.use('/api/giphy', giphyRouter);
 // ==========================================================
 
 // --- AÑADE LA NUEVA RUTA ---
