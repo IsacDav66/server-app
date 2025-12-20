@@ -1,6 +1,7 @@
 // /server/api/apps.js
 const express = require('express');
 const { protect } = require('../middleware/auth');
+const fetch = require('node-fetch'); // <-- ¡AÑADE LA IMPORTACIÓN AQUÍ!
 
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
@@ -110,6 +111,50 @@ module.exports = (pool, JWT_SECRET) => {
             }
         } catch (error) {
             res.status(500).json({ success: false, message: 'Error interno.' });
+        }
+    });
+
+     // ==========================================================
+    // === ¡AÑADIMOS LAS RUTAS DE GIPHY AQUÍ DENTRO! ===
+    // ==========================================================
+    
+    // Middleware para verificar la API Key
+    router.use('/stickers/*', (req, res, next) => {
+        if (!process.env.GIPHY_API_KEY) {
+            console.error("❌ GIPHY ERROR: GIPHY_API_KEY no está definida.");
+            return res.status(500).json({ success: false, message: "La integración con GIPHY no está configurada." });
+        }
+        next();
+    });
+
+    // Endpoint para buscar stickers (ahora en /api/apps/stickers/search)
+    router.get('/stickers/search', async (req, res) => {
+        const searchTerm = req.query.q;
+        if (!searchTerm) return res.status(400).json({ success: false, message: 'Término de búsqueda requerido.' });
+        
+        const GIPHY_URL = `https://api.giphy.com/v1/stickers/search?api_key=${process.env.GIPHY_API_KEY}&q=${encodeURIComponent(searchTerm)}&limit=25&rating=g&lang=es`;
+        try {
+            const giphyResponse = await fetch(GIPHY_URL);
+            if (!giphyResponse.ok) throw new Error(`GIPHY API respondió con ${giphyResponse.status}`);
+            const giphyData = await giphyResponse.json();
+            res.json(giphyData);
+        } catch (error) {
+            console.error("Error en proxy a GIPHY (search):", error);
+            res.status(502).json({ success: false, message: 'No se pudo comunicar con el servicio de stickers.' });
+        }
+    });
+
+    // Endpoint para stickers en tendencia (ahora en /api/apps/stickers/trending)
+    router.get('/stickers/trending', async (req, res) => {
+        const GIPHY_URL = `https://api.giphy.com/v1/stickers/trending?api_key=${process.env.GIPHY_API_KEY}&limit=25&rating=g`;
+        try {
+            const giphyResponse = await fetch(GIPHY_URL);
+            if (!giphyResponse.ok) throw new Error(`GIPHY API respondió con ${giphyResponse.status}`);
+            const giphyData = await giphyResponse.json();
+            res.json(giphyData);
+        } catch (error) {
+            console.error("Error en proxy a GIPHY (trending):", error);
+            res.status(502).json({ success: false, message: 'No se pudo comunicar con el servicio de stickers.' });
         }
     });
 
