@@ -631,7 +631,11 @@ app.use('/api/chat', chatRoutes(pool, JWT_SECRET, io));
 // La ruta genérica `/api/user/:userId` va al final para no interceptar otras.
 app.use('/api/user', userRoutes(pool, JWT_SECRET)); 
 
-app.use('/api/app', appRouter);
+// ==========================================================
+// === ¡AÑADE 'fetch' COMO PARÁMETRO! ===
+// ==========================================================
+app.use('/api/apps', appRoutes(pool, JWT_SECRET, fetch));
+// ==========================================================
 
 // ==========================================================
 
