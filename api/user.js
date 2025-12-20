@@ -38,6 +38,7 @@ module.exports = (pool, JWT_SECRET) => {
     // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario
     // REEMPLAZA tu ruta /profile/:userId con esta
     // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario (VERSIÓN MEJORADA)
+     // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario (VERSIÓN FINAL)
     router.get('/profile/:userId', (req, res, next) => softProtect(req, res, next, JWT_SECRET), async (req, res) => {
         const userId = parseInt(req.params.userId, 10);
         const loggedInUserId = req.user ? req.user.userId : null;
@@ -45,7 +46,9 @@ module.exports = (pool, JWT_SECRET) => {
         if (isNaN(userId)) return res.status(400).json({ success: false, message: 'El ID de usuario no es válido.' });
 
         try {
-            // Consulta mejorada con una subconsulta para obtener el último juego
+            // ==========================================================
+            // === ¡CONSULTA MEJORADA CON LATERAL JOIN! ===
+            // ==========================================================
             const query = `
                 SELECT 
                     u.id, u.username, u.profile_pic_url, u.bio, u.cover_pic_url, u.bio_bg_url,
@@ -54,23 +57,27 @@ module.exports = (pool, JWT_SECRET) => {
                     (SELECT COUNT(*) FROM followersapp WHERE follower_id = u.id) AS following_count,
                     EXISTS(SELECT 1 FROM followersapp WHERE follower_id = $2 AND following_id = $1) AS is_followed_by_user,
                     
-                    -- Subconsulta para obtener el nombre y la fecha del último juego jugado
-                    (SELECT da.app_name 
-                    FROM user_played_games upg
-                    JOIN detected_apps da ON upg.package_name = da.package_name
-                    WHERE upg.user_id = $1
-                    ORDER BY upg.last_played_at DESC
-                    LIMIT 1) AS last_played_game,
-                    
-                    (SELECT upg.last_played_at
-                    FROM user_played_games upg
-                    WHERE upg.user_id = $1
-                    ORDER BY upg.last_played_at DESC
-                    LIMIT 1) AS last_played_at
+                    -- Obtenemos el nombre, icono y fecha del último juego en una sola subconsulta eficiente
+                    lp.app_name AS last_played_game,
+                    lp.last_played_at,
+                    lp.icon_url AS last_played_game_icon_url
 
                 FROM usersapp u
+                LEFT JOIN LATERAL (
+                    SELECT
+                        da.app_name,
+                        da.icon_url,
+                        upg.last_played_at
+                    FROM user_played_games upg
+                    JOIN detected_apps da ON upg.package_name = da.package_name
+                    WHERE upg.user_id = u.id
+                    ORDER BY upg.last_played_at DESC
+                    LIMIT 1
+                ) lp ON true
                 WHERE u.id = $1;
             `;
+            // ==========================================================
+            
             const result = await pool.query(query, [userId, loggedInUserId]);
             if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Perfil no encontrado.' });
             
@@ -80,6 +87,7 @@ module.exports = (pool, JWT_SECRET) => {
             res.status(500).json({ success: false, message: 'Error interno al obtener el perfil.' });
         }
     });
+
 
    // ----------------------------------------------------
 // RUTA: Actualizar/Completar Perfil (CON SANITIZACIÓN MEJORADA)
