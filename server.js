@@ -9,7 +9,6 @@ const path = require('path');
 const http = require('http');
 const { Server } = require("socket.io");
 const admin = require('firebase-admin');
-const fetch = require('node-fetch');
 
 // --- CONFIGURACIÓN PRINCIPAL ---
 const app = express();
@@ -493,7 +492,10 @@ app.use('/api/user', userRoutes(pool, JWT_SECRET));
 app.use('/api/posts', postRoutes(pool, JWT_SECRET));
 app.use('/api/notifications', notificationRoutes(pool, JWT_SECRET));
 app.use('/api/chat', chatRoutes(pool, JWT_SECRET, io));
-app.use('/api/apps', appApiRoutes(pool, JWT_SECRET, fetch));
+
+// ¡LLAMADA SIMPLIFICADA! Ya no pasamos 'fetch'
+app.use('/api/apps', appApiRoutes(pool, JWT_SECRET)); 
+
 
 // Ruta específica para la versión de la app
 app.get('/api/app/latest-version', (req, res) => {

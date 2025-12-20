@@ -1,8 +1,9 @@
 const express = require('express');
 const { protect } = require('../middleware/auth');
+const fetch = require('node-fetch'); // <-- ¡AÑADE LA IMPORTACIÓN AQUÍ!
 
 // Recibimos 'fetch' como el tercer parámetro
-module.exports = (pool, JWT_SECRET, fetch) => {
+module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
 
     // ==========================================================
