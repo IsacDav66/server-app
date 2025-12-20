@@ -106,12 +106,18 @@ module.exports = (pool, JWT_SECRET) => {
         next();
     });
 
-    router.get('/stickers/search', async (req, res) => {
+     router.get('/stickers/search', async (req, res) => {
         const searchTerm = req.query.q;
         if (!searchTerm) return res.status(400).json({ success: false, message: 'Término de búsqueda requerido.' });
         
+        // ==========================================================
+        // === ¡AQUÍ ESTÁ LA CORRECCIÓN! ===
+        // ==========================================================
         const GIPHY_URL = `https://api.giphy.com/v1/stickers/search?api_key=${process.env.GIPHY_API_KEY}&q=${encodeURIComponent(searchTerm)}&limit=25&rating=g&lang=es`;
+        // ==========================================================
+        
         try {
+            const fetch = (await import('node-fetch')).default;
             const giphyResponse = await fetch(GIPHY_URL);
             if (!giphyResponse.ok) throw new Error(`GIPHY API respondió con ${giphyResponse.status}`);
             const giphyData = await giphyResponse.json();
@@ -123,8 +129,14 @@ module.exports = (pool, JWT_SECRET) => {
     });
 
     router.get('/stickers/trending', async (req, res) => {
+        // ==========================================================
+        // === ¡Y AQUÍ TAMBIÉN! ===
+        // ==========================================================
         const GIPHY_URL = `https://api.giphy.com/v1/stickers/trending?api_key=${process.env.GIPHY_API_KEY}&limit=25&rating=g`;
+        // ==========================================================
+        
         try {
+            const fetch = (await import('node-fetch')).default;
             const giphyResponse = await fetch(GIPHY_URL);
             if (!giphyResponse.ok) throw new Error(`GIPHY API respondió con ${giphyResponse.status}`);
             const giphyData = await giphyResponse.json();
@@ -134,6 +146,7 @@ module.exports = (pool, JWT_SECRET) => {
             res.status(502).json({ success: false, message: 'No se pudo comunicar con el servicio de stickers.' });
         }
     });
+
 
     // ==========================================================
     // === RUTA GENÉRICA (DEBE IR AL FINAL) ===
