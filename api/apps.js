@@ -1,13 +1,12 @@
-// /server/api/apps.js
 const express = require('express');
 const { protect } = require('../middleware/auth');
-const fetch = require('node-fetch'); // <-- ¡AÑADE LA IMPORTACIÓN AQUÍ!
 
+// Recibimos 'fetch' como el tercer parámetro
 module.exports = (pool, JWT_SECRET, fetch) => {
     const router = express.Router();
 
     // ==========================================================
-    // === RUTAS ESPECÍFICAS (van primero) ===
+    // === RUTAS ESPECÍFICAS (van primero para evitar conflictos) ===
     // ==========================================================
 
     // RUTA PARA OBTENER EL HISTORIAL COMPLETO DE APPS
@@ -26,7 +25,7 @@ module.exports = (pool, JWT_SECRET, fetch) => {
                 ORDER BY upg.last_seen_at DESC;
             `;
             const result = await pool.query(query, [userId]);
-            console.log(`[API /history] Encontradas ${result.rowCount} apps para el usuario ${userId}`);
+            console.log(`[API /apps/history] Encontradas ${result.rowCount} apps para el usuario ${userId}`);
             res.status(200).json({ success: true, apps: result.rows });
         } catch (error) {
             console.error("Error al obtener el historial de apps:", error);
@@ -95,32 +94,9 @@ module.exports = (pool, JWT_SECRET, fetch) => {
         }
     });
     
-    // ==========================================================
-    // === RUTA GENÉRICA (va al final) ===
-    // ==========================================================
+    // --- RUTAS DE GIPHY ---
     
-    // RUTA PARA OBTENER INFO DE UNA APP ESPECÍFICA
-    router.get('/:packageName', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const { packageName } = req.params;
-        try {
-            const result = await pool.query('SELECT package_name, app_name, icon_url, is_game FROM detected_apps WHERE package_name = $1', [packageName]);
-            if (result.rows.length > 0) {
-                res.status(200).json({ success: true, found: true, app: result.rows[0] });
-            } else {
-                res.status(200).json({ success: true, found: false });
-            }
-        } catch (error) {
-            res.status(500).json({ success: false, message: 'Error interno.' });
-        }
-    });
-
-      // ==========================================================
-    // === ¡RUTAS DE GIPHY CON CORRECCIÓN DE SINTAXIS! ===
-    // ==========================================================
-    
-    // Middleware para verificar la API Key.
-    // Se aplica a cualquier ruta que COMIENCE con /stickers.
-    // ¡SIN EL "/*" AL FINAL!
+    // Middleware para verificar la API Key. Se aplica a las rutas de stickers.
     router.use('/stickers', (req, res, next) => {
         if (!process.env.GIPHY_API_KEY) {
             console.error("❌ GIPHY ERROR: GIPHY_API_KEY no está definida.");
@@ -129,7 +105,6 @@ module.exports = (pool, JWT_SECRET, fetch) => {
         next();
     });
 
-    // Endpoint para buscar stickers (ahora en /api/apps/stickers/search)
     router.get('/stickers/search', async (req, res) => {
         const searchTerm = req.query.q;
         if (!searchTerm) return res.status(400).json({ success: false, message: 'Término de búsqueda requerido.' });
@@ -146,7 +121,6 @@ module.exports = (pool, JWT_SECRET, fetch) => {
         }
     });
 
-    // Endpoint para stickers en tendencia (ahora en /api/apps/stickers/trending)
     router.get('/stickers/trending', async (req, res) => {
         const GIPHY_URL = `https://api.giphy.com/v1/stickers/trending?api_key=${process.env.GIPHY_API_KEY}&limit=25&rating=g`;
         try {
@@ -157,6 +131,25 @@ module.exports = (pool, JWT_SECRET, fetch) => {
         } catch (error) {
             console.error("Error en proxy a GIPHY (trending):", error);
             res.status(502).json({ success: false, message: 'No se pudo comunicar con el servicio de stickers.' });
+        }
+    });
+
+    // ==========================================================
+    // === RUTA GENÉRICA (DEBE IR AL FINAL) ===
+    // ==========================================================
+    
+    // RUTA PARA OBTENER INFO DE UNA APP ESPECÍFICA por su nombre de paquete
+    router.get('/:packageName', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const { packageName } = req.params;
+        try {
+            const result = await pool.query('SELECT package_name, app_name, icon_url, is_game FROM detected_apps WHERE package_name = $1', [packageName]);
+            if (result.rows.length > 0) {
+                res.status(200).json({ success: true, found: true, app: result.rows[0] });
+            } else {
+                res.status(200).json({ success: true, found: false });
+            }
+        } catch (error) {
+            res.status(500).json({ success: false, message: 'Error interno.' });
         }
     });
 

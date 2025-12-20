@@ -1,48 +1,36 @@
-// Archivo: /server/server.js (VERSIÓN CON CORS MANUAL)
 // Carga las variables de entorno del archivo .env
 require('dotenv').config({ path: './.env' }); 
-const fs = require('fs'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
 
+// --- IMPORTACIONES ---
+const fs = require('fs');
 const express = require('express');
-// const cors = require('cors'); // Ya no se necesita
+const cors = require('cors');
 const { Pool } = require('pg');
 const path = require('path');
-// const bodyParser = require('body-parser'); // Usaremos el de Express integrado
-const http = require('http'); // <-- AÑADE ESTA LÍNEA
-const { Server } = require("socket.io"); // <-- AÑADE ESTA LÍNEA
-const admin = require('firebase-admin'); // <-- 1. IMPORTA FIREBASE ADMIN
-
-// --- ¡AÑADE ESTA LÍNEA PARA HACER PETICIONES HTTP DESDE EL BACKEND! ---
+const http = require('http');
+const { Server } = require("socket.io");
+const admin = require('firebase-admin');
 const fetch = require('node-fetch');
+
+// --- CONFIGURACIÓN PRINCIPAL ---
 const app = express();
 const PORT = 3001;
 const INTERNAL_HOST = '0.0.0.0'; 
+const JWT_SECRET = 'TuSuperClaveSecretaJWT9876543210'; // ¡Usa process.env.JWT_SECRET en producción!
 
-// CLAVE SECRETA DE JWT (¡USAR .ENV EN PRODUCCIÓN!)
-const JWT_SECRET = 'TuSuperClaveSecretaJWT9876543210'; 
-
-// --- CREA UN SERVIDOR HTTP Y ENVUELVE TU APP DE EXPRESS ---
 const server = http.createServer(app);
 
-// --- CONFIGURA SOCKET.IO CON CORS ---
+// --- CONFIGURACIÓN DE SOCKET.IO ---
 const io = new Server(server, {
     cors: {
         origin: "*",
         methods: ["GET", "POST"]
     },
-    // ¡LA LÍNEA CLAVE!
     path: "/app/socket.io/"
 });
-
-// ==========================================================
-// === ¡AQUÍ ESTÁ LA LÍNEA MÁGICA QUE SOLUCIONA EL BUG! ===
-// ==========================================================
 app.set('socketio', io);
-// ==========================================================
 
-// ==========================================================
-// === INICIALIZACIÓN DE FIREBASE ADMIN (SOLO UNA VEZ) ===
-// ==========================================================
+// --- INICIALIZACIÓN DE FIREBASE ADMIN ---
 try {
     const serviceAccount = require('./config/firebase-service-account.json');
     admin.initializeApp({
@@ -51,27 +39,17 @@ try {
     console.log('✅ Firebase Admin SDK inicializado correctamente.');
 } catch (error) {
     console.error('❌ Error al inicializar Firebase Admin SDK:', error.message);
-    // Podrías decidir salir del proceso si Firebase es crítico
-    // process.exit(1); 
 }
-// ==========================================================
 
-
-// ====================================================
-// CONFIGURACIÓN DE BASE DE DATOS (POSTGRESQL)
-// ====================================================
+// --- CONFIGURACIÓN DE BASE DE DATOS ---
 if (!process.env.DATABASE_URL) {
     console.error('❌ Error: DATABASE_URL no está definido en el archivo .env');
     process.exit(1);
 }
-
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: false
-    }
+    ssl: { rejectUnauthorized: false }
 });
-
 pool.connect()
     .then(client => {
         console.log('✅ Conexión exitosa a PostgreSQL.');
@@ -82,56 +60,22 @@ pool.connect()
         process.exit(1);
     });
 
-// ====================================================
-// CONFIGURACIÓN DE MIDDLEWARE
-// ====================================================
-
-// Aumentamos el límite del cuerpo de la solicitud para poder subir videos grandes.
+// --- CONFIGURACIÓN DE MIDDLEWARE ---
+app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-
-// ====================================================
-// CONFIGURACIÓN DE MIDDLEWARE (VERSIÓN FINAL Y SIMPLIFICADA)
-// ====================================================
-
-// Solo necesitamos el parser para cuerpos de solicitud grandes.
-// Nginx se encargará de todo lo relacionado con CORS.
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-// Servir archivos estáticos (sin cambios)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-// --- ¡AÑADE ESTA LÍNEA PARA SERVIR LA CARPETA DE ACTUALIZACIONES! ---
-    app.use('/updates', express.static(path.join(__dirname, 'public', 'updates')));
- // ==========================================================
-    // === ¡NUEVA RUTA PARA LA VERSIÓN DE LA APP! ===
-    // ==========================================================
-    const appRouter = express.Router();
-    appRouter.get('/latest-version', (req, res) => {
-        const versionFilePath = path.join(__dirname, 'public', 'updates', 'version.json');
-        fs.readFile(versionFilePath, 'utf8', (err, data) => {
-            if (err) {
-                console.error("Error al leer version.json:", err);
-                return res.status(500).json({ success: false, message: "No se pudo obtener la información de la versión." });
-            }
-            const versionInfo = JSON.parse(data);
-            // Añadimos la URL de descarga para que el cliente no tenga que construirla
-            versionInfo.downloadUrl = `${process.env.PUBLIC_SERVER_URL}/updates/app-release.apk`;
-            res.json({ success: true, ...versionInfo });
-        });
-    });
+app.use('/updates', express.static(path.join(__dirname, 'public', 'updates')));
 
-// --- CREA UN MAPA PARA RASTREAR USUARIOS EN LÍNEA ---
-const onlineUsers = new Map(); // K: socket.id, V: userId
-app.set('onlineUsers', onlineUsers); // Hacemos el mapa accesible en las rutas
+// --- MAPA DE USUARIOS EN LÍNEA ---
+const onlineUsers = new Map();
+app.set('onlineUsers', onlineUsers);
 
-// --- LÓGICA DE WEBSOCKETS (Pega esto después de tus middlewares) ---
+// --- LÓGICA DE WEBSOCKETS ---
 io.on('connection', (socket) => {
     console.log('🔌 Un usuario se ha conectado:', socket.id);
 
     const notifyFriendsOfStatusChange = async (userId, isOnline, currentAppInfo = null) => {
-        console.log(`📢 BACKEND-STATUS: Intentando notificar a amigos de User ${userId}. Estado: ${isOnline}, App: ${currentAppInfo ? currentAppInfo.name : null}`);
         try {
             const query = `
                 SELECT f1.follower_id as friend_id
@@ -141,16 +85,8 @@ io.on('connection', (socket) => {
             `;
             const result = await pool.query(query, [userId]);
             const friends = result.rows;
-            
-            if (friends.length === 0) {
-                console.log(`🟡 BACKEND-STATUS: User ${userId} no tiene amigos para notificar.`);
-                return;
-            }
+            if (friends.length === 0) return;
 
-            // ==========================================================
-            // === ¡AQUÍ ESTÁ LA CORRECCIÓN! ===
-            // ==========================================================
-            // Usamos la variable correcta 'currentAppInfo' que recibe la función.
             const payload = { 
                 userId: userId, 
                 isOnline: isOnline,
@@ -158,17 +94,13 @@ io.on('connection', (socket) => {
                 currentAppIcon: currentAppInfo ? currentAppInfo.icon : null,
                 currentAppPackage: currentAppInfo ? currentAppInfo.package : null
             };
-            // ==========================================================
-            
-            console.log('➡️ BACKEND-STATUS: Preparando para emitir el payload:', payload);
 
             friends.forEach(friend => {
                 const friendRoom = `user-${friend.friend_id}`;
                 io.to(friendRoom).emit('friend_status_update', payload);
-                console.log(`  -> Emitiendo a la sala ${friendRoom}`);
             });
         } catch (error) {
-            console.error("❌ BACKEND-STATUS: Error en notifyFriendsOfStatusChange:", error);
+            console.error("❌ Error en notifyFriendsOfStatusChange:", error);
         }
     };
 
@@ -178,15 +110,11 @@ io.on('connection', (socket) => {
             const decoded = jwt.verify(token, JWT_SECRET);
             if (decoded.userId) {
                 const userId = decoded.userId;
-                
-                // Asociamos el userId con el socket
-                socket.userId = userId; // <-- AÑADIMOS EL userId DIRECTAMENTE AL OBJETO SOCKET
-
+                socket.userId = userId;
                 const userRoom = `user-${userId}`;
                 socket.join(userRoom);
                 onlineUsers.set(socket.id, { userId: userId, currentApp: null });
                 console.log(`✅ Socket ${socket.id} autenticado como user ${userId} y unido a la sala ${userRoom}`);
-                
                 notifyFriendsOfStatusChange(userId, true, null);
             }
         } catch (error) {
@@ -194,97 +122,47 @@ io.on('connection', (socket) => {
         }
     });
 
-     socket.on('update_current_app', async (appData) => {
+    socket.on('update_current_app', async (appData) => {
         if (!socket.userId) return;
-
-        // --- LOG 5: Confirmar la recepción del evento en el backend ---
-        console.log(`[SERVER LOG] Evento 'update_current_app' RECIBIDO de User ${socket.userId}. Data:`, appData);
-
         let finalAppData = null;
         if (appData && appData.package) {
             try {
                 const result = await pool.query('SELECT * FROM detected_apps WHERE package_name = $1', [appData.package]);
-                
                 if (result.rows.length > 0) {
                     const dbApp = result.rows[0];
-                    finalAppData = { 
-                        name: dbApp.app_name, 
-                        package: dbApp.package_name, 
-                        icon: dbApp.icon_url, 
-                        is_game: dbApp.is_game 
-                    };
-
-                    // --- LOG 6: Confirmar que se está intentando guardar en el historial ---
-                    console.log(`[SERVER LOG] App encontrada en BD: '${dbApp.app_name}'. Intentando registrar en historial...`);
-                try {
-                        // Siempre actualizamos el historial de apps vistas por el usuario
-                    const upsertHistoryQuery = `
-                        INSERT INTO user_app_history (user_id, package_name, last_seen_at)
-                        VALUES ($1, $2, CURRENT_TIMESTAMP)
-                        ON CONFLICT (user_id, package_name)
-                        DO UPDATE SET last_seen_at = CURRENT_TIMESTAMP;
-                    `;
-                    await pool.query(upsertHistoryQuery, [socket.userId, dbApp.package_name]);
-                    console.log(`[SERVER LOG] ¡Éxito! Historial actualizado para User ${socket.userId}.`);
+                    finalAppData = { name: dbApp.app_name, package: dbApp.package_name, icon: dbApp.icon_url, is_game: dbApp.is_game };
                     
-                    if (dbApp.is_game === true) {
-                            const upsertGameQuery = `
-                                INSERT INTO user_played_games (user_id, package_name, last_played_at)
-                                VALUES ($1, $2, CURRENT_TIMESTAMP)
-                                ON CONFLICT (user_id, package_name)
-                                DO UPDATE SET last_played_at = CURRENT_TIMESTAMP;
-                            `;
-                            await pool.query(upsertGameQuery, [socket.userId, dbApp.package_name]);
-                            console.log(`🕹️  [DB LOG] Juego registrado/actualizado para User ${socket.userId}: ${dbApp.package_name}`);
-                        }
-                    } catch(dbError) {
-                        console.error(`❌ [DB LOG] Error al registrar historial/juego para User ${socket.userId}:`, dbError);
-                    }
+                    // Registrar en historial de apps
+                    const upsertHistoryQuery = `INSERT INTO user_app_history (user_id, package_name, last_seen_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (user_id, package_name) DO UPDATE SET last_seen_at = CURRENT_TIMESTAMP;`;
+                    await pool.query(upsertHistoryQuery, [socket.userId, dbApp.package_name]);
 
+                    // Si es un juego, registrar en historial de juegos
+                    if (dbApp.is_game === true) {
+                        const upsertGameQuery = `INSERT INTO user_played_games (user_id, package_name, last_played_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (user_id, package_name) DO UPDATE SET last_played_at = CURRENT_TIMESTAMP;`;
+                        await pool.query(upsertGameQuery, [socket.userId, dbApp.package_name]);
+                    }
                 } else {
-                    // Si la app NO existe en nuestra base de datos
-                    finalAppData = { 
-                        name: appData.name, 
-                        package: appData.package, 
-                        icon: null, 
-                        unregistered: true 
-                    };
+                    finalAppData = { name: appData.name, package: appData.package, icon: null, unregistered: true };
                 }
             } catch (dbError) {
-                console.error("❌ Error al buscar app en la BD:", dbError);
-                // Si la BD falla, usamos el nombre nativo como fallback.
+                console.error("❌ Error al buscar/registrar app en la BD:", dbError);
                 finalAppData = { name: appData.name, package: appData.package, icon: null };
             }
         }
-
-        // --- PASO 3: Lógica de Notificación a Amigos (SOLO si la app cambió) ---
-        // Obtenemos el estado actual del usuario del mapa en memoria.
-        const userData = onlineUsers.get(socket.id);
         
-        // Comparamos el paquete de la app anterior con el de la nueva.
+        const userData = onlineUsers.get(socket.id);
         if (userData && (userData.currentApp?.package !== finalAppData?.package)) {
-            console.log(`🔄 [STATE CHANGE] User ${socket.userId} cambió de app: ${userData.currentApp?.package || 'ninguna'} -> ${finalAppData?.package || 'ninguna'}`);
-            
-            // Actualizamos el mapa en memoria con la nueva app.
             userData.currentApp = finalAppData;
             onlineUsers.set(socket.id, userData);
-            
-            // Notificamos a los amigos sobre el cambio de estado.
             notifyFriendsOfStatusChange(socket.userId, true, finalAppData);
         }
     });
 
-
-
-
-
-    // El cliente se une a una sala privada al conectarse
     socket.on('join_room', (roomName) => {
         socket.join(roomName);
         console.log(`Socket ${socket.id} se unió a la sala: ${roomName}`);
     });
 
-    // Escucha los mensajes entrantes del cliente
     socket.on('send_message', async (data) => {
         // Obtenemos los datos del cliente, incluyendo el ID temporal
         const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId } = data;
@@ -394,20 +272,14 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         console.log(`🔌 Un usuario se ha desconectado: ${socket.id}`);
-        if (socket.userId) { // Usamos la propiedad que adjuntamos
+        if (socket.userId) {
             onlineUsers.delete(socket.id);
             notifyFriendsOfStatusChange(socket.userId, false, null);
         }
     });
-    });
+});
 
-
-
-
-// ====================================================
-// INICIALIZACIÓN DE TABLAS
-// ====================================================
-
+// --- INICIALIZACIÓN DE TABLAS DE LA BASE DE DATOS ---
 async function initDatabase() {
     // TABLA DE USUARIOS (usersapp)
     const usersQuery = `
@@ -609,49 +481,40 @@ async function initDatabase() {
 }
 initDatabase();
 
-
-// Rutas
+// --- RUTAS DE LA APLICACIÓN ---
 const authRoutes = require('./api/auth');
 const userRoutes = require('./api/user'); 
 const postRoutes = require('./api/post');
 const chatRoutes = require('./api/chat');
 const notificationRoutes = require('./api/notifications');
-const appRoutes = require('./api/apps');
+const appApiRoutes = require('./api/apps');
 
-// ==========================================================
-// === ¡ORDEN DE RUTAS CORREGIDO! ===
-// ==========================================================
-// Montamos las rutas más específicas primero.
+// Montamos cada router en su prefijo correcto
 app.use('/api/auth', authRoutes(pool, JWT_SECRET)); 
+app.use('/api/user', userRoutes(pool, JWT_SECRET)); 
 app.use('/api/posts', postRoutes(pool, JWT_SECRET));
 app.use('/api/notifications', notificationRoutes(pool, JWT_SECRET));
-app.use('/api/apps', appRoutes(pool, JWT_SECRET)); // <-- `apps` va ANTES que `user`
 app.use('/api/chat', chatRoutes(pool, JWT_SECRET, io));
+app.use('/api/apps', appApiRoutes(pool, JWT_SECRET, fetch));
 
-// La ruta genérica `/api/user/:userId` va al final para no interceptar otras.
-app.use('/api/user', userRoutes(pool, JWT_SECRET)); 
+// Ruta específica para la versión de la app
+app.get('/api/app/latest-version', (req, res) => {
+    const versionFilePath = path.join(__dirname, 'public', 'updates', 'version.json');
+    fs.readFile(versionFilePath, 'utf8', (err, data) => {
+        if (err) {
+            return res.status(500).json({ success: false, message: "No se pudo obtener la información de la versión." });
+        }
+        try {
+            const versionInfo = JSON.parse(data);
+            versionInfo.downloadUrl = `${process.env.PUBLIC_SERVER_URL}/updates/app-release.apk`;
+            res.json({ success: true, ...versionInfo });
+        } catch (parseErr) {
+            res.status(500).json({ success: false, message: "Archivo de versión corrupto." });
+        }
+    });
+});
 
-// ==========================================================
-// === ¡AÑADE 'fetch' COMO PARÁMETRO! ===
-// ==========================================================
-app.use('/api/apps', appRoutes(pool, JWT_SECRET, fetch));
-// ==========================================================
-
-// ==========================================================
-
-// --- AÑADE LA NUEVA RUTA ---
-// ==========================================================
-// === ¡AQUÍ ESTÁ LA CORRECCIÓN EN EL SERVIDOR! ===
-// ==========================================================
-// Montamos todas nuestras rutas bajo el prefijo '/api'
-const apiRouter = express.Router();
-
-
-// Y ahora montamos este router principal en la raíz de la app.
-// Cuando el proxy redirija a /app, Express verá la ruta como si fuera solo '/'.
-app.use(apiRouter);
-// ==========================================================
-// Manejador de Errores Final
+// --- MANEJADOR DE ERRORES FINAL ---
 app.use((err, req, res, next) => {
     console.error(err.stack);
     const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
@@ -661,7 +524,7 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Servidor de escucha
+// --- SERVIDOR DE ESCUCHA ---
 const PRODUCTION_API_URL = 'https://davcenter.servequake.com';
 server.listen(PORT, INTERNAL_HOST, () => {
     console.log(`📡 Servidor de Node.js escuchando INTERNAMENTE en ${INTERNAL_HOST}:${PORT}`);
