@@ -166,19 +166,22 @@ module.exports = (pool, JWT_SECRET) => {
     router.post('/stickers/upload', 
         (req, res, next) => protect(req, res, next, JWT_SECRET),
         uploadStickerMiddleware, // Esta llamada no cambia
-        (req, res) => {
-            // --- LOG FINAL ---
+                (req, res) => {
             console.log('[Route LOG] Se ha alcanzado la lógica final de la ruta /stickers/upload.');
             console.log('[Route LOG] req.file:', req.file);
 
             if (!req.file) {
-                // Este error ahora es menos probable, pero lo mantenemos por seguridad
-                return res.status(400).json({ success: false, message: 'No se recibió ningún archivo o fue filtrado.' });
+                return res.status(400).json({ success: false, message: 'No se recibió ningún archivo.' });
             }
 
             const fileUrl = `/uploads/stickers_temp/${req.file.filename}`;
-            res.status(200).json({ success: true, url: fileUrl });
+            
+            const responsePayload = { success: true, url: fileUrl };
+            console.log('[Route LOG] Enviando respuesta al cliente:', responsePayload); // <-- LOG AÑADIDO
+            
+            res.status(200).json(responsePayload);
         }
+
     );
 
     return router;
