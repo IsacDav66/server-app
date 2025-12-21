@@ -157,5 +157,22 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
+    // ==========================================================
+    // === ¡NUEVA RUTA PARA SUBIR STICKERS PERSONALIZADOS! ===
+    // ==========================================================
+    router.post('/stickers/upload', 
+        (req, res, next) => protect(req, res, next, JWT_SECRET),
+        uploadStickerMiddleware,
+        (req, res) => {
+            if (!req.file) {
+                return res.status(400).json({ success: false, message: 'No se recibió ningún archivo.' });
+            }
+
+            // Devolvemos la URL pública temporal del archivo subido
+            const fileUrl = `/uploads/stickers_temp/${req.file.filename}`;
+            res.status(200).json({ success: true, url: fileUrl });
+        }
+    );
+
     return router;
 };
