@@ -59,6 +59,18 @@ pool.connect()
     });
 
 // --- CONFIGURACIÓN DE MIDDLEWARE ---
+
+// ==========================================================
+// === ¡AÑADE ESTE BLOQUE PARA HABILITAR SharedArrayBuffer! ===
+// ==========================================================
+// Este middleware añade las cabeceras necesarias para el aislamiento de origen cruzado.
+app.use((req, res, next) => {
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    next();
+});
+// ==========================================================
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
