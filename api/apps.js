@@ -164,7 +164,7 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-    // --- RUTA DE SUBIDA DE STICKERS (VERSIÓN FINAL CON FFMPEG EN EL SERVIDOR) ---
+    // --- RUTA DE SUBIDA DE STICKERS (CON AUDIO HABILITADO) ---
     router.post('/stickers/upload', 
         (req, res, next) => protect(req, res, next, JWT_SECRET),
         uploadStickerMiddleware,
@@ -175,42 +175,42 @@ module.exports = (pool, JWT_SECRET) => {
             
             const inputFile = req.file;
             
-            // --- SI ES UN VÍDEO, LO PROCESAMOS ---
             if (inputFile.mimetype.startsWith('video/')) {
                 const outputFilename = `sticker-${Date.now()}.mp4`;
                 const outputPath = path.join(__dirname, '../uploads/stickers_temp/', outputFilename);
 
-                ffmpeg(inputFile.path) // Le pasamos la ruta del archivo temporal subido por multer
-                    .setFfmpegPath('/usr/bin/ffmpeg') // Asegúrate de que esta ruta sea correcta en tu servidor
+                ffmpeg(inputFile.path)
+                    .setFfmpegPath('/usr/bin/ffmpeg')
                     .outputOptions([
-                        '-t 10', // Duración máxima de 10 segundos
-                        '-vf scale=256:-2', // Redimensionar a 256px de ancho
+                        '-t 10',
+                        '-vf scale=256:-2',
                         '-c:v libx264',
                         '-preset ultrafast',
-                        '-an', // Sin audio
+                        
+                        // ==========================================================
+                        // === ¡AQUÍ ESTÁ LA CORRECCIÓN! ===
+                        // ==========================================================
+                        // Eliminamos '-an' y añadimos el códec de audio 'aac'.
+                        '-c:a aac',
+                        // ==========================================================
+                        
                         '-movflags +faststart'
                     ])
                     .on('end', () => {
-                        // Eliminamos el archivo original subido por multer
                         fs.unlink(inputFile.path, (err) => {
                             if (err) console.error("Error al eliminar archivo temporal de vídeo:", err);
                         });
-
-                        // Devolvemos la URL del nuevo archivo procesado
                         const fileUrl = `/uploads/stickers_temp/${outputFilename}`;
                         res.status(200).json({ success: true, url: fileUrl });
                     })
                     .on('error', (err) => {
                         console.error('Error de FFmpeg:', err.message);
-                        // Eliminamos el archivo original también si hay un error
                         fs.unlink(inputFile.path, () => {});
                         res.status(500).json({ success: false, message: 'Error al procesar el vídeo.' });
                     })
                     .save(outputPath);
 
             } else {
-                // --- SI ES UNA IMAGEN O GIF, SIMPLEMENTE DEVOLVEMOS SU URL ---
-                // (Multer ya lo guardó con un nombre único)
                 const fileUrl = `/uploads/stickers_temp/${inputFile.filename}`;
                 res.status(200).json({ success: true, url: fileUrl });
             }
