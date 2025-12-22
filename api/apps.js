@@ -164,7 +164,7 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-    // --- RUTA DE SUBIDA DE STICKERS (CON AUDIO HABILITADO) ---
+    // --- RUTA DE SUBIDA DE STICKERS (ACTUALIZADA PARA RECORTAR VÍDEO) ---
     router.post('/stickers/upload', 
         (req, res, next) => protect(req, res, next, JWT_SECRET),
         uploadStickerMiddleware,
@@ -176,29 +176,36 @@ module.exports = (pool, JWT_SECRET) => {
             const inputFile = req.file;
             
             if (inputFile.mimetype.startsWith('video/')) {
+                // --- OBTENEMOS LOS NUEVOS PARÁMETROS DEL FORMULARIO ---
+                const startTime = parseFloat(req.body.startTime) || 0;
+                const muteAudio = req.body.muteAudio === 'true'; // Convertir string a boolean
+
                 const outputFilename = `sticker-${Date.now()}.mp4`;
                 const outputPath = path.join(__dirname, '../uploads/stickers_temp/', outputFilename);
 
-                ffmpeg(inputFile.path)
+                // --- CONSTRUIMOS EL COMANDO FFMPEG DINÁMICAMENTE ---
+                const command = ffmpeg(inputFile.path)
                     .setFfmpegPath('/usr/bin/ffmpeg')
                     .outputOptions([
-                        '-t 10',
+                        `-ss ${startTime}`, // ¡NUEVO! Empezar a recortar desde este segundo
+                        '-t 10',             // Duración máxima de 10 segundos
                         '-vf scale=256:-2',
                         '-c:v libx264',
                         '-preset ultrafast',
-                        
-                        // ==========================================================
-                        // === ¡AQUÍ ESTÁ LA CORRECCIÓN! ===
-                        // ==========================================================
-                        // Eliminamos '-an' y añadimos el códec de audio 'aac'.
-                        '-c:a aac',
-                        // ==========================================================
-                        
                         '-movflags +faststart'
-                    ])
+                    ]);
+                
+                // ¡NUEVO! Añadimos la opción de audio solo si no se quiere silenciar
+                if (!muteAudio) {
+                    command.outputOptions('-c:a aac');
+                } else {
+                    command.outputOptions('-an'); // Sin audio
+                }
+
+                command
                     .on('end', () => {
                         fs.unlink(inputFile.path, (err) => {
-                            if (err) console.error("Error al eliminar archivo temporal de vídeo:", err);
+                            if (err) console.error("Error al eliminar archivo temporal:", err);
                         });
                         const fileUrl = `/uploads/stickers_temp/${outputFilename}`;
                         res.status(200).json({ success: true, url: fileUrl });
@@ -211,6 +218,7 @@ module.exports = (pool, JWT_SECRET) => {
                     .save(outputPath);
 
             } else {
+                // La lógica para imágenes/GIFs no cambia
                 const fileUrl = `/uploads/stickers_temp/${inputFile.filename}`;
                 res.status(200).json({ success: true, url: fileUrl });
             }
