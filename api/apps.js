@@ -5,6 +5,10 @@ const fetch = require('node-fetch'); // <-- ¡AÑADE LA IMPORTACIÓN AQUÍ!
 // === ¡AÑADE ESTA LÍNEA AQUÍ! ===
 // ==========================================================
 const uploadStickerMiddleware = require('../middleware/uploadSticker');
+const fs = require('fs'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
+const path = require('path'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
+const ffmpeg = require('fluent-ffmpeg'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
+
 // Recibimos 'fetch' como el tercer parámetro
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
@@ -160,28 +164,57 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-    // ==========================================================
-    // === ¡NUEVA RUTA PARA SUBIR STICKERS PERSONALIZADOS! ===
-    // ==========================================================
+    // --- RUTA DE SUBIDA DE STICKERS (VERSIÓN FINAL CON FFMPEG EN EL SERVIDOR) ---
     router.post('/stickers/upload', 
         (req, res, next) => protect(req, res, next, JWT_SECRET),
-        uploadStickerMiddleware, // Esta llamada no cambia
-                (req, res) => {
-            console.log('[Route LOG] Se ha alcanzado la lógica final de la ruta /stickers/upload.');
-            console.log('[Route LOG] req.file:', req.file);
-
+        uploadStickerMiddleware,
+        async (req, res) => {
             if (!req.file) {
                 return res.status(400).json({ success: false, message: 'No se recibió ningún archivo.' });
             }
+            
+            const inputFile = req.file;
+            
+            // --- SI ES UN VÍDEO, LO PROCESAMOS ---
+            if (inputFile.mimetype.startsWith('video/')) {
+                const outputFilename = `sticker-${Date.now()}.mp4`;
+                const outputPath = path.join(__dirname, '../uploads/stickers_temp/', outputFilename);
 
-            const fileUrl = `/uploads/stickers_temp/${req.file.filename}`;
-            
-            const responsePayload = { success: true, url: fileUrl };
-            console.log('[Route LOG] Enviando respuesta al cliente:', responsePayload); // <-- LOG AÑADIDO
-            
-            res.status(200).json(responsePayload);
+                ffmpeg(inputFile.path) // Le pasamos la ruta del archivo temporal subido por multer
+                    .setFfmpegPath('/usr/bin/ffmpeg') // Asegúrate de que esta ruta sea correcta en tu servidor
+                    .outputOptions([
+                        '-t 10', // Duración máxima de 10 segundos
+                        '-vf scale=256:-2', // Redimensionar a 256px de ancho
+                        '-c:v libx264',
+                        '-preset ultrafast',
+                        '-an', // Sin audio
+                        '-movflags +faststart'
+                    ])
+                    .on('end', () => {
+                        // Eliminamos el archivo original subido por multer
+                        fs.unlink(inputFile.path, (err) => {
+                            if (err) console.error("Error al eliminar archivo temporal de vídeo:", err);
+                        });
+
+                        // Devolvemos la URL del nuevo archivo procesado
+                        const fileUrl = `/uploads/stickers_temp/${outputFilename}`;
+                        res.status(200).json({ success: true, url: fileUrl });
+                    })
+                    .on('error', (err) => {
+                        console.error('Error de FFmpeg:', err.message);
+                        // Eliminamos el archivo original también si hay un error
+                        fs.unlink(inputFile.path, () => {});
+                        res.status(500).json({ success: false, message: 'Error al procesar el vídeo.' });
+                    })
+                    .save(outputPath);
+
+            } else {
+                // --- SI ES UNA IMAGEN O GIF, SIMPLEMENTE DEVOLVEMOS SU URL ---
+                // (Multer ya lo guardó con un nombre único)
+                const fileUrl = `/uploads/stickers_temp/${inputFile.filename}`;
+                res.status(200).json({ success: true, url: fileUrl });
+            }
         }
-
     );
 
     return router;
