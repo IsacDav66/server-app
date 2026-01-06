@@ -90,5 +90,28 @@ module.exports = (pool, JWT_SECRET) => {
         }
     );
 
+
+    // Eliminar un post de un bot (Acceso administrativo)
+    router.delete('/posts/:postId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const { postId } = req.params;
+        try {
+            // El admin puede borrar cualquier post de un usuario que sea is_bot = TRUE
+            const deleteQuery = `
+                DELETE FROM postapp 
+                WHERE post_id = $1 AND user_id IN (SELECT id FROM usersapp WHERE is_bot = TRUE);
+            `;
+            const result = await pool.query(deleteQuery, [postId]);
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ success: false, message: 'Post no encontrado o no pertenece a un bot.' });
+            }
+
+            res.json({ success: true, message: 'Post del bot eliminado correctamente.' });
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ success: false, message: 'Error al eliminar el post' });
+        }
+    });
+
     return router;
 };
