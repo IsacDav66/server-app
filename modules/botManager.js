@@ -32,41 +32,30 @@ const startAutonomousBot = async (pool, io) => {
             // 3. Intentar generar contenido
             let content = "";
             try {
-                const result = await model.generateContent(prompt);
-                const response = await fetch(`${API_BASE_URL}/api/admin/bots/upload-pic/${id}`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-                    },
-                    body: formData
-                });
-                content = response.text().trim().replace(/"/g, '');
-                
-                // --- LÓGICA DE PUBLICACIÓN CONDICIONAL ---
-                if (content && content.length > 0) {
-                    // Solo si hay contenido real, guardamos y emitimos
-                    const insertQuery = `INSERT INTO postapp (user_id, content, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP) RETURNING *;`;
-                    const postResult = await pool.query(insertQuery, [bot.id, content]);
-                    const newPost = postResult.rows[0];
+                    // 1. Usamos API_BASE_URL (la que importaste arriba)
+                    const response = await fetch(`${API_BASE_URL}/api/admin/bots/upload-pic/${id}`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                        },
+                        body: formData
+                    });
 
-                    if (io) {
-                        io.emit('new_post', {
-                            ...newPost,
-                            username: bot.username,
-                            profile_pic_url: bot.profile_pic_url || '/assets/img/default-avatar.png',
-                            total_likes: 0,
-                            total_comments: 0,
-                            is_liked_by_user: false,
-                            is_saved_by_user: false
-                        });
+                    const result = await response.json();
+
+                    if (result.success) {
+                        // 2. Usamos getFullImageUrl (tu helper) para evitar el "undefined"
+                        imgElement.src = `${getFullImageUrl(result.profilePicUrl)}?t=${Date.now()}`;
+                    } else {
+                        alert("Error al subir: " + result.message);
                     }
-                    console.log(`🚀 [${bot.username}] Publicó: "${content}"`);
+                } catch (err) {
+                    console.error("Error en subida:", err);
+                    alert("Error de conexión al subir la imagen.");
+                } finally {
+                    imgElement.style.filter = "";
+                    imgElement.style.opacity = "1";
                 }
-
-            } catch (apiError) {
-                // Si la API falla (429, 404, etc.), no hacemos nada, solo logeamos el error
-                console.error(`⚠️ [${bot.username}] No pudo publicar: Error en Gemini API.`);
-            }
 
         } catch (error) {
             console.error("❌ Error crítico en el ciclo del bot:", error.message);
