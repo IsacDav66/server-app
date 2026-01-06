@@ -9,6 +9,7 @@ const path = require('path');
 const http = require('http');
 const { Server } = require("socket.io");
 const admin = require('firebase-admin');
+const { startAutonomousBot } = require('./modules/botManager'); // <--- 1. ASEGURAR ESTO
 
 // --- CONFIGURACIÓN PRINCIPAL ---
 const app = express();
@@ -541,4 +542,7 @@ const PRODUCTION_API_URL = 'https://davcenter.servequake.com';
 server.listen(PORT, INTERNAL_HOST, () => {
     console.log(`📡 Servidor de Node.js escuchando INTERNAMENTE en ${INTERNAL_HOST}:${PORT}`);
     console.log(`🌐 Acceso EXTERNO (APP) vía: ${PRODUCTION_API_URL}`);
+  
+    // <--- 2. ESTA LÍNEA DEBE ESTAR AQUÍ DENTRO
+    startAutonomousBot(pool, io); 
 });
