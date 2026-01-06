@@ -21,7 +21,7 @@ const startAutonomousBot = async (pool, io) => {
 
             // 2. Configurar el modelo de IA
             const model = genAI.getGenerativeModel({ 
-                model: "gemini-1.5-flash",
+                model: "gemini-2.5-flash",
                 apiVersion: 'v1' 
             });
 
