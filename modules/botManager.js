@@ -1,6 +1,7 @@
 // server/modules/botManager.js
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
+// Inicializamos Gemini con la clave del .env
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const startAutonomousBot = async (pool, io) => {
@@ -8,65 +9,74 @@ const startAutonomousBot = async (pool, io) => {
 
     const runPostCycle = async () => {
         try {
-            // 1. Obtener datos del bot
+            // 1. Obtener datos del bot desde la base de datos
             const botResult = await pool.query("SELECT id, username, bio, profile_pic_url FROM usersapp WHERE is_bot = TRUE LIMIT 1");
             const bot = botResult.rows[0];
 
             if (!bot) {
+                console.warn("⚠️ No se encontró ningún bot en la DB. Reintentando en 1 minuto...");
                 setTimeout(runPostCycle, 60000);
                 return;
             }
 
-            // 2. Configurar IA
+            // 2. Configurar el modelo de IA
             const model = genAI.getGenerativeModel({ 
-                model: "gemini-2.5-flash",
+                model: "gemini-1.5-flash",
                 apiVersion: 'v1' 
             });
 
             const prompt = `
-                Tu nombre es ${bot.username}. Personalidad: ${bot.bio}.
-                Escribe un post de red social gamer muy corto (máximo 12 palabras).
-                Usa emojis. Responde SOLO con el texto del post.
+                Tu nombre es ${bot.username}. Tu personalidad es: ${bot.bio}.
+                Escribe una publicación muy corta (máximo 12 palabras) para tu muro de red social.
+                Habla sobre juegos, anime o tecnología. Usa emojis.
+                Responde SOLO con el texto del post, sin comillas.
             `;
 
-            // 3. Intentar generar contenido
-            let content = "";
+            // 3. Generar contenido con la IA
             try {
-                    // 1. Usamos API_BASE_URL (la que importaste arriba)
-                    const response = await fetch(`${API_BASE_URL}/api/admin/bots/upload-pic/${id}`, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-                        },
-                        body: formData
-                    });
+                const result = await model.generateContent(prompt);
+                const response = await result.response;
+                const content = response.text().trim().replace(/"/g, '');
+                
+                if (content && content.length > 0) {
+                    // 4. Guardar el post en la base de datos
+                    const insertQuery = `
+                        INSERT INTO postapp (user_id, content, created_at) 
+                        VALUES ($1, $2, CURRENT_TIMESTAMP) 
+                        RETURNING *;
+                    `;
+                    const postResult = await pool.query(insertQuery, [bot.id, content]);
+                    const newPost = postResult.rows[0];
 
-                    const result = await response.json();
-
-                    if (result.success) {
-                        // 2. Usamos getFullImageUrl (tu helper) para evitar el "undefined"
-                        imgElement.src = `${getFullImageUrl(result.profilePicUrl)}?t=${Date.now()}`;
-                    } else {
-                        alert("Error al subir: " + result.message);
+                    // 5. Emitir el post por Socket.io para que aparezca en la app sin recargar
+                    if (io) {
+                        io.emit('new_post', {
+                            ...newPost,
+                            username: bot.username,
+                            profile_pic_url: bot.profile_pic_url,
+                            total_likes: 0,
+                            total_comments: 0,
+                            is_liked_by_user: false,
+                            is_saved_by_user: false
+                        });
                     }
-                } catch (err) {
-                    console.error("Error en subida:", err);
-                    alert("Error de conexión al subir la imagen.");
-                } finally {
-                    imgElement.style.filter = "";
-                    imgElement.style.opacity = "1";
+                    console.log(`🚀 [${bot.username}] Publicó: "${content}"`);
                 }
+            } catch (apiError) {
+                console.error(`⚠️ Error en la API de Gemini: ${apiError.message}`);
+            }
 
         } catch (error) {
             console.error("❌ Error crítico en el ciclo del bot:", error.message);
         }
 
-        // 4. Programar siguiente intento SIEMPRE (para que el bot no muera)
+        // Programar el siguiente post (tiempo aleatorio entre 20 y 40 minutos)
         const nextTime = (Math.floor(Math.random() * 20) + 20) * 60 * 1000;
-        console.log(`⏳ Próximo intento de publicación en ${nextTime / 60000} minutos.`);
+        console.log(`⏳ Siguiente intento de publicación en ${nextTime / 60000} minutos.`);
         setTimeout(runPostCycle, nextTime);
     };
 
+    // Iniciar el ciclo
     runPostCycle();
 };
 
