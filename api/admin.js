@@ -2,6 +2,7 @@ const express = require('express');
 const { protect } = require('../middleware/auth');
 const uploadMiddleware = require('../middleware/upload');
 const processImage = require('../middleware/processImage');
+const uploadCoverMiddleware = require('../middleware/uploadCover');
 
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
@@ -64,6 +65,27 @@ module.exports = (pool, JWT_SECRET) => {
                 res.json({ success: true, profilePicUrl: publicPath });
             } catch (error) {
                 res.status(500).json({ success: false, message: 'Error al actualizar base de datos' });
+            }
+        }
+    );
+
+    // NUEVA RUTA: Subir foto de portada para un bot
+    router.post('/bots/upload-cover/:id', 
+        (req, res, next) => protect(req, res, next, JWT_SECRET),
+        uploadCoverMiddleware, // Middleware para archivos de portada
+        (req, res, next) => {
+            req.user.adminTargetId = req.params.id; // ID del bot para el nombre del archivo
+            next();
+        },
+        processImage('cover'), // Sharp procesará esto como 'cover'
+        async (req, res) => {
+            const { id } = req.params;
+            const publicPath = `/uploads/cover_images/${req.file.filename}`;
+            try {
+                await pool.query('UPDATE usersapp SET cover_pic_url = $1 WHERE id = $2', [publicPath, id]);
+                res.json({ success: true, coverPicUrl: publicPath });
+            } catch (error) {
+                res.status(500).json({ success: false, message: 'Error al actualizar portada' });
             }
         }
     );
