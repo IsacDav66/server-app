@@ -687,5 +687,42 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         }
     });
 
+
+    // --- RUTA SECRETA: Obtener todos los bots ---
+    router.get('/admin/bots', async (req, res) => {
+        try {
+            const result = await pool.query('SELECT id, username, age, gender, bio, profile_pic_url FROM usersapp WHERE is_bot = TRUE');
+            res.json({ success: true, bots: result.rows });
+        } catch (error) {
+            res.status(500).json({ success: false, message: 'Error al obtener bots' });
+        }
+    });
+
+    // --- RUTA SECRETA: Actualizar un bot ---
+    router.post('/admin/update-bot', 
+        uploadMiddleware, // Usamos tu middleware de subida de fotos
+        processImage('profile'), // Procesamos la imagen como WebP
+        async (req, res) => {
+            const { id, username, age, gender, bio } = req.body;
+            let profilePicUrl = req.body.profile_pic_url;
+
+            if (req.file) {
+                profilePicUrl = `/uploads/profile_images/${req.file.filename}`;
+            }
+
+            try {
+                await pool.query(
+                    `UPDATE usersapp SET username = $1, age = $2, gender = $3, bio = $4, profile_pic_url = $5 
+                     WHERE id = $6 AND is_bot = TRUE`,
+                    [username, age, gender, bio, profilePicUrl, id]
+                );
+                res.json({ success: true, message: 'Bot actualizado correctamente' });
+            } catch (error) {
+                console.error(error);
+                res.status(500).json({ success: false, message: 'Error al actualizar el bot' });
+            }
+        }
+    );
+
     return router;
 };
