@@ -1,4 +1,3 @@
-// server/api/admin.js
 const express = require('express');
 const { protect } = require('../middleware/auth');
 const uploadMiddleware = require('../middleware/upload');
@@ -7,12 +6,13 @@ const processImage = require('../middleware/processImage');
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
 
-    // Obtener lista de todos los bots
+    // GET /api/admin/bots
     router.get('/bots', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         try {
             const result = await pool.query('SELECT id, username, bio, age, gender, profile_pic_url FROM usersapp WHERE is_bot = TRUE');
             res.json({ success: true, bots: result.rows });
         } catch (error) {
+            console.error(error);
             res.status(500).json({ success: false, message: 'Error al obtener bots' });
         }
     });

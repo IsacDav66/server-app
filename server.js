@@ -19,6 +19,8 @@ const JWT_SECRET = 'TuSuperClaveSecretaJWT9876543210'; // ¡Usa process.env.JWT_
 
 const server = http.createServer(app);
 
+const adminRoutes = require('./api/admin'); 
+
 // --- CONFIGURACIÓN DE SOCKET.IO ---
 const io = new Server(server, {
     cors: {
@@ -76,6 +78,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/updates', express.static(path.join(__dirname, 'public', 'updates')));
+app.use('/api/admin', adminRoutes(pool, JWT_SECRET));
 
 // --- MAPA DE USUARIOS EN LÍNEA ---
 const onlineUsers = new Map();
