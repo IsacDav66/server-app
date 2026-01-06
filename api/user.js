@@ -688,7 +688,10 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
     });
 
 
-    // --- RUTA SECRETA: Obtener todos los bots ---
+    // ==========================================================
+    // === PEGA LAS RUTAS DE ADMIN AQUÍ (DENTRO DEL MODULE) ===
+    // ==========================================================
+    
     router.get('/admin/bots', async (req, res) => {
         try {
             const result = await pool.query('SELECT id, username, age, gender, bio, profile_pic_url FROM usersapp WHERE is_bot = TRUE');
@@ -698,10 +701,9 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         }
     });
 
-    // --- RUTA SECRETA: Actualizar un bot ---
     router.post('/admin/update-bot', 
-        uploadMiddleware, // Usamos tu middleware de subida de fotos
-        processImage('profile'), // Procesamos la imagen como WebP
+        uploadMiddleware, 
+        processImage('profile'), 
         async (req, res) => {
             const { id, username, age, gender, bio } = req.body;
             let profilePicUrl = req.body.profile_pic_url;
@@ -718,7 +720,7 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
                 );
                 res.json({ success: true, message: 'Bot actualizado correctamente' });
             } catch (error) {
-                console.error(error);
+                console.error("Error SQL:", error);
                 res.status(500).json({ success: false, message: 'Error al actualizar el bot' });
             }
         }
