@@ -36,13 +36,14 @@ module.exports = (pool, JWT_SECRET) => {
     // Nota: Reutilizamos el middleware, pero necesitamos pasar el ID del bot
     router.post('/bots/upload-pic/:id', 
         (req, res, next) => protect(req, res, next, JWT_SECRET),
-        uploadMiddleware,
-        async (req, res, next) => {
-            // Hack temporal para que processImage use el ID del bot en lugar del tuyo
+        uploadMiddleware, // Multer recibe la foto
+        (req, res, next) => {
+            // Guardamos el ID del BOT en el objeto de la petición
+            // para que processImage lo lea y nombre el archivo correctamente.
             req.user.adminTargetId = req.params.id; 
             next();
         },
-        processImage('profile'), 
+        processImage('profile'), // Sharp procesa la foto
         async (req, res) => {
             const { id } = req.params;
             const publicPath = `/uploads/profile_images/${req.file.filename}`;
@@ -50,7 +51,7 @@ module.exports = (pool, JWT_SECRET) => {
                 await pool.query('UPDATE usersapp SET profile_pic_url = $1 WHERE id = $2', [publicPath, id]);
                 res.json({ success: true, profilePicUrl: publicPath });
             } catch (error) {
-                res.status(500).json({ success: false, message: 'Error al guardar foto' });
+                res.status(500).json({ success: false, message: 'Error al actualizar base de datos' });
             }
         }
     );

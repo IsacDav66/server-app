@@ -33,7 +33,13 @@ const startAutonomousBot = async (pool, io) => {
             let content = "";
             try {
                 const result = await model.generateContent(prompt);
-                const response = await result.response;
+                const response = await fetch(`${API_BASE_URL}/api/admin/bots/upload-pic/${id}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                    },
+                    body: formData
+                });
                 content = response.text().trim().replace(/"/g, '');
                 
                 // --- LÓGICA DE PUBLICACIÓN CONDICIONAL ---
