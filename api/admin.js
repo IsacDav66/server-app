@@ -7,24 +7,24 @@ module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
 
     // GET /api/admin/bots
+    // 1. Obtener bots (incluyendo la nueva columna)
     router.get('/bots', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         try {
-            const result = await pool.query('SELECT id, username, bio, age, gender, profile_pic_url FROM usersapp WHERE is_bot = TRUE');
+            const result = await pool.query('SELECT id, username, bio, bot_personality, age, gender, profile_pic_url FROM usersapp WHERE is_bot = TRUE');
             res.json({ success: true, bots: result.rows });
         } catch (error) {
-            console.error(error);
             res.status(500).json({ success: false, message: 'Error al obtener bots' });
         }
     });
 
-    // Actualizar datos de un bot específico
+    // 2. Actualizar bot (incluyendo bot_personality)
     router.post('/bots/update/:id', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const { id } = req.params;
-        const { username, bio, age, gender } = req.body;
+        const { username, bio, bot_personality, age, gender } = req.body; // <-- Añadido bot_personality
         try {
             await pool.query(
-                'UPDATE usersapp SET username = $1, bio = $2, age = $3, gender = $4 WHERE id = $5 AND is_bot = TRUE',
-                [username, bio, age, gender, id]
+                'UPDATE usersapp SET username = $1, bio = $2, bot_personality = $3, age = $4, gender = $5 WHERE id = $6 AND is_bot = TRUE',
+                [username, bio, bot_personality, age, gender, id]
             );
             res.json({ success: true, message: 'Bot actualizado' });
         } catch (error) {

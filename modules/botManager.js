@@ -9,8 +9,8 @@ const startAutonomousBot = async (pool, io) => {
 
     const runPostCycle = async () => {
         try {
-            // 1. Obtener datos del bot desde la base de datos
-            const botResult = await pool.query("SELECT id, username, bio, profile_pic_url FROM usersapp WHERE is_bot = TRUE LIMIT 1");
+            // 1. Asegúrate de que la consulta SQL traiga bot_personality
+            const botResult = await pool.query("SELECT id, username, bio, bot_personality, profile_pic_url FROM usersapp WHERE is_bot = TRUE LIMIT 1");
             const bot = botResult.rows[0];
 
             if (!bot) {
@@ -25,11 +25,14 @@ const startAutonomousBot = async (pool, io) => {
                 apiVersion: 'v1' 
             });
 
+            // 2. Actualiza el prompt de Gemini
             const prompt = `
-                Tu nombre es ${bot.username}. Tu personalidad es: ${bot.bio}.
-                Escribe una publicación muy corta (máximo 12 palabras) para tu muro de red social.
-                Habla sobre juegos, anime o tecnología. Usa emojis.
-                Responde SOLO con el texto del post, sin comillas.
+                Tu nombre es ${bot.username}. 
+                Tu biografía pública es: ${bot.bio}.
+                TUS INSTRUCCIONES DE PERSONALIDAD SECRETAS SON: ${bot.bot_personality || 'Eres un usuario normal'}.
+                
+                Basado en esto, escribe una publicación muy corta (máximo 12 palabras) para tu muro.
+                Usa emojis. Responde SOLO con el texto del post.
             `;
 
             // 3. Generar contenido con la IA
