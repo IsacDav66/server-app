@@ -705,21 +705,49 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         uploadMiddleware, 
         processImage('profile'), 
         async (req, res) => {
-            const { id, username, age, gender, bio, gemini_api_key } = req.body;
-            let profilePicUrl = req.body.profile_pic_url;
+            // CORRECCIÓN: Extraemos TODOS los campos que enviamos desde el front
+            const { 
+                id, 
+                username, 
+                age, 
+                gender, 
+                bio, 
+                bot_personality, 
+                bot_allows_images, 
+                gemini_api_key 
+            } = req.body;
 
+            let profilePicUrl = req.body.profile_pic_url;
             if (req.file) {
                 profilePicUrl = `/uploads/profile_images/${req.file.filename}`;
             }
 
             try {
-                await pool.query(
-                    `UPDATE usersapp SET 
-                        username = $1, bio = $2, bot_personality = $3, age = $4, 
-                        gender = $5, bot_allows_images = $6, gemini_api_key = $7
-                    WHERE id = $8 AND is_bot = TRUE`,
-                    [username, bio, bot_personality, age, gender, bot_allows_images, gemini_api_key, id]
-                );
+                const query = `
+                    UPDATE usersapp SET 
+                        username = $1, 
+                        bio = $2, 
+                        bot_personality = $3, 
+                        age = $4, 
+                        gender = $5, 
+                        bot_allows_images = $6, 
+                        gemini_api_key = $7,
+                        profile_pic_url = $8
+                    WHERE id = $9 AND is_bot = TRUE
+                `;
+                
+                await pool.query(query, [
+                    username, 
+                    bio, 
+                    bot_personality, 
+                    age, 
+                    gender, 
+                    bot_allows_images, 
+                    gemini_api_key, 
+                    profilePicUrl,
+                    id
+                ]);
+
                 res.json({ success: true, message: 'Bot y API Key actualizados' });
             } catch (error) {
                 console.error("Error SQL:", error);
