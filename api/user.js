@@ -744,5 +744,26 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         }
     );
 
+
+    // --- RUTA ADMIN: Subir foto de perfil de un BOT ---
+    router.post('/admin/bots/upload-pic/:id', (req, res, next) => protect(req, res, next, JWT_SECRET), uploadMiddleware, processImage('profile'), async (req, res) => {
+        if (!req.file) return res.status(400).json({ success: false, message: 'No se subió imagen.' });
+        const profilePicUrl = `/uploads/profile_images/${req.file.filename}`;
+        try {
+            await pool.query('UPDATE usersapp SET profile_pic_url = $1 WHERE id = $2 AND is_bot = TRUE', [profilePicUrl, req.params.id]);
+            res.json({ success: true, profilePicUrl });
+        } catch (error) { res.status(500).json({ success: false }); }
+    });
+
+    // --- RUTA ADMIN: Subir portada de un BOT ---
+    router.post('/admin/bots/upload-cover/:id', (req, res, next) => protect(req, res, next, JWT_SECRET), uploadCoverMiddleware, processImage('cover'), async (req, res) => {
+        if (!req.file) return res.status(400).json({ success: false, message: 'No se subió imagen.' });
+        const coverPicUrl = `/uploads/cover_images/${req.file.filename}`;
+        try {
+            await pool.query('UPDATE usersapp SET cover_pic_url = $1 WHERE id = $2 AND is_bot = TRUE', [coverPicUrl, req.params.id]);
+            res.json({ success: true, coverPicUrl });
+        } catch (error) { res.status(500).json({ success: false }); }
+    });
+
     return router;
 };
