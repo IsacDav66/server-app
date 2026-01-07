@@ -11,7 +11,7 @@ module.exports = (pool, JWT_SECRET) => {
     router.get('/bots/:id', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const { id } = req.params;
         try {
-            const result = await pool.query('SELECT id, username, bio, bot_personality, age, gender, profile_pic_url FROM usersapp WHERE id = $1 AND is_bot = TRUE', [id]);
+            const result = await pool.query('SELECT id, username, bio, bot_personality, age, gender, profile_pic_url, cover_pic_url FROM usersapp WHERE id = $1 AND is_bot = TRUE', [id]);
             if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Bot no encontrado' });
             res.json({ success: true, bot: result.rows[0] });
         } catch (error) {
@@ -23,7 +23,7 @@ module.exports = (pool, JWT_SECRET) => {
     // 1. Obtener bots (incluyendo la nueva columna)
     router.get('/bots', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         try {
-            const result = await pool.query('SELECT id, username, bio, bot_personality, age, gender, profile_pic_url FROM usersapp WHERE is_bot = TRUE');
+            const result = await pool.query('SELECT id, username, bio, bot_personality, age, gender, profile_pic_url, cover_pic_url FROM usersapp WHERE is_bot = TRUE');
             res.json({ success: true, bots: result.rows });
         } catch (error) {
             res.status(500).json({ success: false, message: 'Error al obtener bots' });
