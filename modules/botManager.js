@@ -19,7 +19,7 @@ const startAutonomousBot = async (pool, io) => {
                 try {
                     // 3. Inicializamos Gemini con la llave específica de este bot
                     const genAI = new GoogleGenerativeAI(bot.gemini_api_key);
-                    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", apiVersion: 'v1' });
+                    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash", apiVersion: 'v1' });
 
                     const prompt = `Actúa como ${bot.username}. Personalidad: ${bot.bot_personality || bot.bio}. Escribe un post corto.`;
 
