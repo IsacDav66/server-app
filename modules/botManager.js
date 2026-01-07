@@ -40,3 +40,5 @@ const startAutonomousBot = async (pool, io) => {
     };
     runPostCycle();
 };
+
+module.exports = { startAutonomousBot };
