@@ -694,7 +694,7 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
     
     router.get('/admin/bots', async (req, res) => {
         try {
-            const result = await pool.query('SELECT id, username, age, gender, bio, profile_pic_url FROM usersapp WHERE is_bot = TRUE');
+            const result = await pool.query('SELECT id, username, age, gender, bio, profile_pic_url, gemini_api_key, bot_personality, bot_allows_images FROM usersapp WHERE is_bot = TRUE');
             res.json({ success: true, bots: result.rows });
         } catch (error) {
             res.status(500).json({ success: false, message: 'Error al obtener bots' });
@@ -705,16 +705,11 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         uploadMiddleware, 
         processImage('profile'), 
         async (req, res) => {
-            // CORRECCIÓN: Extraemos TODOS los campos que enviamos desde el front
+            console.log("📥 Petición de guardado recibida:", req.body); // Log de depuración
+
             const { 
-                id, 
-                username, 
-                age, 
-                gender, 
-                bio, 
-                bot_personality, 
-                bot_allows_images, 
-                gemini_api_key 
+                id, username, age, gender, bio, 
+                bot_personality, bot_allows_images, gemini_api_key 
             } = req.body;
 
             let profilePicUrl = req.body.profile_pic_url;
@@ -725,33 +720,26 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
             try {
                 const query = `
                     UPDATE usersapp SET 
-                        username = $1, 
-                        bio = $2, 
-                        bot_personality = $3, 
-                        age = $4, 
-                        gender = $5, 
-                        bot_allows_images = $6, 
-                        gemini_api_key = $7,
-                        profile_pic_url = $8
+                        username = $1, bio = $2, bot_personality = $3, 
+                        age = $4, gender = $5, bot_allows_images = $6, 
+                        gemini_api_key = $7, profile_pic_url = $8
                     WHERE id = $9 AND is_bot = TRUE
                 `;
                 
-                await pool.query(query, [
-                    username, 
-                    bio, 
-                    bot_personality, 
-                    age, 
-                    gender, 
-                    bot_allows_images, 
-                    gemini_api_key, 
-                    profilePicUrl,
-                    id
+                const result = await pool.query(query, [
+                    username, bio, bot_personality, 
+                    age, gender, bot_allows_images, 
+                    gemini_api_key, profilePicUrl, id
                 ]);
 
-                res.json({ success: true, message: 'Bot y API Key actualizados' });
+                if (result.rowCount === 0) {
+                    return res.status(404).json({ success: false, message: 'Bot no encontrado' });
+                }
+
+                res.json({ success: true, message: 'Bot actualizado correctamente' });
             } catch (error) {
-                console.error("Error SQL:", error);
-                res.status(500).json({ success: false, message: 'Error al actualizar el bot' });
+                console.error("❌ Error SQL:", error);
+                res.status(500).json({ success: false, message: 'Error en la base de datos' });
             }
         }
     );
