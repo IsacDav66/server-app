@@ -692,9 +692,18 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
     // === PEGA LAS RUTAS DE ADMIN AQUÍ (DENTRO DEL MODULE) ===
     // ==========================================================
     
+    // --- RUTA ADMIN: Obtener todos los bots (CON PORTADA INCLUIDA) ---
     router.get('/admin/bots', async (req, res) => {
         try {
-            const result = await pool.query('SELECT id, username, age, gender, bio, profile_pic_url, gemini_api_key, bot_personality, bot_allows_images FROM usersapp WHERE is_bot = TRUE');
+            // ¡LA CLAVE!: Añadimos cover_pic_url a la consulta
+            const query = `
+                SELECT 
+                    id, username, age, gender, bio, profile_pic_url, 
+                    cover_pic_url, gemini_api_key, bot_personality, bot_allows_images 
+                FROM usersapp 
+                WHERE is_bot = TRUE
+            `;
+            const result = await pool.query(query);
             res.json({ success: true, bots: result.rows });
         } catch (error) {
             res.status(500).json({ success: false, message: 'Error al obtener bots' });
