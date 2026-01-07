@@ -30,18 +30,18 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-    // 2. Actualizar bot (incluyendo bot_personality)
+    // 2. En POST /bots/update/:id, actualiza la consulta:
     router.post('/bots/update/:id', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const { id } = req.params;
-        const { username, bio, bot_personality, age, gender } = req.body; // <-- Añadido bot_personality
+        const { username, bio, bot_personality, age, gender, bot_allows_images } = req.body;
         try {
             await pool.query(
-                'UPDATE usersapp SET username = $1, bio = $2, bot_personality = $3, age = $4, gender = $5 WHERE id = $6 AND is_bot = TRUE',
-                [username, bio, bot_personality, age, gender, id]
+                'UPDATE usersapp SET username = $1, bio = $2, bot_personality = $3, age = $4, gender = $5, bot_allows_images = $6 WHERE id = $7',
+                [username, bio, bot_personality, age, gender, bot_allows_images, id]
             );
             res.json({ success: true, message: 'Bot actualizado' });
         } catch (error) {
-            res.status(500).json({ success: false, message: 'Error al actualizar bot' });
+            res.status(500).json({ success: false, message: 'Error al actualizar' });
         }
     });
 

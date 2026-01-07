@@ -27,31 +27,38 @@ const startAutonomousBot = async (pool, io) => {
 
             // 2. Actualiza el prompt de Gemini
             const prompt = `
-                Tu nombre es ${bot.username}. 
-                Tu biografía pública es: ${bot.bio}.
-                TUS INSTRUCCIONES DE PERSONALIDAD SECRETAS SON: ${bot.bot_personality || 'Eres un usuario normal'}.
+                Tu nombre es ${bot.username}. Personalidad: ${bot.bot_personality}.
+                Escribe un post gamer corto (máximo 12 palabras) con emojis.
                 
-                Basado en esto, escribe una publicación muy corta (máximo 12 palabras) para tu muro.
-                Usa emojis. Responde SOLO con el texto del post.
+                ${bot.bot_allows_images ? 'Dime si este post necesita una imagen descriptiva. Responde en este formato: "TEXTO DEL POST | KEYWORD". Si no necesita imagen, deja la KEYWORD vacía. La KEYWORD debe ser una sola palabra en inglés.' : 'Responde SOLO con el texto del post.'}
             `;
 
-            // 3. Generar contenido con la IA
             try {
                 const result = await model.generateContent(prompt);
-                const response = await result.response;
-                const content = response.text().trim().replace(/"/g, '');
+                const rawResponse = result.response.text().trim();
                 
-                if (content && content.length > 0) {
-                    // 4. Guardar el post en la base de datos
-                    const insertQuery = `
-                        INSERT INTO postapp (user_id, content, created_at) 
-                        VALUES ($1, $2, CURRENT_TIMESTAMP) 
-                        RETURNING *;
-                    `;
-                    const postResult = await pool.query(insertQuery, [bot.id, content]);
+                let content = rawResponse;
+                let imageUrl = null;
+
+                // Si el bot permite imágenes, parseamos la respuesta
+                if (bot.bot_allows_images && rawResponse.includes('|')) {
+                    const parts = rawResponse.split('|');
+                    content = parts[0].trim().replace(/"/g, '');
+                    const keyword = parts[1].trim();
+
+                    if (keyword && keyword.length > 1) {
+                        // Usamos un servicio gratuito que redirige a una imagen aleatoria según keyword
+                        // Source.unsplash es excelente y gratis
+                        imageUrl = `https://loremflickr.com/800/600/${encodeURIComponent(keyword)}`;
+                        console.log(`📸 Gemini decidió añadir imagen para: ${keyword}`);
+                    }
+                }
+
+                if (content) {
+                    const insertQuery = `INSERT INTO postapp (user_id, content, image_url, created_at) VALUES ($1, $2, $3, CURRENT_TIMESTAMP) RETURNING *;`;
+                    const postResult = await pool.query(insertQuery, [bot.id, content, imageUrl]);
                     const newPost = postResult.rows[0];
 
-                    // 5. Emitir el post por Socket.io para que aparezca en la app sin recargar
                     if (io) {
                         io.emit('new_post', {
                             ...newPost,
@@ -59,11 +66,10 @@ const startAutonomousBot = async (pool, io) => {
                             profile_pic_url: bot.profile_pic_url,
                             total_likes: 0,
                             total_comments: 0,
-                            is_liked_by_user: false,
-                            is_saved_by_user: false
+                            is_liked_by_user: false
                         });
                     }
-                    console.log(`🚀 [${bot.username}] Publicó: "${content}"`);
+                    console.log(`🚀 [${bot.username}] Publicó: "${content}" ${imageUrl ? '(Con Imagen)' : ''}`);
                 }
             } catch (apiError) {
                 console.error(`⚠️ Error en la API de Gemini: ${apiError.message}`);
