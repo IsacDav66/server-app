@@ -731,7 +731,8 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
                 bot_schedule_type,
                 bot_min_minutes,
                 bot_max_minutes,
-                bot_specific_hours
+                bot_specific_hours,
+                bot_next_post_at
             } = req.body;
 
             // 2. Lógica de persistencia de imagen de perfil:
