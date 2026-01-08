@@ -693,17 +693,23 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
     // ==========================================================
     
     // --- RUTA ADMIN: Obtener todos los bots (CON PORTADA INCLUIDA) ---
-    router.get('/admin/bots', async (req, res) => {
+    router.get('/admin/bots', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         try {
-            // ¡LA CLAVE!: Añadimos cover_pic_url a la consulta
             const query = `
                 SELECT 
                     id, username, age, gender, bio, profile_pic_url, 
-                    cover_pic_url, gemini_api_key, bot_personality, bot_allows_images 
+                    cover_pic_url, gemini_api_key, bot_personality, 
+                    bot_allows_images, bot_schedule_type, bot_min_minutes, 
+                    bot_max_minutes, bot_specific_hours, 
+                    bot_next_post_at  -- <--- ESTA LÍNEA ES VITAL
                 FROM usersapp 
                 WHERE is_bot = TRUE
             `;
             const result = await pool.query(query);
+            
+            // LOG DE DEPURACIÓN (Míralo en tu terminal de Node)
+            console.log("Dato del servidor:", result.rows[0].bot_next_post_at);
+            
             res.json({ success: true, bots: result.rows });
         } catch (error) {
             res.status(500).json({ success: false, message: 'Error al obtener bots' });
