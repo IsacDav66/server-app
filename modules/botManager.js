@@ -44,7 +44,7 @@ const executeSinglePost = async (pool, io, botId) => {
         if (!bot || !bot.gemini_api_key) return { success: false, message: "Bot no configurado" };
 
         const genAI = new GoogleGenerativeAI(bot.gemini_api_key.trim());
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         const prompt = `Eres ${bot.username}. Bio: ${bot.bio}. Personalidad: ${bot.bot_personality}.
         Genera un JSON: {"caption": "texto corto", "image_search_query": "termino busqueda ingles"}. Solo JSON.`;
