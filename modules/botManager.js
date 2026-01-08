@@ -83,27 +83,26 @@ const executeSinglePost = async (pool, io, botId) => {
 
 const calculateNextPostTime = (bot) => {
     const now = new Date();
-    if (bot.bot_schedule_type === 'specific_hours') {
-        // Lógica para encontrar la siguiente hora fija (ej: "08:00,14:00")
+    if (bot.bot_schedule_type === 'specific_hours' && bot.bot_specific_hours) {
         const hours = bot.bot_specific_hours.split(',').map(h => h.trim());
         const futureHours = hours
             .map(h => {
                 const [hh, mm] = h.split(':');
                 const d = new Date();
-                d.setHours(hh, mm, 0, 0);
+                d.setHours(parseInt(hh), parseInt(mm), 0, 0);
                 if (d <= now) d.setDate(d.getDate() + 1);
                 return d;
             })
             .sort((a, b) => a - b);
         return futureHours[0];
     } else {
-        // Lógica para Intervalo o Rango Aleatorio
-        const min = bot.bot_min_minutes || 30;
-        const max = bot.bot_schedule_type === 'random_range' ? (bot.bot_max_minutes || 60) : min;
+        const min = parseInt(bot.bot_min_minutes) || 30;
+        const max = bot.bot_schedule_type === 'random_range' ? (parseInt(bot.bot_max_minutes) || 60) : min;
         const randomWait = Math.floor(Math.random() * (max - min + 1) + min);
         return new Date(now.getTime() + randomWait * 60000);
     }
 };
+
 
 const startAutonomousBot = async (pool, io) => {
     console.log("🤖 Cron-Scheduler de Bots activado (Revisión cada 1 min).");
@@ -134,4 +133,4 @@ const startAutonomousBot = async (pool, io) => {
     checkAndPost();
 };
 
-module.exports = { startAutonomousBot, executeSinglePost };
+module.exports = { startAutonomousBot, executeSinglePost, calculateNextPostTime };

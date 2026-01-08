@@ -718,92 +718,60 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
 
     // --- RUTA ADMIN: Actualizar configuración completa de un Bot ---
     router.post('/admin/update-bot', 
-        (req, res, next) => protect(req, res, next, JWT_SECRET), // Protegemos la ruta
-        uploadMiddleware, // Maneja la subida de foto de perfil si se adjunta una
-        processImage('profile'), // Procesa la imagen subida con Sharp
+        (req, res, next) => protect(req, res, next, JWT_SECRET),
+        uploadMiddleware,
+        processImage('profile'),
         async (req, res) => {
-            // 1. Extraemos TODOS los campos enviados desde el FormData del frontend
             const { 
-                id, 
-                username, 
-                age, 
-                gender, 
-                bio, 
-                bot_personality, 
-                bot_allows_images, 
-                gemini_api_key, 
-                profile_pic_url, 
-                cover_pic_url,
+                id, username, age, gender, bio, bot_personality, 
+                bot_allows_images, gemini_api_key, profile_pic_url, 
+                cover_pic_url, bot_schedule_type, bot_min_minutes, 
+                bot_max_minutes, bot_specific_hours 
+            } = req.body;
+
+            // --- ¡NUEVA LÓGICA DE RECALCULO! ---
+            const { calculateNextPostTime } = require('../modules/botManager');
+            
+            // Creamos un objeto temporal con los nuevos datos para calcular la fecha
+            const nextPostAt = calculateNextPostTime({
                 bot_schedule_type,
                 bot_min_minutes,
                 bot_max_minutes,
-                bot_specific_hours,
-                bot_next_post_at
-            } = req.body;
+                bot_specific_hours
+            });
 
-            // 2. Lógica de persistencia de imagen de perfil:
-            // Si hay un archivo nuevo en la petición, usamos esa ruta.
-            // Si no hay archivo nuevo, usamos la URL que ya tenía el bot (enviada en el body).
             let finalProfilePic = profile_pic_url;
             if (req.file) {
                 finalProfilePic = `/uploads/profile_images/${req.file.filename}`;
             }
 
             try {
-                // 3. Ejecutamos la gran consulta de actualización
                 const query = `
                     UPDATE usersapp SET 
-                        username = $1, 
-                        bio = $2, 
-                        bot_personality = $3, 
-                        age = $4, 
-                        gender = $5, 
-                        bot_allows_images = $6, 
-                        gemini_api_key = $7, 
-                        profile_pic_url = $8, 
-                        cover_pic_url = $9,
-                        bot_schedule_type = $10,
-                        bot_min_minutes = $11,
-                        bot_max_minutes = $12,
-                        bot_specific_hours = $13
-                    WHERE id = $14 AND is_bot = TRUE
+                        username = $1, bio = $2, bot_personality = $3, age = $4, 
+                        gender = $5, bot_allows_images = $6, gemini_api_key = $7, 
+                        profile_pic_url = $8, cover_pic_url = $9,
+                        bot_schedule_type = $10, bot_min_minutes = $11, 
+                        bot_max_minutes = $12, bot_specific_hours = $13,
+                        bot_next_post_at = $14 -- <--- ACTUALIZAMOS LA FECHA AQUÍ
+                    WHERE id = $15 AND is_bot = TRUE
                 `;
 
-                // 4. Mapeo de valores (Aseguramos tipos de datos correctos)
                 const values = [
-                    username,                                           // $1
-                    bio,                                                // $2
-                    bot_personality,                                    // $3
-                    parseInt(age) || 18,                                // $4
-                    gender,                                             // $5
-                    bot_allows_images === 'true' || bot_allows_images === true, // $6 (maneja string de FormData)
-                    gemini_api_key ? gemini_api_key.trim() : null,      // $7
-                    finalProfilePic,                                    // $8
-                    cover_pic_url,                                      // $9
-                    bot_schedule_type || 'interval',                   // $10
-                    parseInt(bot_min_minutes) || 30,                    // $11
-                    parseInt(bot_max_minutes) || 60,                    // $12
-                    bot_specific_hours || '',                           // $13
-                    id                                                  // $14
+                    username, bio, bot_personality, parseInt(age), gender,
+                    bot_allows_images === 'true', gemini_api_key, finalProfilePic, cover_pic_url,
+                    bot_schedule_type, parseInt(bot_min_minutes), parseInt(bot_max_minutes), bot_specific_hours,
+                    nextPostAt, // El nuevo valor calculado ($14)
+                    id          // $15
                 ];
 
-                const result = await pool.query(query, values);
-
-                // 5. Verificamos si se actualizó algo
-                if (result.rowCount === 0) {
-                    return res.status(404).json({ 
-                        success: false, 
-                        message: 'No se encontró el bot o no tienes permisos.' 
-                    });
-                }
-
-                console.log(`✅ Configuración actualizada para el bot: ${username}`);
+                await pool.query(query, values);
+                
                 res.json({ 
                     success: true, 
-                    message: 'Bot actualizado con éxito.',
-                    newProfilePic: finalProfilePic 
+                    message: 'Configuración y horario actualizados',
+                    newNextPostAt: nextPostAt // Lo devolvemos para el Front
                 });
-
             } catch (error) {
                 console.error("❌ Error SQL en /admin/update-bot:", error);
                 res.status(500).json({ 
