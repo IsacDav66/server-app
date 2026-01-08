@@ -759,5 +759,20 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         } catch (error) { res.status(500).json({ success: false }); }
     });
 
+
+    // --- RUTA ADMIN: Forzar publicación de un bot ---
+    router.post('/admin/bots/trigger-post/:id', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        // Importamos la función desde el módulo (Node permite require dentro de funciones)
+        const { executeSinglePost } = require('../modules/botManager');
+        
+        const result = await executeSinglePost(pool, req.app.get('socketio'), req.params.id);
+        
+        if (result.success) {
+            res.json({ success: true, message: '¡Publicación enviada!', caption: result.caption });
+        } else {
+            res.status(500).json({ success: false, message: result.error });
+        }
+    });
+
     return router;
 };
