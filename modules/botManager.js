@@ -79,16 +79,59 @@ const executeSinglePost = async (pool, io, botId) => {
     }
 };
 
-const startAutonomousBot = async (pool, io) => {
-    const runPostCycle = async () => {
-        const bots = await pool.query("SELECT id FROM usersapp WHERE is_bot = TRUE");
-        for (const bot of bots.rows) {
-            await executeSinglePost(pool, io, bot.id);
-        }
-        setTimeout(runPostCycle, (Math.floor(Math.random() * 20) + 20) * 60 * 1000);
-    };
-    runPostCycle();
+
+
+const calculateNextPostTime = (bot) => {
+    const now = new Date();
+    if (bot.bot_schedule_type === 'specific_hours') {
+        // Lógica para encontrar la siguiente hora fija (ej: "08:00,14:00")
+        const hours = bot.bot_specific_hours.split(',').map(h => h.trim());
+        const futureHours = hours
+            .map(h => {
+                const [hh, mm] = h.split(':');
+                const d = new Date();
+                d.setHours(hh, mm, 0, 0);
+                if (d <= now) d.setDate(d.getDate() + 1);
+                return d;
+            })
+            .sort((a, b) => a - b);
+        return futureHours[0];
+    } else {
+        // Lógica para Intervalo o Rango Aleatorio
+        const min = bot.bot_min_minutes || 30;
+        const max = bot.bot_schedule_type === 'random_range' ? (bot.bot_max_minutes || 60) : min;
+        const randomWait = Math.floor(Math.random() * (max - min + 1) + min);
+        return new Date(now.getTime() + randomWait * 60000);
+    }
 };
 
-// Exportamos ambas funciones
+const startAutonomousBot = async (pool, io) => {
+    console.log("🤖 Cron-Scheduler de Bots activado (Revisión cada 1 min).");
+
+    const checkAndPost = async () => {
+        try {
+            // Buscamos bots cuya hora de publicar ya haya pasado o sea nula
+            const res = await pool.query(
+                "SELECT * FROM usersapp WHERE is_bot = TRUE AND (bot_next_post_at <= CURRENT_TIMESTAMP OR bot_next_post_at IS NULL)"
+            );
+
+            for (const bot of res.rows) {
+                if (!bot.gemini_api_key) continue;
+
+                console.log(`⏰ Le toca a [${bot.username}]. Publicando...`);
+                await executeSinglePost(pool, io, bot.id);
+
+                // Calcular y guardar la PRÓXIMA fecha de publicación
+                const nextDate = calculateNextPostTime(bot);
+                await pool.query("UPDATE usersapp SET bot_next_post_at = $1 WHERE id = $2", [nextDate, bot.id]);
+                console.log(`⏳ [${bot.username}] Próximo post programado para: ${nextDate.toLocaleString()}`);
+            }
+        } catch (e) { console.error("Error Scheduler:", e); }
+        
+        setTimeout(checkAndPost, 60000); // Revisar cada minuto
+    };
+
+    checkAndPost();
+};
+
 module.exports = { startAutonomousBot, executeSinglePost };

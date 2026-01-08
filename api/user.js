@@ -710,30 +710,99 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         }
     });
 
+    // --- RUTA ADMIN: Actualizar configuración completa de un Bot ---
     router.post('/admin/update-bot', 
-        uploadMiddleware, 
-        processImage('profile'), 
+        (req, res, next) => protect(req, res, next, JWT_SECRET), // Protegemos la ruta
+        uploadMiddleware, // Maneja la subida de foto de perfil si se adjunta una
+        processImage('profile'), // Procesa la imagen subida con Sharp
         async (req, res) => {
-            // Extraemos gemini_api_key del body
-            const { id, username, age, gender, bio, bot_personality, bot_allows_images, gemini_api_key } = req.body;
-            
-            let profilePicUrl = req.body.profile_pic_url;
+            // 1. Extraemos TODOS los campos enviados desde el FormData del frontend
+            const { 
+                id, 
+                username, 
+                age, 
+                gender, 
+                bio, 
+                bot_personality, 
+                bot_allows_images, 
+                gemini_api_key, 
+                profile_pic_url, 
+                cover_pic_url,
+                bot_schedule_type,
+                bot_min_minutes,
+                bot_max_minutes,
+                bot_specific_hours
+            } = req.body;
+
+            // 2. Lógica de persistencia de imagen de perfil:
+            // Si hay un archivo nuevo en la petición, usamos esa ruta.
+            // Si no hay archivo nuevo, usamos la URL que ya tenía el bot (enviada en el body).
+            let finalProfilePic = profile_pic_url;
             if (req.file) {
-                profilePicUrl = `/uploads/profile_images/${req.file.filename}`;
+                finalProfilePic = `/uploads/profile_images/${req.file.filename}`;
             }
 
             try {
-                await pool.query(
-                    `UPDATE usersapp SET 
-                        username = $1, bio = $2, bot_personality = $3, age = $4, 
-                        gender = $5, bot_allows_images = $6, gemini_api_key = $7, profile_pic_url = $8
-                    WHERE id = $9 AND is_bot = TRUE`,
-                    [username, bio, bot_personality, age, gender, bot_allows_images, gemini_api_key, profilePicUrl, id]
-                );
-                res.json({ success: true, message: 'Bot actualizado' });
+                // 3. Ejecutamos la gran consulta de actualización
+                const query = `
+                    UPDATE usersapp SET 
+                        username = $1, 
+                        bio = $2, 
+                        bot_personality = $3, 
+                        age = $4, 
+                        gender = $5, 
+                        bot_allows_images = $6, 
+                        gemini_api_key = $7, 
+                        profile_pic_url = $8, 
+                        cover_pic_url = $9,
+                        bot_schedule_type = $10,
+                        bot_min_minutes = $11,
+                        bot_max_minutes = $12,
+                        bot_specific_hours = $13
+                    WHERE id = $14 AND is_bot = TRUE
+                `;
+
+                // 4. Mapeo de valores (Aseguramos tipos de datos correctos)
+                const values = [
+                    username,                                           // $1
+                    bio,                                                // $2
+                    bot_personality,                                    // $3
+                    parseInt(age) || 18,                                // $4
+                    gender,                                             // $5
+                    bot_allows_images === 'true' || bot_allows_images === true, // $6 (maneja string de FormData)
+                    gemini_api_key ? gemini_api_key.trim() : null,      // $7
+                    finalProfilePic,                                    // $8
+                    cover_pic_url,                                      // $9
+                    bot_schedule_type || 'interval',                   // $10
+                    parseInt(bot_min_minutes) || 30,                    // $11
+                    parseInt(bot_max_minutes) || 60,                    // $12
+                    bot_specific_hours || '',                           // $13
+                    id                                                  // $14
+                ];
+
+                const result = await pool.query(query, values);
+
+                // 5. Verificamos si se actualizó algo
+                if (result.rowCount === 0) {
+                    return res.status(404).json({ 
+                        success: false, 
+                        message: 'No se encontró el bot o no tienes permisos.' 
+                    });
+                }
+
+                console.log(`✅ Configuración actualizada para el bot: ${username}`);
+                res.json({ 
+                    success: true, 
+                    message: 'Bot actualizado con éxito.',
+                    newProfilePic: finalProfilePic 
+                });
+
             } catch (error) {
-                console.error(error);
-                res.status(500).json({ success: false });
+                console.error("❌ Error SQL en /admin/update-bot:", error);
+                res.status(500).json({ 
+                    success: false, 
+                    message: 'Error interno del servidor al guardar en la base de datos.' 
+                });
             }
         }
     );
