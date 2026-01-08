@@ -83,19 +83,33 @@ const executeSinglePost = async (pool, io, botId) => {
 
 const calculateNextPostTime = (bot) => {
     const now = new Date();
+    // AJUSTE PARA PERÚ (UTC -5)
+    // Cambia este número si el servidor estuviera en otra zona, 
+    // pero -5 es el estándar para Lima/Perú.
+    const PERU_OFFSET = -5; 
+
     if (bot.bot_schedule_type === 'specific_hours' && bot.bot_specific_hours) {
         const hours = bot.bot_specific_hours.split(',').map(h => h.trim());
-        const futureHours = hours
-            .map(h => {
-                const [hh, mm] = h.split(':');
-                const d = new Date();
-                d.setHours(parseInt(hh), parseInt(mm), 0, 0);
-                if (d <= now) d.setDate(d.getDate() + 1);
-                return d;
-            })
-            .sort((a, b) => a - b);
-        return futureHours[0];
+        
+        const futureDates = hours.map(h => {
+            const [hh, mm] = h.split(':');
+            const d = new Date();
+            
+            // Usamos setUTCHours para calcular el momento exacto
+            // Restamos el offset para convertir tu hora local a UTC
+            // Ejemplo: 15:00 - (-5) = 20:00 UTC
+            d.setUTCHours(parseInt(hh) - PERU_OFFSET, parseInt(mm), 0, 0);
+            
+            // Si la hora ya pasó hoy (en tiempo real UTC), programamos para mañana
+            if (d <= now) {
+                d.setUTCDate(d.getUTCDate() + 1);
+            }
+            return d;
+        }).sort((a, b) => a - b);
+
+        return futureDates[0];
     } else {
+        // Lógica para Intervalo o Rango Aleatorio (esta no cambia porque es relativa)
         const min = parseInt(bot.bot_min_minutes) || 30;
         const max = bot.bot_schedule_type === 'random_range' ? (parseInt(bot.bot_max_minutes) || 60) : min;
         const randomWait = Math.floor(Math.random() * (max - min + 1) + min);
