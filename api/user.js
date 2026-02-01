@@ -850,5 +850,27 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         }
     });
 
+
+    // --- RUTA ADMIN: Eliminar un Bot permanentemente ---
+    router.delete('/admin/bots/delete/:id', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const { id } = req.params;
+
+        try {
+            // Intentamos borrar al bot
+            const result = await pool.query('DELETE FROM usersapp WHERE id = $1 AND is_bot = TRUE', [id]);
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ success: false, message: 'Bot no encontrado o no es un bot.' });
+            }
+
+            console.log(`🗑️ Bot con ID ${id} eliminado por el administrador.`);
+            res.json({ success: true, message: 'Bot y todo su contenido eliminados con éxito.' });
+
+        } catch (error) {
+            console.error("Error al eliminar bot:", error);
+            res.status(500).json({ success: false, message: 'Error interno al intentar eliminar el bot.' });
+        }
+    });
+
     return router;
 };
