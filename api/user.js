@@ -818,5 +818,37 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         }
     });
 
+
+    // --- RUTA ADMIN: Crear un nuevo Bot ---
+    router.post('/admin/bots/create', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const { username } = req.body;
+        
+        // Generamos un email único para el bot para evitar conflictos de Base de Datos
+        const botEmail = `bot_${Date.now()}_${Math.floor(Math.random() * 1000)}@system.com`;
+
+        try {
+            const query = `
+                INSERT INTO usersapp (
+                    email, username, is_bot, bio, 
+                    bot_schedule_type, bot_min_minutes, bot_max_minutes,
+                    profile_pic_url
+                ) 
+                VALUES ($1, $2, TRUE, 'Nuevo Bot IA', 'interval', 30, 60, '/assets/img/default-avatar.png') 
+                RETURNING id;
+            `;
+
+            const result = await pool.query(query, [botEmail, username || 'Nuevo Bot']);
+            
+            res.json({ 
+                success: true, 
+                message: 'Bot creado con éxito', 
+                botId: result.rows[0].id 
+            });
+        } catch (error) {
+            console.error("Error al crear bot:", error);
+            res.status(500).json({ success: false, message: 'No se pudo crear el bot' });
+        }
+    });
+
     return router;
 };
