@@ -21,9 +21,10 @@ module.exports = (pool, JWT_SECRET) => {
     // RUTA PROTEGIDA: Obtener datos del usuario LOGUEADO
     router.get('/me', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         try {
-            // Se añade 'cover_pic_url'
-            const query = 'SELECT id, email, username, age, gender, profile_pic_url, bio, cover_pic_url FROM usersapp WHERE id = $1';
+            // ¡LA CLAVE!: Añadimos 'role' a la lista
+            const query = 'SELECT id, email, username, age, gender, profile_pic_url, bio, cover_pic_url, role FROM usersapp WHERE id = $1';
             const result = await pool.query(query, [req.user.userId]);
+            
             if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Usuario no encontrado.' });
             
             const user = result.rows[0];
@@ -32,10 +33,9 @@ module.exports = (pool, JWT_SECRET) => {
             res.status(200).json({ success: true, data: { userId: user.id, ...user, isProfileComplete } });
         } catch (error) {
             console.error(error.stack);
-            res.status(500).json({ success: false, message: 'Error al obtener los datos del usuario.' });
+            res.status(500).json({ success: false, message: 'Error al obtener los datos.' });
         }
     });
-
     // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario
     // REEMPLAZA tu ruta /profile/:userId con esta
     // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario (VERSIÓN MEJORADA)
