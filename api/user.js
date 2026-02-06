@@ -4,7 +4,6 @@ const express = require('express');
 const sanitizeHtml = require('sanitize-html'); // <-- 1. IMPORTAR SANITIZER
 const { protect, softProtect, adminOnly } = require('../middleware/auth'); 
 // Crea un grupo de protección
-const checkAdmin = [(req, res, next) => protect(req, res, next, JWT_SECRET), adminOnly(pool)];
 
 const uploadMiddleware = require('../middleware/upload');
 const uploadCoverMiddleware = require('../middleware/uploadCover');
@@ -15,7 +14,6 @@ const uploadPlayerCardCoverMiddleware = require('../middleware/uploadPlayerCardC
 const path = require('path');
 // EN LA PARTE SUPERIOR DEL ARCHIVO, JUNTO A LOS OTROS REQUIRES
 const admin = require('firebase-admin'); // <-- SOLO NECESITAS IMPORTARLO
-
 
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
