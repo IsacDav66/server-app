@@ -58,6 +58,12 @@ const softProtect = (req, res, next, JWT_SECRET) => {
     next(); // Siempre continúa a la siguiente función
 };
 
-
-// Exportar ambos middlewares
-module.exports = { protect, softProtect };
+const adminOnly = (pool) => async (req, res, next) => {
+    const result = await pool.query('SELECT role FROM usersapp WHERE id = $1', [req.user.userId]);
+    if (result.rows[0]?.role === 'admin') {
+        next();
+    } else {
+        res.status(403).json({ success: false, message: 'No eres administrador.' });
+    }
+};
+module.exports = { protect, softProtect, adminOnly };

@@ -2,7 +2,10 @@
 
 const express = require('express');
 const sanitizeHtml = require('sanitize-html'); // <-- 1. IMPORTAR SANITIZER
-const { protect, softProtect } = require('../middleware/auth'); 
+const { protect, softProtect, adminOnly } = require('../middleware/auth'); 
+// Crea un grupo de protección
+const checkAdmin = [(req, res, next) => protect(req, res, next, JWT_SECRET), adminOnly(pool)];
+
 const uploadMiddleware = require('../middleware/upload');
 const uploadCoverMiddleware = require('../middleware/uploadCover');
 const uploadBioImageMiddleware = require('../middleware/uploadBioImage'); // <-- 2. IMPORTAR NUEVO MIDDLEWARE
