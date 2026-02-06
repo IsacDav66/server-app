@@ -687,13 +687,19 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         }
     });
 
+    // CREAMOS UNA CONSTANTE PARA EL CHEQUEO DE ADMIN
+    const checkAdmin = [
+        (req, res, next) => protect(req, res, next, JWT_SECRET),
+        adminOnly(pool)
+    ];
+
 
     // ==========================================================
     // === PEGA LAS RUTAS DE ADMIN AQUÍ (DENTRO DEL MODULE) ===
     // ==========================================================
     
     // --- RUTA ADMIN: Obtener todos los bots (CON PORTADA INCLUIDA) ---
-    router.get('/admin/bots', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    router.get('/admin/bots', checkAdmin, async (req, res) => {
         try {
             const query = `
                 SELECT 
@@ -717,7 +723,7 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
     });
 
     // --- RUTA ADMIN: Actualizar configuración completa de un Bot ---
-    router.post('/admin/update-bot', 
+    router.post('/admin/update-bot', checkAdmin,
         (req, res, next) => protect(req, res, next, JWT_SECRET),
         uploadMiddleware,
         processImage('profile'),
@@ -805,7 +811,7 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
 
 
     // --- RUTA ADMIN: Forzar publicación de un bot ---
-    router.post('/admin/bots/trigger-post/:id', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    router.post('/admin/bots/trigger-post/:id', checkAdmin, (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         // Importamos la función desde el módulo (Node permite require dentro de funciones)
         const { executeSinglePost } = require('../modules/botManager');
         
@@ -820,7 +826,7 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
 
 
     // --- RUTA ADMIN: Crear un nuevo Bot ---
-    router.post('/admin/bots/create', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    router.post('/admin/bots/create', checkAdmin, (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const { username } = req.body;
         
         // Generamos un email único para el bot para evitar conflictos de Base de Datos
@@ -852,7 +858,7 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
 
 
     // --- RUTA ADMIN: Eliminar un Bot permanentemente ---
-    router.delete('/admin/bots/delete/:id', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    router.delete('/admin/bots/delete/:id', checkAdmin, (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const { id } = req.params;
 
         try {
