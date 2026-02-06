@@ -879,5 +879,29 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         }
     });
 
+
+
+
+    // --- RUTA ADMIN: Eliminar una publicación de un bot (sin ser el dueño) ---
+    router.delete('/admin/posts/:postId', checkAdmin, async (req, res) => {
+        const { postId } = req.params;
+
+        try {
+            // Ejecutamos el borrado directamente. 
+            // Gracias al checkAdmin, sabemos que quien pide esto tiene permiso.
+            const result = await pool.query('DELETE FROM postapp WHERE post_id = $1', [postId]);
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ success: false, message: 'La publicación no existe.' });
+            }
+
+            console.log(`🗑️ Post ID ${postId} eliminado por administrador.`);
+            res.json({ success: true, message: 'Publicación eliminada correctamente.' });
+        } catch (error) {
+            console.error("❌ Error SQL al eliminar post de bot:", error);
+            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        }
+    });
+
     return router;
 };
