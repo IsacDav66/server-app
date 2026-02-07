@@ -22,6 +22,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                         m.receiver_id,
                         m.content,
                         m.created_at,
+                        m.is_read,
                         -- Identificamos al "otro" usuario en la conversación
                         CASE
                             WHEN m.sender_id = $1 THEN m.receiver_id
@@ -44,6 +45,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                     rm.sender_id AS last_message_sender_id,
                     u.id AS user_id,
                     u.username,
+                    rm.is_read,
                     u.profile_pic_url
                 FROM RankedMessages rm
                 JOIN usersapp u ON rm.other_user_id = u.id
@@ -133,6 +135,16 @@ module.exports = (pool, JWT_SECRET, io) => {
             console.error("Error al eliminar el mensaje:", error);
             res.status(500).json({ success: false, message: 'Error interno del servidor.' });
         }
+    });
+
+    router.post('/read-all/:senderId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        try {
+            await pool.query(
+                'UPDATE messagesapp SET is_read = TRUE WHERE receiver_id = $1 AND sender_id = $2',
+                [req.user.userId, req.params.senderId]
+            );
+            res.json({ success: true });
+        } catch (error) { res.status(500).send(); }
     });
 
     return router;
