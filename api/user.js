@@ -903,5 +903,50 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         }
     });
 
+
+
+    // --- RUTA ADMIN: Notificar a todos sobre una nueva actualización ---
+    router.post('/admin/announce-update', checkAdmin, async (req, res) => {
+        const { versionName, notes } = req.body;
+
+        try {
+            // 1. Obtenemos todos los usuarios que tienen un token de notificación
+            const result = await pool.query('SELECT fcm_token FROM usersapp WHERE fcm_token IS NOT NULL');
+            const tokens = result.rows.map(r => r.fcm_token);
+
+            if (tokens.length === 0) {
+                return res.json({ success: true, message: 'No hay usuarios para notificar.' });
+            }
+
+            // 2. Preparamos el mensaje de "SOLO DATOS" para que el Java lo maneje
+            // Usamos un loop o enviamos en batch (máximo 500 por envío en FCM)
+            const message = {
+                notification: { // Esta vez incluimos 'notification' para que Android lo muestre aunque la app esté cerrada
+                    title: '🚀 ¡Nueva Actualización!',
+                    body: `La versión ${versionName} ya está disponible. ¡Entra para ver las novedades!`,
+                },
+                data: {
+                    type: 'update_alert',
+                    version: versionName,
+                    openUrl: 'home.html' // Al tocarla, abrirá el Home donde salta el modal de actualizar
+                },
+                // Enviamos a todos los tokens encontrados
+            };
+
+            // Enviamos las notificaciones una por una (para simplificar el código)
+            const sendPromises = tokens.map(token => {
+                return admin.messaging().send({ ...message, token }).catch(e => console.error("Token inválido:", token));
+            });
+
+            await Promise.all(sendPromises);
+
+            res.json({ success: true, message: `Notificación enviada a ${tokens.length} usuarios.` });
+
+        } catch (error) {
+            console.error("Error al enviar anuncio:", error);
+            res.status(500).json({ success: false, message: 'Fallo al enviar notificaciones.' });
+        }
+    });
+
     return router;
 };

@@ -452,6 +452,20 @@ async function initDatabase() {
             UNIQUE (user_id, package_name)
         );
     `;
+
+    // Dentro de initDatabase(), añade esta query:
+    const appVersionsQuery = `
+        CREATE TABLE IF NOT EXISTS app_versions (
+            id SERIAL PRIMARY KEY,
+            version_name VARCHAR(20) NOT NULL,
+            version_code INTEGER NOT NULL UNIQUE,
+            release_notes TEXT,
+            notified BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
+
+
     // ==========================================================
 
     try {
@@ -488,6 +502,9 @@ async function initDatabase() {
         // --- AÑADE ESTA LLAMADA ---
         await pool.query(playerCardsQuery);
         console.log('✅ Tabla "player_cards" verificada/creada.');
+        // Y luego ejecútala abajo con las demás:
+        await pool.query(appVersionsQuery);
+        console.log('✅ Tabla "app_versions" verificada/creada.');
     } catch (err) {
         console.error('❌ Error al inicializar la base de datos:', err.stack);
     }
@@ -530,6 +547,51 @@ app.get('/api/app/latest-version', (req, res) => {
     });
 });
 
+
+// Función para notificar actualizaciones pendientes
+const checkPendingUpdates = async () => {
+    try {
+        const res = await pool.query("SELECT * FROM app_versions WHERE notified = FALSE ORDER BY version_code DESC LIMIT 1");
+        
+        if (res.rows.length > 0) {
+            const update = res.rows[0];
+            console.log(`📢 Enviando notificaciones para la versión ${update.version_name}...`);
+
+            const tokensRes = await pool.query("SELECT fcm_token FROM usersapp WHERE fcm_token IS NOT NULL");
+            const tokens = tokensRes.rows.map(r => r.fcm_token);
+
+            if (tokens.length > 0) {
+                // ESTRUCTURA COMPLETA: notification (para el sistema) + data (para tu lógica Java)
+                const payload = {
+                    notification: {
+                        title: '🚀 ¡Nueva Versión Disponible!',
+                        body: `Actualiza a la v${update.version_name} para disfrutar de las nuevas mejoras.`
+                    },
+                    data: {
+                        type: 'update_alert',
+                        version: update.version_name,
+                        openUrl: 'home.html'
+                    }
+                };
+
+                const sendPromises = tokens.map(token => 
+                    admin.messaging().send({ ...payload, token }).catch(() => null)
+                );
+                await Promise.all(sendPromises);
+            }
+
+            // IMPORTANTE: Marcar como notificada para que el setInterval no la vuelva a enviar en 5 min
+            await pool.query("UPDATE app_versions SET notified = TRUE WHERE id = $1", [update.id]);
+            console.log(`✅ Notificación push enviada para la v${update.version_name}`);
+        }
+    } catch (e) {
+        console.error("Error en vigilante:", e);
+    }
+};
+
+// Activar el vigilante cada 5 minutos
+setInterval(checkPendingUpdates, 1000 * 60 * 5);
+
 // --- MANEJADOR DE ERRORES FINAL ---
 app.use((err, req, res, next) => {
     console.error(err.stack);
@@ -540,12 +602,20 @@ app.use((err, req, res, next) => {
     });
 });
 
+
+
+
 // --- SERVIDOR DE ESCUCHA ---
 const PRODUCTION_API_URL = 'https://davcenter.servequake.com';
 server.listen(PORT, INTERNAL_HOST, () => {
-    console.log(`📡 Servidor de Node.js escuchando INTERNAMENTE en ${INTERNAL_HOST}:${PORT}`);
-    console.log(`🌐 Acceso EXTERNO (APP) vía: ${PRODUCTION_API_URL}`);
+    console.log(`📡 Servidor de Node.js escuchando...`);
   
-    // <--- 2. ESTA LÍNEA DEBE ESTAR AQUÍ DENTRO
+    // 1. Iniciar el bot autónomo
     startAutonomousBot(pool, io); 
+
+    // 2. Ejecutar una comprobación de actualización inmediata al arrancar
+    checkPendingUpdates();
+
+    // 3. Dejar el vigilante activo cada 5 minutos
+    setInterval(checkPendingUpdates, 1000 * 60 * 5);
 });
