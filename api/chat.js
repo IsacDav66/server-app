@@ -28,7 +28,12 @@ module.exports = (pool, JWT_SECRET, io) => {
                     rm.is_read, -- Estado de lectura del último mensaje
                     u.id AS user_id,
                     u.username,
-                    u.profile_pic_url
+                    u.profile_pic_url,
+                    (SELECT COUNT(*)::int 
+                        FROM messagesapp 
+                        WHERE receiver_id = $1 
+                        AND sender_id = u.id 
+                        AND is_read = FALSE) AS unread_count
                 FROM RankedMessages rm
                 JOIN usersapp u ON rm.other_user_id = u.id
                 WHERE rm.rn = 1
