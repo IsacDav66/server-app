@@ -234,45 +234,43 @@ io.on('connection', (socket) => {
 
                 // B. Si el destinatario tiene un token FCM, enviar la notificación
                 if (recipient && recipient.fcm_token) {
-    
-                    // CONSTRUIMOS EL PAYLOAD DE "SOLO DATOS"
                     const message = {
                         token: recipient.fcm_token,
-                        // ¡¡¡ELIMINAMOS EL CAMPO "notification"!!!
-                        
-                        // Toda la información visual va DENTRO del campo "data"
                         data: {
-                            // Datos para que el cliente construya la notificación
                             title: sender.username,
                             body: content,
-                            channelId: 'chat_messages_channel', // Le decimos qué canal usar
-                            
-                            // Datos para el agrupamiento
-                            groupId: String(sender_id), // El ID del remitente es el grupo
-                            
-                            // Datos para la acción de clic
+                            channelId: 'chat_messages_channel',
+                            groupId: String(sender_id),
                             senderId: String(sender_id),
-                            openUrl: `chat.html?userId=${sender_id}` 
+                            openUrl: `chat.html?userId=${sender_id}`,
+                            imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
                         },
-                        
-                        // Podemos seguir usando las opciones de Android para la prioridad
-                        android: {
-                            priority: 'high' // Asegura la entrega rápida
-                        }
+                        android: { priority: 'high' }
                     };
-                    
-                    // Añadir la imagen de perfil (sin cambios)
-                    if (sender.profile_pic_url) {
-                        const fullImageUrl = (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim();
-                        // La enviamos solo en el campo `data`
-                        message.data.imageUrl = fullImageUrl;
-                    }
 
-                    await admin.messaging().send(message);
-                    console.log(`Notificación de DATOS de mensaje enviada al usuario ${receiver_id}`);
+                    // ==========================================================
+                    // === ¡LÓGICA DE LIMPIEZA DE TOKEN CORREGIDA! ===
+                    // ==========================================================
+                    try {
+                        await admin.messaging().send(message);
+                        console.log(`✅ Push enviado a usuario ${receiver_id}`);
+                    } catch (pushError) {
+                        // Si el error es que el token ya no es válido...
+                        if (pushError.code === 'messaging/registration-token-not-registered' || 
+                            pushError.code === 'messaging/invalid-registration-token') {
+                            
+                            console.warn(`🗑️ Token inválido detectado para el usuario ${receiver_id}. Borrando de la DB...`);
+                            
+                            // Limpiamos el token en la base de datos para no volver a intentar fallar
+                            await pool.query('UPDATE usersapp SET fcm_token = NULL WHERE id = $1', [receiver_id]);
+                        } else {
+                            console.error("❌ Error desconocido de Firebase:", pushError.message);
+                        }
+                    }
+                    // ==========================================================
                 }
-            } catch (pushError) {
-                console.error("Error al enviar la notificación push del mensaje:", pushError);
+            } catch (error) {
+                console.error("Error general en proceso de mensaje:", error);
             }
             // ==========================================================
 
