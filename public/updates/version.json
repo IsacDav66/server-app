@@ -1,5 +1,5 @@
 {
-  "versionCode": 6,
-  "versionName": "1.1.4",
-  "notes": "Cache persistente y mejoras de chat"
+  "versionCode": 7,
+  "versionName": "1.1.5",
+  "notes": "Se agrego las colecciones de stickers \n Se agrego las pestañas de favoritos y recientes"
 }
