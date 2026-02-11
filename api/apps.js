@@ -260,42 +260,59 @@ router.get('/music/get-link', async (req, res) => {
     const videoId = req.query.id;
     if (!videoId) return res.status(400).json({ success: false, message: 'Falta ID' });
 
-    try {
-        console.log(`[Music Bridge] Solicitando link v10 para: ${videoId}`);
+    // Instancias sacadas de tu captura (Versión 11.5 - Funcionando)
+    const instances = [
+        'https://cobalt-api.meowing.de/',
+        'https://kityune.imput.net/',
+        'https://blossom.imput.net/',
+        'https://cobalt-backend.canine.tools/',
+        'https://nachos.imput.net/'
+    ];
 
-        // CONFIGURACIÓN PARA COBALT v10
-        const response = await axios.post('https://api.cobalt.tools/api/json', {
-            url: `https://www.youtube.com/watch?v=${videoId}`,
-            downloadMode: 'audio', // En v10 se vuelve a usar downloadMode
-            audioFormat: 'mp3',
-            audioBitrate: '128'
-        }, {
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
+    let success = false;
+    let streamUrl = null;
+
+    console.log(`[Music Bridge] Intentando obtener link v11.5 para: ${videoId}`);
+
+    for (const instance of instances) {
+        if (success) break;
+
+        try {
+            console.log(`[Music Bridge] Probando: ${instance}`);
+            
+            const response = await axios.post(instance, {
+                url: `https://www.youtube.com/watch?v=${videoId}`,
+                downloadMode: 'audio',
+                audioFormat: 'mp3',
+                audioBitrate: '128'
+            }, {
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                timeout: 10000 // 10 segundos de espera por instancia
+            });
+
+            // En la versión 11.5 la respuesta exitosa devuelve un objeto con .url
+            if (response.data && response.data.url) {
+                streamUrl = response.data.url;
+                success = true;
+                console.log(`[Music Bridge] ✅ ÉXITO con instancia: ${instance}`);
             }
+        } catch (error) {
+            const errorMsg = error.response ? JSON.stringify(error.response.data) : error.message;
+            console.warn(`[Music Bridge] ⚠️ Falló ${instance}: ${errorMsg}`);
+        }
+    }
+
+    if (success) {
+        res.json({ success: true, streamUrl });
+    } else {
+        console.error(`[Music Bridge] ❌ Todas las instancias de la captura fallaron.`);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Los servidores de música están saturados. Intenta con otra canción.' 
         });
-
-        const data = response.data;
-
-        // En la v10, si todo va bien, devuelve data.url directamente
-        if (data && data.url) {
-            console.log(`[Music Bridge] ✅ Link v10 obtenido`);
-            res.json({ success: true, streamUrl: data.url });
-        } else {
-            console.error(`[Music Bridge] ❌ Respuesta sin URL:`, data);
-            res.status(500).json({ success: false, message: 'No se obtuvo enlace del servidor de música' });
-        }
-
-    } catch (error) {
-        if (error.response) {
-            // Si Cobalt nos da un error, lo imprimimos para debuguear
-            console.error(`[Music Bridge] ❌ Error Cobalt v10 (${error.response.status}):`, error.response.data);
-            res.status(error.response.status).json({ success: false, details: error.response.data });
-        } else {
-            console.error(`[Music Bridge] ❌ Error de red:`, error.message);
-            res.status(500).json({ success: false, error: 'Error de conexión con el puente' });
-        }
     }
 });
     return router;
