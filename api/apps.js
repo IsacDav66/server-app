@@ -230,6 +230,31 @@ module.exports = (pool, JWT_SECRET) => {
 const axios = require('axios');
 const qs = require('querystring');
 
+
+
+// --- NUEVA RUTA: Obtener éxitos mundiales (Trending) ---
+router.get('/music/trending', async (req, res) => {
+    try {
+        console.log(`🔍 Cargando música tendencia desde Deezer...`);
+        // El ID 0 en la playlist suele ser el Top Global
+        const response = await axios.get(`https://api.deezer.com/chart/0/tracks&limit=20`);
+
+        const results = response.data.data.map(v => ({
+            id: v.id,
+            title: v.title,
+            author: v.artist.name,
+            thumb: v.album.cover_medium,
+            preview_url: v.preview,
+            duration: "0:30"
+        }));
+
+        res.json({ success: true, results });
+    } catch (error) {
+        console.error("❌ ERROR TRENDING:", error.message);
+        res.status(500).json({ success: false });
+    }
+});
+
 // --- NUEVA RUTA: Obtener link fresco de una canción específica ---
 router.get('/music/refresh/:trackId', async (req, res) => {
     try {
