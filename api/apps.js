@@ -250,5 +250,40 @@ module.exports = (pool, JWT_SECRET) => {
             res.status(500).json({ success: false });
         }
     });
+
+
+
+    const axios = require('axios'); // Asegúrate de que esté arriba o aquí mismo
+
+// --- NUEVA RUTA: Puente para obtener link de audio (Bypass CORS) ---
+router.get('/music/get-link', async (req, res) => {
+    const videoId = req.query.id;
+    if (!videoId) return res.status(400).json({ success: false, message: 'Falta ID' });
+
+    try {
+        // Tu VPS le pide el enlace a Cobalt (Cobalt no suele tener bloqueada la IP de Oracle)
+        const cobaltResponse = await axios.post('https://api.cobalt.tools/api/json', {
+            url: `https://www.youtube.com/watch?v=${videoId}`,
+            downloadMode: 'audio',
+            audioFormat: 'mp3',
+            disableMetadata: true
+        }, {
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+        });
+
+        // Enviamos el link de descarga al móvil
+        if (cobaltResponse.data && cobaltResponse.data.url) {
+            res.json({ success: true, streamUrl: cobaltResponse.data.url });
+        } else {
+            res.json({ success: false, message: 'No se obtuvo URL de Cobalt' });
+        }
+    } catch (error) {
+        console.error("Error en el puente de música:", error.message);
+        res.status(500).json({ success: false, error: 'Error al conectar con el extractor' });
+    }
+});
     return router;
 };
