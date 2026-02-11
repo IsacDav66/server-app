@@ -230,19 +230,6 @@ module.exports = (pool, JWT_SECRET) => {
 const axios = require('axios');
 const qs = require('querystring');
 
-async function getSpotifyToken() {
-    try {
-        const auth = Buffer.from(`${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`).toString('base64');
-        const res = await axios.post('https://accounts.spotify.com/api/token', 
-            qs.stringify({ grant_type: 'client_credentials' }), 
-            { headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
-        );
-        return res.data.access_token;
-    } catch (e) {
-        console.error("❌ ERROR SPOTIFY TOKEN:", e.response ? e.response.data : e.message);
-        return null;
-    }
-}
 
 
 router.get('/music/search', async (req, res) => {

@@ -67,18 +67,9 @@ pool.connect()
 // === ¡AÑADE ESTE BLOQUE PARA HABILITAR SharedArrayBuffer! ===
 // ==========================================================
 // Este middleware añade las cabeceras necesarias para el aislamiento de origen cruzado.
-// --- CONFIGURACIÓN DE CABECERAS PARA PERMITIR MÚSICA Y STICKERS ---
 app.use((req, res, next) => {
-    // Permite ventanas emergentes y comunicación con dominios externos (como Google/YT)
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
-    
-    // Cambiamos 'require-corp' por 'unsafe-none' para que carguen audios de otros servidores
-    res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
-    
-    // Política de seguridad de contenido (CSP): 
-    // Le dice al navegador que confiamos en fuentes de audio (media-src) e imágenes (img-src) de cualquier sitio (*)
-    res.setHeader('Content-Security-Policy', "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; img-src * data: blob:; media-src * data: blob:;");
-    
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
     next();
 });
 // ==========================================================
