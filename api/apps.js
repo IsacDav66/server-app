@@ -253,66 +253,43 @@ module.exports = (pool, JWT_SECRET) => {
 
 
 
-    const axios = require('axios'); // Asegúrate de que esté arriba o aquí mismo
+    const axios = require('axios');
+const qs = require('querystring');
 
-// --- NUEVA RUTA: Puente para obtener link de audio (Bypass CORS) ---
-router.get('/music/get-link', async (req, res) => {
-    const videoId = req.query.id;
-    if (!videoId) return res.status(400).json({ success: false, message: 'Falta ID' });
+// Función para obtener Token de Spotify (automática)
+async function getSpotifyToken() {
+    const auth = Buffer.from(`${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`).toString('base64');
+    const res = await axios.post('https://accounts.spotify.com/api/token', 
+        qs.stringify({ grant_type: 'client_credentials' }), 
+        { headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+    return res.data.access_token;
+}
 
-    // Instancias sacadas de tu captura (Versión 11.5 - Funcionando)
-    const instances = [
-        'https://cobalt-api.meowing.de/',
-        'https://kityune.imput.net/',
-        'https://blossom.imput.net/',
-        'https://cobalt-backend.canine.tools/',
-        'https://nachos.imput.net/'
-    ];
+// --- RUTA: Buscar música en Spotify ---
+router.get('/music/search', async (req, res) => {
+    const query = req.query.q;
+    if (!query) return res.status(400).json({ success: false });
 
-    let success = false;
-    let streamUrl = null;
-
-    console.log(`[Music Bridge] Intentando obtener link v11.5 para: ${videoId}`);
-
-    for (const instance of instances) {
-        if (success) break;
-
-        try {
-            console.log(`[Music Bridge] Probando: ${instance}`);
-            
-            const response = await axios.post(instance, {
-                url: `https://www.youtube.com/watch?v=${videoId}`,
-                downloadMode: 'audio',
-                audioFormat: 'mp3',
-                audioBitrate: '128'
-            }, {
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
-                },
-                timeout: 10000 // 10 segundos de espera por instancia
-            });
-
-            // En la versión 11.5 la respuesta exitosa devuelve un objeto con .url
-            if (response.data && response.data.url) {
-                streamUrl = response.data.url;
-                success = true;
-                console.log(`[Music Bridge] ✅ ÉXITO con instancia: ${instance}`);
-            }
-        } catch (error) {
-            const errorMsg = error.response ? JSON.stringify(error.response.data) : error.message;
-            console.warn(`[Music Bridge] ⚠️ Falló ${instance}: ${errorMsg}`);
-        }
-    }
-
-    if (success) {
-        res.json({ success: true, streamUrl });
-    } else {
-        console.error(`[Music Bridge] ❌ Todas las instancias de la captura fallaron.`);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Los servidores de música están saturados. Intenta con otra canción.' 
+    try {
+        const token = await getSpotifyToken();
+        const response = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+            headers: { 'Authorization': `Bearer ${token}` }
         });
+
+        const results = response.data.tracks.items.map(v => ({
+            id: v.id,
+            title: v.name,
+            author: v.artists[0].name,
+            thumb: v.album.images[0].url,
+            preview_url: v.preview_url, // <--- EL LINK MAGICO DE 30 SEG
+            duration: "0:30"
+        }));
+
+        res.json({ success: true, results });
+    } catch (error) {
+        console.error("Spotify Search Error:", error.message);
+        res.status(500).json({ success: false });
     }
 });
     return router;
