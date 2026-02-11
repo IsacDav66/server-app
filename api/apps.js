@@ -230,7 +230,21 @@ module.exports = (pool, JWT_SECRET) => {
 const axios = require('axios');
 const qs = require('querystring');
 
-
+// --- NUEVA RUTA: Obtener link fresco de una canción específica ---
+router.get('/music/refresh/:trackId', async (req, res) => {
+    try {
+        const { trackId } = req.params;
+        const response = await axios.get(`https://api.deezer.com/track/${trackId}`);
+        
+        if (response.data && response.data.preview) {
+            res.json({ success: true, preview_url: response.data.preview });
+        } else {
+            res.status(404).json({ success: false });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false });
+    }
+});
 
 router.get('/music/search', async (req, res) => {
     const query = req.query.q;
