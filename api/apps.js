@@ -226,65 +226,49 @@ module.exports = (pool, JWT_SECRET) => {
     );
 
 
-
-    const yts = require('yt-search');
-
-    // --- RUTA: Buscar música en YouTube ---
-    router.get('/music/search', async (req, res) => {
-        const query = req.query.q;
-        if (!query) return res.status(400).json({ success: false });
-
-        try {
-            const r = await yts(query);
-            const videos = r.videos.slice(0, 10); // Top 10 resultados
-            
-            const results = videos.map(v => ({
-            id: v.videoId,
-            title: v.title,
-            author: v.author.name,
-            thumb: v.thumbnail, // <--- ESTANDARIZADO A "thumb"
-            duration: v.timestamp
-        }));
-        res.json({ success: true, results });
-        } catch (error) {
-            res.status(500).json({ success: false });
-        }
-    });
-
-
-
-    const axios = require('axios');
+// server/api/apps.js
+const axios = require('axios');
 const qs = require('querystring');
 
-// Función para obtener Token de Spotify (automática)
+// 1. Función para obtener el Token (ponla fuera de las rutas)
 async function getSpotifyToken() {
-    const auth = Buffer.from(`${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`).toString('base64');
-    const res = await axios.post('https://accounts.spotify.com/api/token', 
-        qs.stringify({ grant_type: 'client_credentials' }), 
-        { headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
-    );
-    return res.data.access_token;
+    try {
+        const auth = Buffer.from(`${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`).toString('base64');
+        const res = await axios.post('https://accounts.spotify.com/api/token', 
+            qs.stringify({ grant_type: 'client_credentials' }), 
+            { headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
+        );
+        return res.data.access_token;
+    } catch (e) {
+        console.error("Error obteniendo token Spotify:", e.message);
+        return null;
+    }
 }
 
-// --- RUTA: Buscar música en Spotify ---
+// 2. Ruta de búsqueda actualizada
 router.get('/music/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).json({ success: false });
 
     try {
         const token = await getSpotifyToken();
-        const response = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+        if (!token) return res.status(500).json({ success: false, message: "Error de auth con Spotify" });
+
+        const response = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        const results = response.data.tracks.items.map(v => ({
-            id: v.id,
-            title: v.name,
-            author: v.artists[0].name,
-            thumb: v.album.images[0].url,
-            preview_url: v.preview_url, // <--- EL LINK MAGICO DE 30 SEG
-            duration: "0:30"
-        }));
+        // FILTRAMOS: Solo enviamos canciones que tengan 'preview_url'
+        const results = response.data.tracks.items
+            .filter(track => track.preview_url !== null) 
+            .map(v => ({
+                id: v.id,
+                title: v.name,
+                author: v.artists[0].name,
+                thumb: v.album.images[0].url,
+                preview_url: v.preview_url, // URL del MP3 de 30 seg
+                duration: "0:30"
+            }));
 
         res.json({ success: true, results });
     } catch (error) {
