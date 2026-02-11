@@ -261,28 +261,45 @@ router.get('/music/get-link', async (req, res) => {
     if (!videoId) return res.status(400).json({ success: false, message: 'Falta ID' });
 
     try {
-        // Tu VPS le pide el enlace a Cobalt (Cobalt no suele tener bloqueada la IP de Oracle)
+        console.log(`[Music Bridge] Solicitando link para video: ${videoId}`);
+
+        // Petición a Cobalt con los parámetros correctos actuales
         const cobaltResponse = await axios.post('https://api.cobalt.tools/api/json', {
             url: `https://www.youtube.com/watch?v=${videoId}`,
-            downloadMode: 'audio',
-            audioFormat: 'mp3',
-            disableMetadata: true
+            videoQuality: '720', // Calidad por defecto
+            audioFormat: 'mp3',  // Queremos MP3
+            isAudioOnly: true,   // <--- ESTE ES EL PARÁMETRO CLAVE ACTUAL
+            a11y: false          // Desactivar audio descriptivo
         }, {
             headers: {
                 'Accept': 'application/json',
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                // Añadimos un User-Agent para que no parezca un bot genérico
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
             }
         });
 
-        // Enviamos el link de descarga al móvil
-        if (cobaltResponse.data && cobaltResponse.data.url) {
-            res.json({ success: true, streamUrl: cobaltResponse.data.url });
+        const data = cobaltResponse.data;
+
+        // Cobalt puede devolver .url o .picker (si hay varias opciones) o .status === 'error'
+        if (data && data.url) {
+            console.log(`[Music Bridge] ✅ Link obtenido con éxito`);
+            res.json({ success: true, streamUrl: data.url });
+        } else if (data.status === 'error') {
+            console.error(`[Music Bridge] ❌ Cobalt reportó error: ${data.text}`);
+            res.status(400).json({ success: false, message: data.text });
         } else {
-            res.json({ success: false, message: 'No se obtuvo URL de Cobalt' });
+            res.status(500).json({ success: false, message: 'Respuesta inesperada de Cobalt' });
         }
+
     } catch (error) {
-        console.error("Error en el puente de música:", error.message);
-        res.status(500).json({ success: false, error: 'Error al conectar con el extractor' });
+        // Log detallado para saber EXACTAMENTE qué respondió Cobalt
+        if (error.response) {
+            console.error(`[Music Bridge] ❌ Error ${error.response.status}:`, error.response.data);
+        } else {
+            console.error(`[Music Bridge] ❌ Error de conexión:`, error.message);
+        }
+        res.status(500).json({ success: false, error: 'Fallo al procesar el audio' });
     }
 });
     return router;
