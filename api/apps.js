@@ -239,15 +239,13 @@ module.exports = (pool, JWT_SECRET) => {
             const videos = r.videos.slice(0, 10); // Top 10 resultados
             
             const results = videos.map(v => ({
-                id: v.videoId,
-                title: v.title,
-                author: v.author.name,
-                thumbnail: v.thumbnail,
-                duration: v.timestamp,
-                url: v.url
-            }));
-
-            res.json({ success: true, results });
+            id: v.videoId,
+            title: v.title,
+            author: v.author.name,
+            thumb: v.thumbnail, // <--- ESTANDARIZADO A "thumb"
+            duration: v.timestamp
+        }));
+        res.json({ success: true, results });
         } catch (error) {
             res.status(500).json({ success: false });
         }
