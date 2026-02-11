@@ -244,42 +244,32 @@ async function getSpotifyToken() {
     }
 }
 
+
 router.get('/music/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).json({ success: false });
 
-    console.log(`🔍 Buscando en Spotify: ${query}`);
+    console.log(`🔍 Buscando en Deezer: ${query}`);
 
     try {
-        const token = await getSpotifyToken();
-        if (!token) {
-            return res.status(500).json({ success: false, message: "Error de autenticación con Spotify" });
-        }
+        // Deezer no necesita Token, es una API pública muy rápida
+        const response = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=20`);
 
-        const response = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
+        // Mapeamos los resultados al formato que ya usas
+        const results = response.data.data.map(v => ({
+            id: v.id,
+            title: v.title,
+            author: v.artist.name,
+            thumb: v.album.cover_medium, // Imagen de buena calidad
+            preview_url: v.preview,       // EL LINK MP3 (Deezer siempre tiene)
+            duration: "0:30"
+        }));
 
-        const allTracks = response.data.tracks.items;
-        console.log(`📦 Spotify encontró ${allTracks.length} tracks.`);
-
-        // Filtramos y mapeamos
-        const results = allTracks
-            .filter(track => track.preview_url !== null) // Solo las que se pueden escuchar
-            .map(v => ({
-                id: v.id,
-                title: v.name,
-                author: v.artists[0].name,
-                thumb: v.album.images[0].url,
-                preview_url: v.preview_url,
-                duration: "0:30"
-            }));
-
-        console.log(`✅ Enviando ${results.length} resultados con audio disponible.`);
-
+        console.log(`✅ Deezer envió ${results.length} resultados.`);
         res.json({ success: true, results });
+
     } catch (error) {
-        console.error("❌ ERROR EN BÚSQUEDA:", error.message);
+        console.error("❌ ERROR DEEZER:", error.message);
         res.status(500).json({ success: false });
     }
 });
