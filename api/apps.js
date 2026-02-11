@@ -225,5 +225,32 @@ module.exports = (pool, JWT_SECRET) => {
         }
     );
 
+
+
+    const yts = require('yt-search');
+
+    // --- RUTA: Buscar música en YouTube ---
+    router.get('/music/search', async (req, res) => {
+        const query = req.query.q;
+        if (!query) return res.status(400).json({ success: false });
+
+        try {
+            const r = await yts(query);
+            const videos = r.videos.slice(0, 10); // Top 10 resultados
+            
+            const results = videos.map(v => ({
+                id: v.videoId,
+                title: v.title,
+                author: v.author.name,
+                thumbnail: v.thumbnail,
+                duration: v.timestamp,
+                url: v.url
+            }));
+
+            res.json({ success: true, results });
+        } catch (error) {
+            res.status(500).json({ success: false });
+        }
+    });
     return router;
 };
