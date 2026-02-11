@@ -230,7 +230,6 @@ module.exports = (pool, JWT_SECRET) => {
 const axios = require('axios');
 const qs = require('querystring');
 
-// 1. Función para obtener el Token (ponla fuera de las rutas)
 async function getSpotifyToken() {
     try {
         const auth = Buffer.from(`${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`).toString('base64');
@@ -240,39 +239,47 @@ async function getSpotifyToken() {
         );
         return res.data.access_token;
     } catch (e) {
-        console.error("Error obteniendo token Spotify:", e.message);
+        console.error("❌ ERROR SPOTIFY TOKEN:", e.response ? e.response.data : e.message);
         return null;
     }
 }
 
-// 2. Ruta de búsqueda actualizada
 router.get('/music/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).json({ success: false });
 
+    console.log(`🔍 Buscando en Spotify: ${query}`);
+
     try {
         const token = await getSpotifyToken();
-        if (!token) return res.status(500).json({ success: false, message: "Error de auth con Spotify" });
+        if (!token) {
+            return res.status(500).json({ success: false, message: "Error de autenticación con Spotify" });
+        }
 
         const response = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        // FILTRAMOS: Solo enviamos canciones que tengan 'preview_url'
-        const results = response.data.tracks.items
-            .filter(track => track.preview_url !== null) 
+        const allTracks = response.data.tracks.items;
+        console.log(`📦 Spotify encontró ${allTracks.length} tracks.`);
+
+        // Filtramos y mapeamos
+        const results = allTracks
+            .filter(track => track.preview_url !== null) // Solo las que se pueden escuchar
             .map(v => ({
                 id: v.id,
                 title: v.name,
                 author: v.artists[0].name,
                 thumb: v.album.images[0].url,
-                preview_url: v.preview_url, // URL del MP3 de 30 seg
+                preview_url: v.preview_url,
                 duration: "0:30"
             }));
 
+        console.log(`✅ Enviando ${results.length} resultados con audio disponible.`);
+
         res.json({ success: true, results });
     } catch (error) {
-        console.error("Spotify Search Error:", error.message);
+        console.error("❌ ERROR EN BÚSQUEDA:", error.message);
         res.status(500).json({ success: false });
     }
 });
