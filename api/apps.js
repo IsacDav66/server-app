@@ -304,21 +304,41 @@ router.get('/music/search', async (req, res) => {
 
 // --- NUEVA RUTA: Subida específica de Emojis ---
 router.post('/emojis/upload', protect, uploadStickerMiddleware, async (req, res) => {
-    if (!req.file) return res.status(400).json({ success: false });
+    if (!req.file) {
+        return res.status(400).json({ success: false, message: 'No se recibió el archivo' });
+    }
 
-    // Movemos el archivo de stickers_temp a emojis
-    const oldPath = req.file.path;
+    // 1. Definir y crear carpeta de destino si no existe
+    const targetDir = path.join(__dirname, '../uploads/emojis/');
+    if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    // 2. Definir nombres y rutas
     const newFilename = `emoji-${Date.now()}${path.extname(req.file.originalname)}`;
-    const newPath = path.join(__dirname, '../uploads/emojis/', newFilename);
+    const newPath = path.join(targetDir, newFilename);
 
     try {
-        fs.renameSync(oldPath, newPath); // Mover el archivo
-        const relativeUrl = `/uploads/emojis/${newFilename}`;
-        res.status(200).json({ success: true, url: relativeUrl, filename: newFilename });
+        // 3. Mover el archivo desde la carpeta temporal de stickers a la de emojis
+        // Usamos renameSync para moverlo físicamente en el disco
+        fs.renameSync(req.file.path, newPath);
+
+        console.log(`✅ Emoji guardado: ${newFilename}`);
+
+        res.status(200).json({ 
+            success: true, 
+            url: `/uploads/emojis/${newFilename}`, 
+            filename: newFilename 
+        });
     } catch (err) {
-        res.status(500).json({ success: false });
+        console.error("❌ Error al mover el emoji:", err);
+        // Intentar limpiar el archivo temporal si el movimiento falló
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        
+        res.status(500).json({ success: false, message: 'Error interno al procesar el archivo' });
     }
 });
+
 
 
 

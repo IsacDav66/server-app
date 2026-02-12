@@ -77,6 +77,7 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads/emojis', express.static(path.join(__dirname, 'uploads/emojis')));
 app.use('/updates', express.static(path.join(__dirname, 'public', 'updates')));
 app.use('/api/admin', adminRoutes(pool, JWT_SECRET));
 
