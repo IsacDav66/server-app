@@ -299,5 +299,28 @@ router.get('/music/search', async (req, res) => {
         res.status(500).json({ success: false });
     }
 });
+
+// server/api/apps.js
+
+// --- NUEVA RUTA: Subida específica de Emojis ---
+router.post('/emojis/upload', protect, uploadStickerMiddleware, async (req, res) => {
+    if (!req.file) return res.status(400).json({ success: false });
+
+    // Movemos el archivo de stickers_temp a emojis
+    const oldPath = req.file.path;
+    const newFilename = `emoji-${Date.now()}${path.extname(req.file.originalname)}`;
+    const newPath = path.join(__dirname, '../uploads/emojis/', newFilename);
+
+    try {
+        fs.renameSync(oldPath, newPath); // Mover el archivo
+        const relativeUrl = `/uploads/emojis/${newFilename}`;
+        res.status(200).json({ success: true, url: relativeUrl, filename: newFilename });
+    } catch (err) {
+        res.status(500).json({ success: false });
+    }
+});
+
+
+
     return router;
 };
