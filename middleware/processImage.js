@@ -17,19 +17,32 @@ const processImage = (type) => async (req, res, next) => {
     const destinationPath = path.join(__dirname, `../uploads/${folder}/`);
     fs.mkdirSync(destinationPath, { recursive: true });
 
-    // --- ¡ESTA ES LA MEJORA CLAVE! ---
-    // Si la ruta de admin nos envía un 'adminTargetId' (el ID del Bot), lo usamos.
-    // De lo contrario, usamos el 'userId' del usuario logueado.
     const userId = req.user.adminTargetId || req.user.userId;
-    
     const timestamp = Date.now();
+    
+    // Mantenemos la extensión .webp porque el formato WebP animado 
+    // es mucho más ligero y eficiente que el GIF original.
     const newFilename = `${type}_${userId}_${timestamp}.webp`;
     const fullFilePath = path.join(destinationPath, newFilename);
 
     try {
-        await sharp(req.file.buffer)
+        // --- CAMBIO 1: AÑADIR { animated: true } ---
+        // Esto le dice a Sharp que si es un GIF, lea todos sus fotogramas.
+        const pipeline = sharp(req.file.buffer, { animated: true });
+
+        // Obtenemos metadatos para saber si es muy grande o si es animado
+        const metadata = await pipeline.metadata();
+
+        await pipeline
+            // Redimensionamos (mantiene la animación si animated: true)
             .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
-            .webp({ quality: 80 })
+            // --- CAMBIO 2: CONFIGURACIÓN DE WEBP ---
+            // Sharp detectará automáticamente si el origen es animado y creará un WebP animado.
+            .webp({ 
+                quality: 80,
+                // Si quieres que los GIFs pesen menos, puedes activar la reducción de frames aquí
+                // pero por ahora con animated:true es suficiente.
+            })
             .toFile(fullFilePath);
 
         req.file.filename = newFilename;
