@@ -10,6 +10,7 @@ const path = require('path'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
 const ffmpeg = require('fluent-ffmpeg'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
 const crypto = require('crypto');
 const sharp = require('sharp'); // 👈 Importamos Sharp para las imágenes
+const processImage = require('../middleware/processImage'); // Importar el middleware
 
 // Función para generar la huella digital (MD5)
 function getHash(filePath) {
@@ -360,34 +361,69 @@ router.post('/emojis/upload', protect, uploadStickerMiddleware, async (req, res)
         return res.status(400).json({ success: false, message: 'No se recibió el archivo' });
     }
 
-    // 1. Definir y crear carpeta de destino si no existe
+    const tempInputPath = req.file.path; // Ruta del archivo subido por Multer
     const targetDir = path.join(__dirname, '../uploads/emojis/');
+    
     if (!fs.existsSync(targetDir)) {
         fs.mkdirSync(targetDir, { recursive: true });
     }
 
-    // 2. Definir nombres y rutas
-    const newFilename = `emoji-${Date.now()}${path.extname(req.file.originalname)}`;
-    const newPath = path.join(targetDir, newFilename);
+    // Definimos el nombre final SIEMPRE con extensión .webp
+    const finalFilename = `emoji-${Date.now()}.webp`;
+    const finalPath = path.join(targetDir, finalFilename);
 
     try {
-        // 3. Mover el archivo desde la carpeta temporal de stickers a la de emojis
-        // Usamos renameSync para moverlo físicamente en el disco
-        fs.renameSync(req.file.path, newPath);
+        // 1. PROCESAMIENTO: Convertir a WebP y Redimensionar a 128px
+        // { animated: true } es vital para que los emojis GIFs sigan siendo animados
+        await sharp(tempInputPath, { animated: true })
+            .resize(128, 128, { fit: 'inside' }) 
+            .webp({ quality: 75 })
+            .toFile(finalPath);
 
-        console.log(`✅ Emoji guardado: ${newFilename}`);
+        // 2. DEDUPLICACIÓN (SISTEMA DE HASH)
+        const fileHash = await getHash(finalPath);
+        const existingMedia = await pool.query('SELECT file_path FROM media_library WHERE hash = $1', [fileHash]);
+
+        if (existingMedia.rows.length > 0) {
+            console.log("♻️ Emoji duplicado detectado. Usando existente.");
+            
+            // Borramos el archivo procesado Y el temporal original
+            fs.unlink(finalPath, () => {}); 
+            fs.unlink(tempInputPath, () => {}); 
+
+            const existingFilePath = existingMedia.rows[0].file_path;
+            return res.status(200).json({ 
+                success: true, 
+                url: existingFilePath, 
+                filename: path.basename(existingFilePath) 
+            });
+        }
+
+        // 3. SI ES NUEVO: Registrar en la librería de medios
+        const relativeUrl = `/uploads/emojis/${finalFilename}`;
+        await pool.query('INSERT INTO media_library (hash, file_path, mime_type) VALUES ($1, $2, $3)', 
+            [fileHash, relativeUrl, 'image/webp']);
+
+        // 4. LIMPIEZA: Borrar el archivo original (PNG/GIF/JPG) que subió Multer
+        fs.unlink(tempInputPath, (err) => {
+            if (err) console.error("Error al borrar temporal de emoji:", err);
+        });
+
+        console.log(`✅ Emoji optimizado y guardado: ${finalFilename}`);
 
         res.status(200).json({ 
             success: true, 
-            url: `/uploads/emojis/${newFilename}`, 
-            filename: newFilename 
+            url: relativeUrl, 
+            filename: finalFilename 
         });
+
     } catch (err) {
-        console.error("❌ Error al mover el emoji:", err);
-        // Intentar limpiar el archivo temporal si el movimiento falló
-        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        console.error("❌ Error al procesar el emoji:", err);
+        // Limpiar archivos en caso de error
+        if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath);
+        if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath);
         
-        res.status(500).json({ success: false, message: 'Error interno al procesar el archivo' });
+        res.status(500).json({ success: false, message: 'Error al optimizar el emoji.' });
     }
 });
 
