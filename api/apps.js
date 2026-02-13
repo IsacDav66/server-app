@@ -8,7 +8,17 @@ const uploadStickerMiddleware = require('../middleware/uploadSticker');
 const fs = require('fs'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
 const path = require('path'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
 const ffmpeg = require('fluent-ffmpeg'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
+const crypto = require('crypto');
 
+function getHash(filePath) {
+    return new Promise((resolve, reject) => {
+        const hash = crypto.createHash('md5');
+        const stream = fs.createReadStream(filePath);
+        stream.on('data', data => hash.update(data));
+        stream.on('end', () => resolve(hash.digest('hex')));
+        stream.on('error', err => reject(err));
+    });
+}
 // Recibimos 'fetch' como el tercer parámetro
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
@@ -174,41 +184,62 @@ module.exports = (pool, JWT_SECRET) => {
             }
             
             const inputFile = req.file;
-            
+
+            // --- FUNCIÓN INTERNA PARA EVITAR DUPLICADOS ---
+            const processFinalFile = async (relativeUrl, mimeType) => {
+                try {
+                    const fullPath = path.join(__dirname, '../', relativeUrl);
+                    const fileHash = await getHash(fullPath);
+
+                    // 1. Buscar si el hash ya existe en la DB
+                    const existing = await pool.query('SELECT file_path FROM media_library WHERE hash = $1', [fileHash]);
+
+                    if (existing.rows.length > 0) {
+                        console.log("♻️ WhatsApp Style: Duplicado detectado. Borrando archivo nuevo y usando existente.");
+                        fs.unlink(fullPath, () => {}); // Borramos el que acabamos de crear
+                        return res.status(200).json({ success: true, url: existing.rows[0].file_path });
+                    }
+
+                    // 2. Si es nuevo, registrar en la librería
+                    await pool.query('INSERT INTO media_library (hash, file_path, mime_type) VALUES ($1, $2, $3)', 
+                        [fileHash, relativeUrl, mimeType]);
+                    
+                    return res.status(200).json({ success: true, url: relativeUrl });
+                } catch (err) {
+                    console.error("Error en deduplicación:", err);
+                    return res.status(200).json({ success: true, url: relativeUrl }); // Fallback: enviamos el archivo aunque falle el registro
+                }
+            };
+
             if (inputFile.mimetype.startsWith('video/')) {
-                // --- OBTENEMOS LOS NUEVOS PARÁMETROS DEL FORMULARIO ---
                 const startTime = parseFloat(req.body.startTime) || 0;
-                const muteAudio = req.body.muteAudio === 'true'; // Convertir string a boolean
+                const muteAudio = req.body.muteAudio === 'true';
 
                 const outputFilename = `sticker-${Date.now()}.mp4`;
                 const outputPath = path.join(__dirname, '../uploads/stickers_temp/', outputFilename);
 
-                // --- CONSTRUIMOS EL COMANDO FFMPEG DINÁMICAMENTE ---
                 const command = ffmpeg(inputFile.path)
                     .setFfmpegPath('/usr/bin/ffmpeg')
                     .outputOptions([
-                        `-ss ${startTime}`, // ¡NUEVO! Empezar a recortar desde este segundo
-                        '-t 10',             // Duración máxima de 10 segundos
+                        `-ss ${startTime}`,
+                        '-t 10',
                         '-vf scale=256:-2',
                         '-c:v libx264',
                         '-preset ultrafast',
                         '-movflags +faststart'
                     ]);
                 
-                // ¡NUEVO! Añadimos la opción de audio solo si no se quiere silenciar
-                if (!muteAudio) {
-                    command.outputOptions('-c:a aac');
-                } else {
-                    command.outputOptions('-an'); // Sin audio
-                }
+                if (!muteAudio) command.outputOptions('-c:a aac');
+                else command.outputOptions('-an');
 
                 command
-                    .on('end', () => {
-                        fs.unlink(inputFile.path, (err) => {
-                            if (err) console.error("Error al eliminar archivo temporal:", err);
-                        });
+                    .on('end', async () => {
+                        // Borramos el vídeo ORIGINAL pesado que subió el usuario
+                        fs.unlink(inputFile.path, () => {}); 
+                        
+                        // Procesamos el sticker RECORTADO
                         const fileUrl = `/uploads/stickers_temp/${outputFilename}`;
-                        res.status(200).json({ success: true, url: fileUrl });
+                        await processFinalFile(fileUrl, 'video/mp4'); 
                     })
                     .on('error', (err) => {
                         console.error('Error de FFmpeg:', err.message);
@@ -218,9 +249,9 @@ module.exports = (pool, JWT_SECRET) => {
                     .save(outputPath);
 
             } else {
-                // La lógica para imágenes/GIFs no cambia
+                // Caso: Imagen o GIF (Subida directa)
                 const fileUrl = `/uploads/stickers_temp/${inputFile.filename}`;
-                res.status(200).json({ success: true, url: fileUrl });
+                await processFinalFile(fileUrl, inputFile.mimetype);
             }
         }
     );

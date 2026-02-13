@@ -463,7 +463,15 @@ async function initDatabase() {
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
     `;
-
+    const mediaLibraryQuery = `
+        CREATE TABLE IF NOT EXISTS media_library (
+            hash VARCHAR(64) PRIMARY KEY,
+            file_path VARCHAR(255) NOT NULL,
+            mime_type VARCHAR(50),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
+    
 
     // ==========================================================
 
@@ -504,6 +512,9 @@ async function initDatabase() {
         // Y luego ejecútala abajo con las demás:
         await pool.query(appVersionsQuery);
         console.log('✅ Tabla "app_versions" verificada/creada.');
+        // tabla media_library
+        await pool.query(mediaLibraryQuery);
+        console.log('✅ Tabla "media_library" verificada/creada.');
     } catch (err) {
         console.error('❌ Error al inicializar la base de datos:', err.stack);
     }
