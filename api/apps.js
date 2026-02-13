@@ -9,7 +9,9 @@ const fs = require('fs'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
 const path = require('path'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
 const ffmpeg = require('fluent-ffmpeg'); // <-- ¡AÑADE ESTA IMPORTACIÓN!
 const crypto = require('crypto');
+const sharp = require('sharp'); // 👈 Importamos Sharp para las imágenes
 
+// Función para generar la huella digital (MD5)
 function getHash(filePath) {
     return new Promise((resolve, reject) => {
         const hash = crypto.createHash('md5');
@@ -185,37 +187,37 @@ module.exports = (pool, JWT_SECRET) => {
             
             const inputFile = req.file;
 
-            // --- FUNCIÓN INTERNA PARA EVITAR DUPLICADOS ---
+            // --- FUNCIÓN CENTRAL DE PROCESAMIENTO ---
+            // Se encarga de Hashear, verificar duplicados y registrar en BD
             const processFinalFile = async (relativeUrl, mimeType) => {
                 try {
                     const fullPath = path.join(__dirname, '../', relativeUrl);
                     const fileHash = await getHash(fullPath);
 
-                    // 1. Buscar si el hash ya existe en la DB
                     const existing = await pool.query('SELECT file_path FROM media_library WHERE hash = $1', [fileHash]);
 
                     if (existing.rows.length > 0) {
-                        console.log("♻️ WhatsApp Style: Duplicado detectado. Borrando archivo nuevo y usando existente.");
-                        fs.unlink(fullPath, () => {}); // Borramos el que acabamos de crear
+                        console.log("♻️ Duplicado optimizado detectado. Usando existente.");
+                        fs.unlink(fullPath, () => {}); 
                         return res.status(200).json({ success: true, url: existing.rows[0].file_path });
                     }
 
-                    // 2. Si es nuevo, registrar en la librería
                     await pool.query('INSERT INTO media_library (hash, file_path, mime_type) VALUES ($1, $2, $3)', 
                         [fileHash, relativeUrl, mimeType]);
                     
                     return res.status(200).json({ success: true, url: relativeUrl });
                 } catch (err) {
                     console.error("Error en deduplicación:", err);
-                    return res.status(200).json({ success: true, url: relativeUrl }); // Fallback: enviamos el archivo aunque falle el registro
+                    return res.status(200).json({ success: true, url: relativeUrl });
                 }
             };
 
+            // --- CAMINO A: VIDEOS -> CONVERTIR A WEBM ---
             if (inputFile.mimetype.startsWith('video/')) {
                 const startTime = parseFloat(req.body.startTime) || 0;
                 const muteAudio = req.body.muteAudio === 'true';
 
-                const outputFilename = `sticker-${Date.now()}.mp4`;
+                const outputFilename = `sticker-${Date.now()}.webm`; // 👈 Extensión WebM
                 const outputPath = path.join(__dirname, '../uploads/stickers_temp/', outputFilename);
 
                 const command = ffmpeg(inputFile.path)
@@ -223,23 +225,22 @@ module.exports = (pool, JWT_SECRET) => {
                     .outputOptions([
                         `-ss ${startTime}`,
                         '-t 10',
-                        '-vf scale=256:-2',
-                        '-c:v libx264',
-                        '-preset ultrafast',
-                        '-movflags +faststart'
+                        '-vf scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:color=black@0', // Cuadrado con fondo transparente si es posible
+                        '-c:v libvpx', // 👈 Codec WebM (VP8 es más rápido para stickers)
+                        '-crf 30',     // Calidad constante (20-40 es bueno)
+                        '-b:v 1M',     // Bitrate máximo
+                        '-auto-alt-ref 0', 
+                        '-f webm'
                     ]);
                 
-                if (!muteAudio) command.outputOptions('-c:a aac');
+                if (!muteAudio) command.outputOptions('-c:a libvorbis'); // Audio para WebM
                 else command.outputOptions('-an');
 
                 command
                     .on('end', async () => {
-                        // Borramos el vídeo ORIGINAL pesado que subió el usuario
-                        fs.unlink(inputFile.path, () => {}); 
-                        
-                        // Procesamos el sticker RECORTADO
+                        fs.unlink(inputFile.path, () => {}); // Borrar original
                         const fileUrl = `/uploads/stickers_temp/${outputFilename}`;
-                        await processFinalFile(fileUrl, 'video/mp4'); 
+                        await processFinalFile(fileUrl, 'video/webm'); 
                     })
                     .on('error', (err) => {
                         console.error('Error de FFmpeg:', err.message);
@@ -248,10 +249,30 @@ module.exports = (pool, JWT_SECRET) => {
                     })
                     .save(outputPath);
 
-            } else {
-                // Caso: Imagen o GIF (Subida directa)
-                const fileUrl = `/uploads/stickers_temp/${inputFile.filename}`;
-                await processFinalFile(fileUrl, inputFile.mimetype);
+            } 
+            // --- CAMINO B: IMÁGENES/GIFS -> CONVERTIR A WEBP ---
+            else {
+                const outputFilename = `sticker-${Date.now()}.webp`; // 👈 Todo a WebP
+                const outputPath = path.join(__dirname, '../uploads/stickers_temp/', outputFilename);
+
+                try {
+                    // Usamos Sharp para redimensionar y convertir
+                    // { animated: true } permite que los GIFs sigan siendo animados en WebP
+                    await sharp(inputFile.path, { animated: true })
+                        .resize(256, 256, { fit: 'cover' })
+                        .webp({ quality: 75 }) // Compresión equilibrada
+                        .toFile(outputPath);
+
+                    fs.unlink(inputFile.path, () => {}); // Borrar el original subido por Multer
+                    
+                    const fileUrl = `/uploads/stickers_temp/${outputFilename}`;
+                    await processFinalFile(fileUrl, 'image/webp');
+
+                } catch (err) {
+                    console.error("Error de Sharp:", err);
+                    fs.unlink(inputFile.path, () => {});
+                    res.status(500).json({ success: false, message: 'Error al procesar la imagen.' });
+                }
             }
         }
     );
