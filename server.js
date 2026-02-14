@@ -178,107 +178,102 @@ io.on('connection', (socket) => {
     });
 
     socket.on('send_message', async (data) => {
-        // Obtenemos los datos del cliente, incluyendo el ID temporal
-        const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId } = data;
+    // 1. AGREGA 'sticker_pack' AQUÍ EN LA DESESTRUCTURACIÓN
+    const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack } = data;
 
-        try {
-            // 1. Guardar el nuevo mensaje en la base de datos
-            const insertQuery = 'INSERT INTO messagesapp (sender_id, receiver_id, content, parent_message_id) VALUES ($1, $2, $3, $4) RETURNING *';
-            const insertResult = await pool.query(insertQuery, [sender_id, receiver_id, content, parent_message_id || null]);
-            let savedMessage = insertResult.rows[0]; // Usamos 'let' para poder modificar el objeto
+    try {
+        // 1. Guardar el nuevo mensaje en la base de datos
+        const insertQuery = 'INSERT INTO messagesapp (sender_id, receiver_id, content, parent_message_id) VALUES ($1, $2, $3, $4) RETURNING *';
+        const insertResult = await pool.query(insertQuery, [sender_id, receiver_id, content, parent_message_id || null]);
+        let savedMessage = insertResult.rows[0]; // Usamos 'let' para poder modificar el objeto
 
-            // =========================================================
-            // === INICIO DE LA LÓGICA DE "ENRIQUECIMIENTO" ===
-            // =========================================================
-            // 2. Si el mensaje que acabamos de guardar es una respuesta...
-            if (savedMessage.parent_message_id) {
-                // ...hacemos una consulta extra para obtener los datos del mensaje original.
-                const parentQuery = `
-                    SELECT 
-                        p.content as parent_content,
-                        pu.username as parent_username
-                    FROM messagesapp AS p
-                    JOIN usersapp AS pu ON p.sender_id = pu.id
-                    WHERE p.message_id = $1;
-                `;
-                const parentResult = await pool.query(parentQuery, [savedMessage.parent_message_id]);
-                
-                if (parentResult.rows.length > 0) {
-                    // Añadimos las propiedades 'parent_content' y 'parent_username'
-                    // al objeto 'savedMessage' antes de enviarlo.
-                    savedMessage.parent_content = parentResult.rows[0].parent_content;
-                    savedMessage.parent_username = parentResult.rows[0].parent_username;
-                }
-            }
-            // =========================================================
-            // === FIN DE LA LÓGICA DE "ENRIQUECIMIENTO" ===
-            // =========================================================
-
-            // 3. Emitimos el mensaje (ahora "enriquecido") al otro usuario en la sala
-            socket.to(roomName).emit('receive_message', savedMessage);
-
-            // 4. Enviamos la confirmación al emisor original con el mismo objeto enriquecido
-            socket.emit('message_confirmed', {
-                tempId: tempId,
-                realMessage: savedMessage
-            });
-            // ==========================================================
-            // === ¡NUEVA LÓGICA DE NOTIFICACIÓN PUSH PARA MENSAJES! ===
-            // ==========================================================
-            try {
-                // A. Obtener los datos del destinatario (token FCM) y del remitente (nombre, foto)
-                const recipientResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
-                const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
-
-                const recipient = recipientResult.rows[0];
-                const sender = senderResult.rows[0];
-
-                // B. Si el destinatario tiene un token FCM, enviar la notificación
-                if (recipient && recipient.fcm_token) {
-                    const message = {
-                        token: recipient.fcm_token,
-                        data: {
-                            title: sender.username,
-                            body: content,
-                            channelId: 'chat_messages_channel',
-                            groupId: String(sender_id),
-                            senderId: String(sender_id),
-                            openUrl: `chat.html?userId=${sender_id}`,
-                            imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
-                        },
-                        android: { priority: 'high' }
-                    };
-
-                    // ==========================================================
-                    // === ¡LÓGICA DE LIMPIEZA DE TOKEN CORREGIDA! ===
-                    // ==========================================================
-                    try {
-                        await admin.messaging().send(message);
-                        console.log(`✅ Push enviado a usuario ${receiver_id}`);
-                    } catch (pushError) {
-                        // Si el error es que el token ya no es válido...
-                        if (pushError.code === 'messaging/registration-token-not-registered' || 
-                            pushError.code === 'messaging/invalid-registration-token') {
-                            
-                            console.warn(`🗑️ Token inválido detectado para el usuario ${receiver_id}. Borrando de la DB...`);
-                            
-                            // Limpiamos el token en la base de datos para no volver a intentar fallar
-                            await pool.query('UPDATE usersapp SET fcm_token = NULL WHERE id = $1', [receiver_id]);
-                        } else {
-                            console.error("❌ Error desconocido de Firebase:", pushError.message);
-                        }
-                    }
-                    // ==========================================================
-                }
-            } catch (error) {
-                console.error("Error general en proceso de mensaje:", error);
-            }
-            // ==========================================================
-
-        } catch (error) {
-            console.error("Error al guardar o enviar el mensaje:", error);
+        // =========================================================
+        // === ¡BLOQUE NUEVO! TRANSFERENCIA DE DATOS DE PACK ===
+        // =========================================================
+        // Como la base de datos no guarda la columna 'sticker_pack', 
+        // se pierde al hacer el INSERT. Aquí se la volvemos a pegar manualmete
+        // para que viaje por el Socket hasta el otro usuario.
+        if (sticker_pack) {
+            savedMessage.sticker_pack = sticker_pack;
         }
-    });
+        // =========================================================
+
+        // =========================================================
+        // === INICIO DE LA LÓGICA DE "ENRIQUECIMIENTO" (RESPUESTAS) ===
+        // =========================================================
+        if (savedMessage.parent_message_id) {
+            const parentQuery = `
+                SELECT 
+                    p.content as parent_content,
+                    pu.username as parent_username
+                FROM messagesapp AS p
+                JOIN usersapp AS pu ON p.sender_id = pu.id
+                WHERE p.message_id = $1;
+            `;
+            const parentResult = await pool.query(parentQuery, [savedMessage.parent_message_id]);
+            
+            if (parentResult.rows.length > 0) {
+                savedMessage.parent_content = parentResult.rows[0].parent_content;
+                savedMessage.parent_username = parentResult.rows[0].parent_username;
+            }
+        }
+        // =========================================================
+
+        // 3. Emitimos el mensaje (ahora incluye sticker_pack si lo había)
+        socket.to(roomName).emit('receive_message', savedMessage);
+
+        // 4. Enviamos la confirmación al emisor
+        socket.emit('message_confirmed', {
+            tempId: tempId,
+            realMessage: savedMessage
+        });
+
+        // ==========================================================
+        // === LÓGICA DE NOTIFICACIÓN PUSH (Sin cambios) ===
+        // ==========================================================
+        try {
+            const recipientResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
+            const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+
+            const recipient = recipientResult.rows[0];
+            const sender = senderResult.rows[0];
+
+            if (recipient && recipient.fcm_token) {
+                const message = {
+                    token: recipient.fcm_token,
+                    data: {
+                        title: sender.username,
+                        body: content,
+                        channelId: 'chat_messages_channel',
+                        groupId: String(sender_id),
+                        senderId: String(sender_id),
+                        openUrl: `chat.html?userId=${sender_id}`,
+                        imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
+                    },
+                    android: { priority: 'high' }
+                };
+
+                try {
+                    await admin.messaging().send(message);
+                    console.log(`✅ Push enviado a usuario ${receiver_id}`);
+                } catch (pushError) {
+                    if (pushError.code === 'messaging/registration-token-not-registered' || 
+                        pushError.code === 'messaging/invalid-registration-token') {
+                        console.warn(`🗑️ Token inválido detectado para el usuario ${receiver_id}. Borrando de la DB...`);
+                        await pool.query('UPDATE usersapp SET fcm_token = NULL WHERE id = $1', [receiver_id]);
+                    } else {
+                        console.error("❌ Error desconocido de Firebase:", pushError.message);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error("Error general en proceso de mensaje:", error);
+        }
+
+    } catch (error) {
+        console.error("Error al guardar o enviar el mensaje:", error);
+    }
+});
 
 
 
