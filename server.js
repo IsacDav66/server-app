@@ -188,8 +188,18 @@ io.on('connection', (socket) => {
         // 1. Guardar el nuevo mensaje en la base de datos
         // Nota: No guardamos el sticker_pack en la BD porque la tabla no tiene esa columna,
         // pero lo pasaremos "en vivo" a través del socket.
-        const insertQuery = 'INSERT INTO messagesapp (sender_id, receiver_id, content, parent_message_id) VALUES ($1, $2, $3, $4) RETURNING *';
-        const insertResult = await pool.query(insertQuery, [sender_id, receiver_id, content, parent_message_id || null]);
+        const insertQuery = `
+            INSERT INTO messagesapp (sender_id, receiver_id, content, parent_message_id, sticker_pack) 
+            VALUES ($1, $2, $3, $4, $5) 
+            RETURNING *;
+        `;
+        const insertResult = await pool.query(insertQuery, [
+            sender_id, 
+            receiver_id, 
+            content, 
+            parent_message_id || null, 
+            sticker_pack ? JSON.stringify(sticker_pack) : null // Lo guardamos como string JSON
+        ]);
         
         let savedMessage = insertResult.rows[0]; // Objeto que contiene el message_id real generado por la BD
 

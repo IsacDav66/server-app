@@ -59,6 +59,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                     m.message_id, m.sender_id, m.receiver_id, m.content, m.created_at, 
                     m.is_read, -- <--- ESTA COLUMNA FALTABA
                     m.parent_message_id,
+                    m.sticker_pack,
                     p.content as parent_content,
                     pu.username as parent_username
                 FROM messagesapp AS m
