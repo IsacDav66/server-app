@@ -179,7 +179,7 @@ io.on('connection', (socket) => {
 
     socket.on('send_message', async (data) => {
     // 1. Extraemos los datos del cliente, incluyendo el pack de stickers
-    const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack } = data;
+    const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
 
     // LOG DE ENTRADA
     console.log(`📨 [SERVER] Recibido mensaje de ${sender_id} para ${receiver_id}. Pack: ${sticker_pack ? sticker_pack.name : 'Ninguno'}`);
@@ -188,17 +188,14 @@ io.on('connection', (socket) => {
         // 1. Guardar el nuevo mensaje en la base de datos
         // Nota: No guardamos el sticker_pack en la BD porque la tabla no tiene esa columna,
         // pero lo pasaremos "en vivo" a través del socket.
-        const insertQuery = `
-            INSERT INTO messagesapp (sender_id, receiver_id, content, parent_message_id, sticker_pack) 
-            VALUES ($1, $2, $3, $4, $5) 
-            RETURNING *;
-        `;
+         const insertQuery = `
+            INSERT INTO messagesapp (sender_id, receiver_id, content, parent_message_id, sticker_pack, emoji_pack) 
+            VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`;
+            
         const insertResult = await pool.query(insertQuery, [
-            sender_id, 
-            receiver_id, 
-            content, 
-            parent_message_id || null, 
-            sticker_pack ? JSON.stringify(sticker_pack) : null // Lo guardamos como string JSON
+            sender_id, receiver_id, content, parent_message_id || null, 
+            sticker_pack ? JSON.stringify(sticker_pack) : null,
+            emoji_pack ? JSON.stringify(emoji_pack) : null // 👈 Nuevo
         ]);
         
         let savedMessage = insertResult.rows[0]; // Objeto que contiene el message_id real generado por la BD
@@ -209,6 +206,10 @@ io.on('connection', (socket) => {
         if (sticker_pack) {
             savedMessage.sticker_pack = sticker_pack;
             console.log(`📦 [SERVER] Re-inyectando pack "${sticker_pack.name}" al mensaje para el destinatario.`);
+        }
+        if (emoji_pack) {
+            savedMessage.emoji_pack = emoji_pack; // 👈 Nuevo
+            console.log(`📦 [SERVER] Re-inyectando pack "${emoji_pack.name}" al mensaje para el destinatario.`);
         }
         // =========================================================
 
