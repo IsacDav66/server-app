@@ -384,6 +384,10 @@ async function initDatabase() {
             sender_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
             receiver_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
             content TEXT NOT NULL,
+            is_read BOOLEAN DEFAULT FALSE,
+            parent_message_id INTEGER,
+            sticker_pack TEXT,
+            emoji_pack TEXT,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
     `;
