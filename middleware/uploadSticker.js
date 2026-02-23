@@ -17,21 +17,24 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-    // --- ¡LOG DE DEPURACIÓN CLAVE! ---
     console.log('[Multer LOG - fileFilter] Revisando archivo:', {
         fieldname: file.fieldname,
         originalname: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size
+        mimetype: file.mimetype
     });
 
-    if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
+    // 🚀 ACTUALIZACIÓN: Añadimos 'application/json' a la lista de permitidos
+    if (
+        file.mimetype.startsWith('image/') || 
+        file.mimetype.startsWith('video/') || 
+        file.mimetype === 'application/json' ||
+        file.originalname.toLowerCase().endsWith('.json') // Doble verificación por extensión
+    ) {
         console.log('[Multer LOG - fileFilter] El archivo fue ACEPTADO.');
         cb(null, true);
     } else {
         console.log('[Multer LOG - fileFilter] ¡El archivo fue RECHAZADO!');
-        // Creamos un nuevo error para que sea más fácil de rastrear
-        const error = new Error('Tipo de archivo no soportado por el filtro.');
+        const error = new Error('Tipo de archivo no soportado (solo imágenes, videos o lottie json).');
         error.code = 'INVALID_FILE_TYPE';
         cb(error, false);
     }
