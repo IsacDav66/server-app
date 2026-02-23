@@ -361,55 +361,64 @@ router.post('/emojis/upload', protect, uploadStickerMiddleware, async (req, res)
         return res.status(400).json({ success: false, message: 'No se recibió el archivo' });
     }
 
-    const tempInputPath = req.file.path; // Archivo temporal subido por Multer
+    const tempInputPath = req.file.path; // Archivo subido por Multer
     const targetDir = path.join(__dirname, '../uploads/emojis/');
     
-    // Asegurar que la carpeta de emojis existe
+    // Asegurar que la carpeta destino existe
     if (!fs.existsSync(targetDir)) {
         fs.mkdirSync(targetDir, { recursive: true });
     }
 
-    // Nombre de archivo final (siempre .webp)
-    const finalFilename = `emoji-${Date.now()}.webp`;
+    // 🚀 DETECCIÓN DE TIPO DE ARCHIVO
+    const isLottie = req.file.mimetype === 'application/json' || req.file.originalname.toLowerCase().endsWith('.json');
+    const isVideo = req.file.mimetype.startsWith('video/');
+
+    // Nombre de archivo final
+    const extension = isLottie ? '.json' : '.webp';
+    const finalFilename = `emoji-${Date.now()}${extension}`;
     const finalPath = path.join(targetDir, finalFilename);
 
     try {
-        // --- 1. PROCESAMIENTO SEGÚN TIPO DE ARCHIVO ---
-        
-        if (req.file.mimetype.startsWith('video/')) {
-            // A. CASO VIDEO: Usar FFmpeg para convertir a WebP animado
+        // --- 1. PROCESAMIENTO SEGÚN TIPO ---
+
+        if (isLottie) {
+            // A. CASO LOTTIE: Copiamos el archivo JSON tal cual, sin procesar
+            fs.copyFileSync(tempInputPath, finalPath);
+            console.log('✅ Archivo Lottie (.json) guardado correctamente');
+        } 
+        else if (isVideo) {
+            // B. CASO VIDEO: Usar FFmpeg para convertir a WebP animado de 3 segundos
             const startTime = parseFloat(req.body.startTime) || 0;
 
             await new Promise((resolve, reject) => {
                 ffmpeg(tempInputPath)
-                    .setFfmpegPath('/usr/bin/ffmpeg') // Asegúrate de que la ruta sea correcta en tu servidor
+                    .setFfmpegPath('/usr/bin/ffmpeg') // Ajusta la ruta según tu servidor
                     .outputOptions([
-                        `-ss ${startTime}`, // Punto de inicio
-                        '-t 3',             // Duración máxima de 3 segundos para emojis
-                        // Escalamos para llenar 128x128 y luego recortamos el centro para que sea cuadrado
+                        `-ss ${startTime}`, // Tiempo de inicio del trimmer
+                        '-t 3',             // Límite de 3 segundos para emojis
+                        // Ajuste de escala y recorte para que sea un cuadrado perfecto de 128x128
                         '-vf scale=128:128:force_original_aspect_ratio=increase,crop=128:128',
-                        '-vcodec libwebp',  // Codec WebP
-                        '-lossless 0',      // Permitir compresión con pérdida para ahorrar espacio
+                        '-vcodec libwebp',  // Convertir a WebP
+                        '-lossless 0',      // Compresión con pérdida para ligereza
                         '-compression_level 4',
-                        '-q:v 70',          // Calidad 70
+                        '-q:v 70',          // Calidad del WebP
                         '-loop 0',          // Bucle infinito
-                        '-an'               // Quitar audio (obligatorio para emojis)
+                        '-an'               // Forzar sin audio (obligatorio para emojis)
                     ])
-                    .on('end', () => {
-                        console.log('✅ Video convertido a Emoji WebP animado');
-                        resolve();
-                    })
+                    .on('end', resolve)
                     .on('error', (err) => {
                         console.error('❌ Error FFmpeg:', err);
                         reject(err);
                     })
                     .save(finalPath);
             });
-        } else {
-            // B. CASO IMAGEN / GIF: Usar Sharp
+            console.log('✅ Video convertido a Emoji WebP animado');
+        } 
+        else {
+            // C. CASO IMAGEN / GIF: Usar Sharp para convertir a WebP de 128px
             await sharp(tempInputPath, { animated: true })
                 .resize(128, 128, { 
-                    fit: 'cover', // Asegura que llene el cuadrado de 128x128
+                    fit: 'cover', 
                     position: 'center' 
                 }) 
                 .webp({ quality: 75 })
@@ -418,14 +427,14 @@ router.post('/emojis/upload', protect, uploadStickerMiddleware, async (req, res)
         }
 
         // --- 2. DEDUPLICACIÓN (SISTEMA DE HASH) ---
-        // Generamos el hash del archivo FINAL procesado
+        // Calculamos el hash del archivo que acabamos de generar/copiar
         const fileHash = await getHash(finalPath);
         const existingMedia = await pool.query('SELECT file_path FROM media_library WHERE hash = $1', [fileHash]);
 
         if (existingMedia.rows.length > 0) {
-            console.log("♻️ Emoji duplicado detectado. Usando existente.");
+            console.log("♻️ Emoji duplicado detectado por Hash. Usando existente.");
             
-            // Borramos el archivo que acabamos de crear y el temporal original
+            // Borramos el archivo que acabamos de crear y el temporal de Multer
             if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath); 
             if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath); 
 
@@ -439,18 +448,20 @@ router.post('/emojis/upload', protect, uploadStickerMiddleware, async (req, res)
 
         // --- 3. REGISTRO EN BASE DE DATOS ---
         const relativeUrl = `/uploads/emojis/${finalFilename}`;
+        const finalMime = isLottie ? 'application/json' : 'image/webp';
+        
         await pool.query('INSERT INTO media_library (hash, file_path, mime_type) VALUES ($1, $2, $3)', 
-            [fileHash, relativeUrl, 'image/webp']);
+            [fileHash, relativeUrl, finalMime]);
 
         // --- 4. LIMPIEZA FINAL ---
-        // Borrar el archivo original subido por Multer (PNG, MP4, etc)
+        // Borrar el archivo original subido (MP4, PNG, JSON original, etc.)
         if (fs.existsSync(tempInputPath)) {
             fs.unlink(tempInputPath, (err) => {
-                if (err) console.error("Error al borrar temporal de emoji:", err);
+                if (err) console.error("Error al borrar temporal original:", err);
             });
         }
 
-        console.log(`✨ Emoji optimizado y guardado: ${finalFilename}`);
+        console.log(`✨ Emoji final guardado: ${finalFilename}`);
 
         res.status(200).json({ 
             success: true, 
@@ -459,15 +470,15 @@ router.post('/emojis/upload', protect, uploadStickerMiddleware, async (req, res)
         });
 
     } catch (err) {
-        console.error("❌ Error crítico al procesar el emoji:", err);
+        console.error("❌ Error crítico en emojis/upload:", err);
         
-        // Limpiar archivos en caso de error para no dejar basura
+        // Limpieza de emergencia en caso de error
         if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath);
         if (fs.existsSync(finalPath)) {
             try { fs.unlinkSync(finalPath); } catch(e) {}
         }
         
-        res.status(500).json({ success: false, message: 'Error al procesar u optimizar el emoji.' });
+        res.status(500).json({ success: false, message: 'Error interno al procesar el emoji.' });
     }
 });
 
