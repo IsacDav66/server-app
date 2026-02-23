@@ -23,18 +23,20 @@ const fileFilter = (req, file, cb) => {
         mimetype: file.mimetype
     });
 
-    // 🚀 ACTUALIZACIÓN: Añadimos 'application/json' a la lista de permitidos
+    const fileName = file.originalname.toLowerCase();
+
     if (
         file.mimetype.startsWith('image/') || 
         file.mimetype.startsWith('video/') || 
         file.mimetype === 'application/json' ||
-        file.originalname.toLowerCase().endsWith('.json') // Doble verificación por extensión
+        fileName.endsWith('.json') || 
+        fileName.endsWith('.lottie') // 🚀 ESTA ES LA LÍNEA QUE FALTA
     ) {
         console.log('[Multer LOG - fileFilter] El archivo fue ACEPTADO.');
         cb(null, true);
     } else {
         console.log('[Multer LOG - fileFilter] ¡El archivo fue RECHAZADO!');
-        const error = new Error('Tipo de archivo no soportado (solo imágenes, videos o lottie json).');
+        const error = new Error('Tipo de archivo no soportado (solo imágenes, videos, json o lottie).');
         error.code = 'INVALID_FILE_TYPE';
         cb(error, false);
     }

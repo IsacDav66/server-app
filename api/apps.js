@@ -370,11 +370,12 @@ router.post('/emojis/upload', protect, uploadStickerMiddleware, async (req, res)
     }
 
     // 🚀 DETECCIÓN DE TIPO DE ARCHIVO
-    const isLottie = req.file.mimetype === 'application/json' || req.file.originalname.toLowerCase().endsWith('.json');
+    const originalName = req.file.originalname.toLowerCase();
+    const isLottie = originalName.endsWith('.json') || originalName.endsWith('.lottie'); // 🚀 Detectar ambos
     const isVideo = req.file.mimetype.startsWith('video/');
 
     // Nombre de archivo final
-    const extension = isLottie ? '.json' : '.webp';
+    const extension = isLottie ? path.extname(originalName) : '.webp';
     const finalFilename = `emoji-${Date.now()}${extension}`;
     const finalPath = path.join(targetDir, finalFilename);
 
@@ -448,7 +449,8 @@ router.post('/emojis/upload', protect, uploadStickerMiddleware, async (req, res)
 
         // --- 3. REGISTRO EN BASE DE DATOS ---
         const relativeUrl = `/uploads/emojis/${finalFilename}`;
-        const finalMime = isLottie ? 'application/json' : 'image/webp';
+        const finalMime = isLottie ? (originalName.endsWith('.json') ? 'application/json' : 'application/octet-stream') : 'image/webp';
+
         
         await pool.query('INSERT INTO media_library (hash, file_path, mime_type) VALUES ($1, $2, $3)', 
             [fileHash, relativeUrl, finalMime]);
