@@ -297,32 +297,33 @@ io.on('connection', (socket) => {
     }); // 🚀 AQUÍ SE CIERRA CORRECTAMENTE EL EVENTO SEND_MESSAGE
 
     // --- 2. EVENTOS DE MATCHMAKING (SALA DE ENCUENTROS) ---
-    socket.on('start_match_search', () => {
+    socket.on('start_match_search', (userData) => {
         const userId = socket.userId;
-        if (!userId) return;
-
-        // Limpiar si ya estaba en cola para evitar duplicados
         matchQueue = matchQueue.filter(u => u.userId !== userId);
 
         if (matchQueue.length > 0) {
             const partner = matchQueue.shift();
             const roomId = `match_${Math.min(userId, partner.userId)}_${Math.max(userId, partner.userId)}`;
 
-            // 🚀 LA SOLUCIÓN AL "SALAS EN MEMORIA: []"
-            // Registramos la sala en el objeto global para que el DELETE sepa que existe
+            // ==========================================================
+            // === 🚀 ESTA ES LA LÍNEA QUE FALTA EN TU ARCHIVO !!! ===
+            // ==========================================================
             pendingMatchLikes[roomId] = []; 
-            console.log(`🛸 MATCH CREADO: Registrando en memoria "${roomId}"`);
+            console.log(`🛸 MATCH CREADO: Sala registrada en memoria: ${roomId}`);
+            // ==========================================================
 
-            socket.join(roomId);
-            const partnerSocket = io.sockets.sockets.get(partner.socketId);
-            if (partnerSocket) partnerSocket.join(roomId);
+            const matchData = {
+                roomId,
+                users: [userId, partner.userId],
+                startTime: Date.now()
+            };
 
-            io.to(socket.id).emit('match_found', { roomId, partnerId: partner.userId });
-            io.to(partner.socketId).emit('match_found', { roomId, partnerId: userId });
+            io.to(socket.id).to(partner.socketId).emit('match_found', {
+                roomId,
+                partnerId: userId === matchData.users[0] ? matchData.users[1] : matchData.users[0]
+            });
         } else {
-            // No hay nadie, lo ponemos en la cola
             matchQueue.push({ userId, socketId: socket.id });
-            console.log(`⏲️ Usuario ${userId} esperando pareja...`);
         }
     });
 
