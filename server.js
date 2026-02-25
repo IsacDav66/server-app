@@ -303,38 +303,70 @@ io.on('connection', (socket) => {
     }); // 🚀 AQUÍ SE CIERRA CORRECTAMENTE EL EVENTO SEND_MESSAGE
 
     // --- 2. EVENTOS DE MATCHMAKING (SALA DE ENCUENTROS) ---
-    socket.on('start_match_search', (userData) => {
+    socket.on('start_match_search', async () => {
         const userId = socket.userId;
         if (!userId) return;
 
+        // 1. Limpiar si ya estaba en la cola para evitar duplicados
         matchQueue = matchQueue.filter(u => u.userId !== userId);
 
-        if (matchQueue.length > 0) {
-            const partner = matchQueue.shift();
+        console.log(`🔍 Usuario ${userId} buscando pareja. Usuarios en espera: ${matchQueue.length}`);
+
+        // 2. Intentar encontrar una pareja válida en la cola
+        let partnerIndex = -1;
+
+        for (let i = 0; i < matchQueue.length; i++) {
+            const potentialPartner = matchQueue[i];
+
+            // 🚀 VERIFICACIÓN DE SEGURIDAD: ¿Ya hablaron antes?
+            const historyCheck = await pool.query(`
+                SELECT 1 FROM messagesapp 
+                WHERE (sender_id = $1 AND receiver_id = $2) 
+                OR (sender_id = $2 AND receiver_id = $1)
+                LIMIT 1
+            `, [userId, potentialPartner.userId]);
+
+            if (historyCheck.rowCount === 0) {
+                // ¡No hay historial! Es una pareja válida
+                partnerIndex = i;
+                break; 
+            } else {
+                console.log(`Keep searching: ${userId} y ${potentialPartner.userId} ya tienen un chat previo.`);
+            }
+        }
+
+        // 3. Lógica de Match o Espera
+        if (partnerIndex !== -1) {
+            // Extraemos a la pareja elegida de la cola
+            const partner = matchQueue.splice(partnerIndex, 1)[0];
             const roomId = `match_${Math.min(userId, partner.userId)}_${Math.max(userId, partner.userId)}`;
 
-            // 🚀 DEFINICIÓN PARA PRUEBAS: 1 Minuto (60,000 ms)
-            const expiresAt = Date.now() + (1 * 60 * 1000); 
-
-            // Guardamos como objeto para soportar los likes y el tiempo
+            // Registrar en memoria temporal
             pendingMatchLikes[roomId] = {
                 likes: [],
-                expiresAt: expiresAt
-            }; 
-
-            console.log(`🛸 MATCH: ${roomId} expira en 60s`);
+                expiresAt: Date.now() + (1 * 60 * 1000) // 1 min para pruebas
+            };
 
             socket.join(roomId);
             const partnerSocket = io.sockets.sockets.get(partner.socketId);
             if (partnerSocket) partnerSocket.join(roomId);
 
-            // Enviamos el tiempo absoluto a ambos
-            io.to(socket.id).emit('match_found', { roomId, partnerId: partner.userId, expiresAt });
-            io.to(partner.socketId).emit('match_found', { roomId, partnerId: userId, expiresAt });
+            // Notificar a ambos
+            io.to(socket.id).emit('match_found', { 
+                roomId, 
+                partnerId: partner.userId, 
+                expiresAt: pendingMatchLikes[roomId].expiresAt 
+            });
+            io.to(partner.socketId).emit('match_found', { 
+                roomId, 
+                partnerId: userId, 
+                expiresAt: pendingMatchLikes[roomId].expiresAt 
+            });
+
+            console.log(`🛸 MATCH SEGURO CREADO: ${roomId}`);
         } else {
-            // Nadie buscando, entrar a la cola
+            // No hay nadie disponible que no conozca, lo ponemos en la cola
             matchQueue.push({ userId, socketId: socket.id });
-            console.log(`[QUEUE] Usuario ${userId} esperando pareja...`);
         }
     });
 
