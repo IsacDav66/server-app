@@ -174,8 +174,14 @@ io.on('connection', (socket) => {
     });
 
     socket.on('join_room', (roomName) => {
+        // Antes de unirse, salimos de otras salas de match para no duplicar
+        Array.from(socket.rooms).forEach(room => {
+            if (room.startsWith('match_') && room !== roomName) {
+                socket.leave(room);
+            }
+        });
         socket.join(roomName);
-        console.log(`Socket ${socket.id} se unió a la sala: ${roomName}`);
+        console.log(`Socket ${socket.id} unido a sala: ${roomName}`);
     });
 
     socket.on('send_message', async (data) => {
@@ -353,41 +359,34 @@ io.on('connection', (socket) => {
     socket.on('match_time_expired', async (data) => {
         const { roomId } = data;
         
-        // 🚩 LOG 1: Saber si el server recibe el evento
-        console.log(`\n--- 🛸 SEÑAL DE AUTODESTRUCCIÓN RECIBIDA ---`);
-        console.log(`📂 Sala a borrar: "${roomId}"`);
-        console.log(`👤 Enviado por Socket: ${socket.id} (User ID: ${socket.userId})`);
-
-        // 🚩 LOG 2: Ver qué hay en la memoria del servidor
-        const salasPendientes = Object.keys(pendingMatchLikes);
-        console.log(`📋 Salas actualmente en memoria:`, salasPendientes);
-
-        if (pendingMatchLikes[roomId]) {
-            console.log(`⚠️ Sala encontrada en pendientes. Procediendo a borrar...`);
-            try {
-                // 🚀 EJECUCIÓN DEL BORRADO
-                const res = await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
-                
-                console.log(`✅ RESULTADO DB: Se eliminaron ${res.rowCount} mensajes de la sala ${roomId}`);
-
-                // Avisar a los clientes para que salgan del chat
-                io.to(roomId).emit('match_terminated', { reason: 'timeout' });
-                
-                // Limpiar memoria
-                delete pendingMatchLikes[roomId];
-            } catch (error) {
-                console.error("❌ ERROR AL EJECUTAR DELETE EN POSTGRES:", error);
-            }
-        } else {
-            // 🚩 LOG 3: Si no entra al IF, explicar por qué
-            console.log(`❌ ERROR: La sala "${roomId}" NO está en la lista de pendientes del servidor.`);
-            console.log(`   Posibles causas: 
-            1. Ya se dio Like mutuo y la sala es permanente.
-            2. El servidor se reinició y la memoria se borró.
-            3. El nombre de la sala enviado por el cliente no coincide.`);
+        // 🚩 SEGURIDAD: Solo permitimos borrar si la sala empieza con "match_"
+        if (!roomId || !roomId.startsWith('match_')) {
+            console.log(`🚫 Intento de borrado bloqueado: Sala no válida (${roomId})`);
+            return;
         }
-        console.log(`-------------------------------------------\n`);
+
+        console.log(`\n--- 🛸 EJECUTANDO AUTODESTRUCCIÓN ---`);
+        console.log(`📂 Sala: "${roomId}"`);
+
+        try {
+            // 🚀 LA CLAVE: Borramos directamente de la base de datos.
+            // El cliente solo envía este evento si el match NO se concretó.
+            const res = await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
+            
+            console.log(`✅ RESULTADO DB: Se eliminaron ${res.rowCount} mensajes.`);
+
+            // Notificamos a los usuarios que el chat murió
+            io.to(roomId).emit('match_terminated', { reason: 'timeout' });
+            
+            // Limpiamos la memoria si es que existía
+            if (pendingMatchLikes[roomId]) delete pendingMatchLikes[roomId];
+
+        } catch (error) {
+            console.error("❌ ERROR CRÍTICO EN AUTO-DELETE:", error);
+        }
+        console.log(`---------------------------------------\n`);
     });
+
 
     // --- 3. DESCONEXIÓN ---
     socket.on('disconnect', () => {
