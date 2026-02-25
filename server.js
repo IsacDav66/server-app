@@ -299,31 +299,34 @@ io.on('connection', (socket) => {
     // --- 2. EVENTOS DE MATCHMAKING (SALA DE ENCUENTROS) ---
     socket.on('start_match_search', (userData) => {
         const userId = socket.userId;
+        if (!userId) return;
+
         matchQueue = matchQueue.filter(u => u.userId !== userId);
 
         if (matchQueue.length > 0) {
+            // --- ¡HAY MATCH! ---
             const partner = matchQueue.shift();
             const roomId = `match_${Math.min(userId, partner.userId)}_${Math.max(userId, partner.userId)}`;
 
-            // ==========================================================
-            // === 🚀 ESTA ES LA LÍNEA QUE FALTA EN TU ARCHIVO !!! ===
-            // ==========================================================
+            // 🚀 LA SOLUCIÓN DEFINITIVA:
+            // Registramos la sala en el objeto GLOBAL antes de avisar a nadie
             pendingMatchLikes[roomId] = []; 
-            console.log(`🛸 MATCH CREADO: Sala registrada en memoria: ${roomId}`);
-            // ==========================================================
+            
+            // 🚩 LOG DE CONFIRMACIÓN (Este DEBE salir en tu consola negra)
+            console.log(`\n[MEMORIA] Sala temporal creada con éxito: ${roomId}`);
+            console.log(`[MEMORIA] Estado actual:`, Object.keys(pendingMatchLikes));
 
-            const matchData = {
-                roomId,
-                users: [userId, partner.userId],
-                startTime: Date.now()
-            };
+            socket.join(roomId);
+            const partnerSocket = io.sockets.sockets.get(partner.socketId);
+            if (partnerSocket) partnerSocket.join(roomId);
 
-            io.to(socket.id).to(partner.socketId).emit('match_found', {
-                roomId,
-                partnerId: userId === matchData.users[0] ? matchData.users[1] : matchData.users[0]
-            });
+            // Avisar a ambos
+            io.to(socket.id).emit('match_found', { roomId, partnerId: partner.userId });
+            io.to(partner.socketId).emit('match_found', { roomId, partnerId: userId });
         } else {
+            // Nadie buscando, entrar a la cola
             matchQueue.push({ userId, socketId: socket.id });
+            console.log(`[QUEUE] Usuario ${userId} esperando pareja...`);
         }
     });
 
