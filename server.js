@@ -425,14 +425,45 @@ io.on('connection', (socket) => {
         console.log(`---------------------------------------\n`);
     });
 
+    // Función reutilizable para terminar un match por abandono
+    const terminateMatchByAbandono = async (userId, socket) => {
+        for (const roomId in pendingMatchLikes) {
+            // Verificamos si el usuario que se va pertenece a esta sala de match
+            if (roomId.startsWith('match_') && roomId.includes(String(userId))) {
+                console.log(`🛸 El usuario ${userId} abandonó el encuentro en ${roomId}`);
+
+                // 1. Avisar al compañero que se quedó solo
+                socket.to(roomId).emit('match_terminated', { reason: 'partner_left' });
+
+                // 2. 🚀 AUTODESTRUCCIÓN INMEDIATA: Borrar mensajes de la DB
+                try {
+                    const res = await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
+                    console.log(`🗑️ DB Limpia: ${res.rowCount} mensajes borrados tras abandono.`);
+                } catch (e) {
+                    console.error("Error al limpiar mensajes tras abandono:", e);
+                }
+
+                // 3. Limpiar memoria del servidor
+                delete pendingMatchLikes[roomId];
+            }
+        }
+    };
 
     // --- 3. DESCONEXIÓN ---
     socket.on('disconnect', () => {
         console.log(`🔌 Un usuario se ha desconectado: ${socket.id}`);
         matchQueue = matchQueue.filter(u => u.socketId !== socket.id);
         if (socket.userId) {
+            terminateMatchByAbandono(socket.userId, socket);
             onlineUsers.delete(socket.id);
             notifyFriendsOfStatusChange(socket.userId, false, null);
+        }
+    });
+    
+    // --- Manejar abandono manual (Darle al botón atrás) ---
+    socket.on('leave_match', (data) => {
+        if (socket.userId) {
+            terminateMatchByAbandono(socket.userId, socket);
         }
     });
 });
