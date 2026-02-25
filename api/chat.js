@@ -20,6 +20,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                         ) as rn
                     FROM messagesapp m
                     WHERE m.sender_id = $1 OR m.receiver_id = $1
+                    AND m.roomName NOT LIKE 'match_%'
                 )
                 SELECT
                     rm.content AS last_message_content,

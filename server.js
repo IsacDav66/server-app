@@ -190,11 +190,11 @@ io.on('connection', (socket) => {
         // Nota: No guardamos el sticker_pack en la BD porque la tabla no tiene esa columna,
         // pero lo pasaremos "en vivo" a través del socket.
          const insertQuery = `
-            INSERT INTO messagesapp (sender_id, receiver_id, content, parent_message_id, sticker_pack, emoji_pack) 
-            VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`;
+            INSERT INTO messagesapp (sender_id, receiver_id, content, room_name, parent_message_id, sticker_pack, emoji_pack) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`;
             
         const insertResult = await pool.query(insertQuery, [
-            sender_id, receiver_id, content, parent_message_id || null, 
+            sender_id, receiver_id, content, roomName, parent_message_id || null, 
             sticker_pack ? JSON.stringify(sticker_pack) : null,
             emoji_pack ? JSON.stringify(emoji_pack) : null // 👈 Nuevo
         ]);
@@ -345,9 +345,15 @@ io.on('connection', (socket) => {
     socket.on('match_time_expired', async (data) => {
         const { roomId } = data;
         if (pendingMatchLikes[roomId]) {
-            io.to(roomId).emit('match_terminated', { reason: 'timeout' });
-            delete pendingMatchLikes[roomId];
-            console.log(`🗑️ Tiempo agotado en sala ${roomId}`);
+            try {
+                console.log(`🗑️ AUTODESTRUCCIÓN: Eliminando mensajes de la sala ${roomId}`);
+                // 🚀 Borramos usando la columna que acabamos de crear
+                await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
+                io.to(roomId).emit('match_terminated', { reason: 'timeout' });
+                delete pendingMatchLikes[roomId];
+            } catch (error) {
+                console.error("Error en autodestrucción:", error);
+            }
         }
     });
 
@@ -444,6 +450,7 @@ async function initDatabase() {
             sender_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
             receiver_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
             content TEXT NOT NULL,
+            room_name VARCHAR(100), 
             is_read BOOLEAN DEFAULT FALSE,
             parent_message_id INTEGER,
             sticker_pack TEXT,
