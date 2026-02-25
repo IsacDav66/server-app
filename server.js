@@ -92,36 +92,35 @@ app.set('onlineUsers', onlineUsers);
 io.on('connection', (socket) => {
     // 🚀 FUNCIÓN DE CIERRE DE MATCH (Ponla al principio del io.on)
     const handleMatchLeave = async (userId) => {
-        // Recorremos todas las salas que están esperando un Match (pendientes)
         for (const roomId in pendingMatchLikes) {
             if (roomId.startsWith('match_') && roomId.includes(`_${userId}`)) {
                 
-                // 1. Identificar quién es el compañero que se quedó solo
+                // 1. Identificar al compañero
                 const parts = roomId.replace('match_', '').split('_');
                 const partnerId = parts.find(id => id !== String(userId));
 
                 console.log(`🛸 Abandono detectado: El usuario ${userId} se fue. Avisando a ${partnerId}`);
 
-                // 2. 🚀 LA CLAVE: Emitir a la sala personal del usuario (user-ID)
-                // Esto llegará a cualquier pestaña que el compañero tenga abierta
-                io.to(`user-${partnerId}`).emit('match_terminated', { 
-                    reason: 'partner_left',
-                    roomId: roomId 
-                });
+                // 2. 🚀 NOTIFICACIÓN DOBLE (Redundancia total)
+                // Enviamos a la sala del match Y a la sala personal del usuario
+                const payload = { reason: 'partner_left', roomId: roomId };
+                
+                io.to(roomId).emit('match_terminated', payload);
+                io.to(`user-${partnerId}`).emit('match_terminated', payload);
 
-                // 3. Borrar mensajes de la DB
+                // 3. Borrado de la base de datos
                 try {
-                    const res = await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
-                    console.log(`🗑️ Autodestrucción por abandono: ${res.rowCount} mensajes eliminados.`);
+                    await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
                 } catch (err) {
                     console.error("Error al borrar tras abandono:", err);
                 }
 
-                // 4. Limpiar memoria del servidor
+                // 4. Limpiar memoria
                 delete pendingMatchLikes[roomId];
             }
         }
     };
+
 
 
 
