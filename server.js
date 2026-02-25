@@ -310,25 +310,27 @@ io.on('connection', (socket) => {
         matchQueue = matchQueue.filter(u => u.userId !== userId);
 
         if (matchQueue.length > 0) {
-            // --- ¡HAY MATCH! ---
             const partner = matchQueue.shift();
             const roomId = `match_${Math.min(userId, partner.userId)}_${Math.max(userId, partner.userId)}`;
 
-            // 🚀 LA SOLUCIÓN DEFINITIVA:
-            // Registramos la sala en el objeto GLOBAL antes de avisar a nadie
-            pendingMatchLikes[roomId] = []; 
-            
-            // 🚩 LOG DE CONFIRMACIÓN (Este DEBE salir en tu consola negra)
-            console.log(`\n[MEMORIA] Sala temporal creada con éxito: ${roomId}`);
-            console.log(`[MEMORIA] Estado actual:`, Object.keys(pendingMatchLikes));
+            // 🚀 DEFINICIÓN PARA PRUEBAS: 1 Minuto (60,000 ms)
+            const expiresAt = Date.now() + (1 * 60 * 1000); 
+
+            // Guardamos como objeto para soportar los likes y el tiempo
+            pendingMatchLikes[roomId] = {
+                likes: [],
+                expiresAt: expiresAt
+            }; 
+
+            console.log(`🛸 MATCH: ${roomId} expira en 60s`);
 
             socket.join(roomId);
             const partnerSocket = io.sockets.sockets.get(partner.socketId);
             if (partnerSocket) partnerSocket.join(roomId);
 
-            // Avisar a ambos
-            io.to(socket.id).emit('match_found', { roomId, partnerId: partner.userId });
-            io.to(partner.socketId).emit('match_found', { roomId, partnerId: userId });
+            // Enviamos el tiempo absoluto a ambos
+            io.to(socket.id).emit('match_found', { roomId, partnerId: partner.userId, expiresAt });
+            io.to(partner.socketId).emit('match_found', { roomId, partnerId: userId, expiresAt });
         } else {
             // Nadie buscando, entrar a la cola
             matchQueue.push({ userId, socketId: socket.id });
@@ -343,16 +345,18 @@ io.on('connection', (socket) => {
     socket.on('press_match_like', async (data) => {
         const { roomId } = data;
         const userId = socket.userId;
-        if (!pendingMatchLikes[roomId]) pendingMatchLikes[roomId] = [];
 
-        if (!pendingMatchLikes[roomId].includes(userId)) {
-            pendingMatchLikes[roomId].push(userId);
+        if (!pendingMatchLikes[roomId]) return;
+
+        // Accedemos a la propiedad .likes del objeto
+        if (!pendingMatchLikes[roomId].likes.includes(userId)) {
+            pendingMatchLikes[roomId].likes.push(userId);
         }
 
-        if (pendingMatchLikes[roomId].length === 2) {
+        // Si ambos dieron like
+        if (pendingMatchLikes[roomId].likes.length === 2) {
             io.to(roomId).emit('match_finalized');
-            delete pendingMatchLikes[roomId];
-            console.log(`✨ MATCH PERMANENTE en sala ${roomId}`);
+            delete pendingMatchLikes[roomId]; // Match exitoso, quitamos de la lista de borrado
         }
     });
 
