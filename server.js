@@ -174,14 +174,16 @@ io.on('connection', (socket) => {
     });
 
     socket.on('join_room', (roomName) => {
-        // Antes de unirse, salimos de otras salas de match para no duplicar
-        Array.from(socket.rooms).forEach(room => {
-            if (room.startsWith('match_') && room !== roomName) {
-                socket.leave(room);
-            }
-        });
         socket.join(roomName);
-        console.log(`Socket ${socket.id} unido a sala: ${roomName}`);
+
+        // 🚀 SI ENTRA A UN MATCH: Verificar si el otro ya dio like
+        if (roomName.startsWith('match_') && pendingMatchLikes[roomName]) {
+            const currentLikes = pendingMatchLikes[roomName].likes;
+            // Si hay un like y no es el mío, es que el otro ya dio like
+            if (currentLikes.length > 0 && !currentLikes.includes(socket.userId)) {
+                socket.emit('partner_liked');
+            }
+        }
     });
 
     socket.on('send_message', async (data) => {
@@ -377,18 +379,18 @@ io.on('connection', (socket) => {
     socket.on('press_match_like', async (data) => {
         const { roomId } = data;
         const userId = socket.userId;
-
         if (!pendingMatchLikes[roomId]) return;
 
-        // Accedemos a la propiedad .likes del objeto
         if (!pendingMatchLikes[roomId].likes.includes(userId)) {
             pendingMatchLikes[roomId].likes.push(userId);
+            
+            // 🚀 AVISAR AL OTRO: Emitimos un evento al compañero
+            socket.to(roomId).emit('partner_liked'); 
         }
 
-        // Si ambos dieron like
         if (pendingMatchLikes[roomId].likes.length === 2) {
             io.to(roomId).emit('match_finalized');
-            delete pendingMatchLikes[roomId]; // Match exitoso, quitamos de la lista de borrado
+            delete pendingMatchLikes[roomId];
         }
     });
 
