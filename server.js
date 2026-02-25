@@ -310,6 +310,7 @@ io.on('connection', (socket) => {
 
             // 🚀 LA LÍNEA QUE TE FALTA (Agrégala aquí):
             pendingMatchLikes[roomId] = []; 
+            console.log(`🛸 MATCH CREADO y registrado en pendientes: ${roomId}`);
 
             socket.join(roomId);
             const partnerSocket = io.sockets.sockets.get(partner.socketId);
@@ -350,20 +351,40 @@ io.on('connection', (socket) => {
     socket.on('match_time_expired', async (data) => {
         const { roomId } = data;
         
-        // Ahora que pusimos el paso 1, esta condición será verdadera
+        // 🚩 LOG 1: Saber si el server recibe el evento
+        console.log(`\n--- 🛸 SEÑAL DE AUTODESTRUCCIÓN RECIBIDA ---`);
+        console.log(`📂 Sala a borrar: "${roomId}"`);
+        console.log(`👤 Enviado por Socket: ${socket.id} (User ID: ${socket.userId})`);
+
+        // 🚩 LOG 2: Ver qué hay en la memoria del servidor
+        const salasPendientes = Object.keys(pendingMatchLikes);
+        console.log(`📋 Salas actualmente en memoria:`, salasPendientes);
+
         if (pendingMatchLikes[roomId]) {
+            console.log(`⚠️ Sala encontrada en pendientes. Procediendo a borrar...`);
             try {
-                // 🚀 BORRAMOS USANDO LA COLUMNA room_name
+                // 🚀 EJECUCIÓN DEL BORRADO
                 const res = await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
                 
-                console.log(`✅ Autodestrucción ejecutada: ${res.rowCount} mensajes eliminados.`);
+                console.log(`✅ RESULTADO DB: Se eliminaron ${res.rowCount} mensajes de la sala ${roomId}`);
 
+                // Avisar a los clientes para que salgan del chat
                 io.to(roomId).emit('match_terminated', { reason: 'timeout' });
+                
+                // Limpiar memoria
                 delete pendingMatchLikes[roomId];
             } catch (error) {
-                console.error("❌ Error en DELETE:", error);
+                console.error("❌ ERROR AL EJECUTAR DELETE EN POSTGRES:", error);
             }
+        } else {
+            // 🚩 LOG 3: Si no entra al IF, explicar por qué
+            console.log(`❌ ERROR: La sala "${roomId}" NO está en la lista de pendientes del servidor.`);
+            console.log(`   Posibles causas: 
+            1. Ya se dio Like mutuo y la sala es permanente.
+            2. El servidor se reinició y la memoria se borró.
+            3. El nombre de la sala enviado por el cliente no coincide.`);
         }
+        console.log(`-------------------------------------------\n`);
     });
 
     // --- 3. DESCONEXIÓN ---
