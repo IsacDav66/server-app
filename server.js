@@ -244,7 +244,7 @@ io.on('connection', (socket) => {
             tempId: tempId,
             realMessage: savedMessage
         });
-        
+
         console.log(`📝 [DB-SAVE] Intentando guardar mensaje:`);
         console.log(`   - De: ${sender_id} Para: ${receiver_id}`);
         console.log(`   - En columna room_name: "${roomName}"`);
@@ -309,7 +309,12 @@ io.on('connection', (socket) => {
             const partner = matchQueue.shift();
             const roomId = `match_${Math.min(userId, partner.userId)}_${Math.max(userId, partner.userId)}`;
 
-            // 🚀 UNIR A AMBOS A LA SALA (ROOM) PARA QUE PUEDAN HABLAR
+            // 🚀 LA SOLUCIÓN: Inicializamos la sala en el objeto de pendientes inmediatamente
+            // Esto asegura que el servidor sepa que esta sala es "temporal" y debe vigilarla.
+            if (!pendingMatchLikes[roomId]) {
+                pendingMatchLikes[roomId] = []; 
+            }
+
             socket.join(roomId);
             const partnerSocket = io.sockets.sockets.get(partner.socketId);
             if (partnerSocket) partnerSocket.join(roomId);
@@ -348,37 +353,20 @@ io.on('connection', (socket) => {
 
     socket.on('match_time_expired', async (data) => {
         const { roomId } = data;
-        const userId = socket.userId || 'Desconocido';
-
-        console.log(`--- 🕒 INICIO AUTODESTRUCCIÓN ---`);
-        console.log(`📡 Evento recibido de usuario: ${userId}`);
-        console.log(`📂 RoomID recibido: "${roomId}"`);
-        console.log(`📋 Salas en espera de Like:`, Object.keys(pendingMatchLikes));
-
-        // Verificamos si la sala existe en la memoria de "pendientes"
+        
         if (pendingMatchLikes[roomId]) {
-            console.log(`⚠️ No hubo match mutuo en ${roomId}. Ejecutando DELETE...`);
-            
             try {
-                // 🚀 QUERY CON LOG DE RESULTADO
+                // 🚀 IMPORTANTE: Asegúrate de que en tu DB la columna sea room_name
                 const res = await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
                 
-                console.log(`✅ Resultado DB: Se eliminaron ${res.rowCount} mensajes.`);
-                
-                if (res.rowCount === 0) {
-                    console.log(`❓ ¿Por qué 0? Verifica si en la tabla la columna room_name es EXACTAMENTE "${roomId}"`);
-                }
+                console.log(`✅ Autodestrucción: Se eliminaron ${res.rowCount} mensajes de la sala ${roomId}`);
 
                 io.to(roomId).emit('match_terminated', { reason: 'timeout' });
                 delete pendingMatchLikes[roomId];
-
             } catch (error) {
-                console.error("❌ ERROR CRÍTICO EN DELETE:", error);
+                console.error("❌ ERROR EN DELETE:", error);
             }
-        } else {
-            console.log(`✨ La sala "${roomId}" ya no está en pendientes. El match ya es permanente o ya se borró.`);
         }
-        console.log(`--- 🏁 FIN PROCESO ---`);
     });
 
     // --- 3. DESCONEXIÓN ---
