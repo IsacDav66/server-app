@@ -52,7 +52,7 @@ module.exports = (pool, JWT_SECRET) => {
             // ==========================================================
             const query = `
                 SELECT 
-                    u.id, u.username, u.profile_pic_url, u.bio, u.cover_pic_url, u.bio_bg_url,
+                    u.id, u.username, u.profile_pic_url, u.bio, u.cover_pic_url, u.bio_bg_url, u.age, u.gender,
                     (SELECT COUNT(*) FROM postapp WHERE user_id = u.id) AS post_count,
                     (SELECT COUNT(*) FROM followersapp WHERE following_id = u.id) AS followers_count,
                     (SELECT COUNT(*) FROM followersapp WHERE follower_id = u.id) AS following_count,
