@@ -343,20 +343,23 @@ io.on('connection', (socket) => {
     });
 
     socket.on('match_time_expired', async (data) => {
-        const { roomId } = data;
+        const { roomId } = data; // Recibe "match_3_25"
+        
         if (pendingMatchLikes[roomId]) {
             try {
-                console.log(`🗑️ AUTODESTRUCCIÓN: Eliminando mensajes de la sala ${roomId}`);
-                // 🚀 Borramos usando la columna que acabamos de crear
-                await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
+                // Eliminamos todos los mensajes que tengan ese room_name exacto
+                const result = await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
+                
+                console.log(`🗑️ Autodestrucción exitosa: ${result.rowCount} mensajes borrados de la sala ${roomId}`);
+                
                 io.to(roomId).emit('match_terminated', { reason: 'timeout' });
                 delete pendingMatchLikes[roomId];
             } catch (error) {
-                console.error("Error en autodestrucción:", error);
+                console.error("❌ Error en DELETE:", error);
             }
         }
     });
-
+    
     // --- 3. DESCONEXIÓN ---
     socket.on('disconnect', () => {
         console.log(`🔌 Un usuario se ha desconectado: ${socket.id}`);
