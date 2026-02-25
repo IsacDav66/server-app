@@ -20,7 +20,8 @@ const JWT_SECRET = 'TuSuperClaveSecretaJWT9876543210'; // ¡Usa process.env.JWT_
 const server = http.createServer(app);
 
 const adminRoutes = require('./api/admin'); 
-
+const pendingMatchLikes = {};
+let matchQueue = [];
 // --- CONFIGURACIÓN DE SOCKET.IO ---
 const io = new Server(server, {
     cors: {
@@ -178,7 +179,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('send_message', async (data) => {
-    // 1. Extraemos los datos del cliente, incluyendo el pack de stickers
+     // 1. Extraemos los datos del cliente, incluyendo el pack de stickers
     const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
 
     // LOG DE ENTRADA
@@ -289,12 +290,71 @@ io.on('connection', (socket) => {
     } catch (error) {
         console.error("❌ [SERVER] Error al guardar o enviar el mensaje:", error);
     }
-});
+    }); // 🚀 AQUÍ SE CIERRA CORRECTAMENTE EL EVENTO SEND_MESSAGE
 
+    // --- 2. EVENTOS DE MATCHMAKING (SALA DE ENCUENTROS) ---
+    socket.on('start_match_search', () => {
+        const userId = socket.userId;
+        if (!userId) return;
 
+        // Limpiar si ya estaba en cola para evitar duplicados
+        matchQueue = matchQueue.filter(u => u.userId !== userId);
 
+        if (matchQueue.length > 0) {
+            // ¡HAY MATCH!
+            const partner = matchQueue.shift();
+            const roomId = `match_${Math.min(userId, partner.userId)}_${Math.max(userId, partner.userId)}`;
+
+            // 🚀 UNIR A AMBOS A LA SALA (ROOM) PARA QUE PUEDAN HABLAR
+            socket.join(roomId);
+            const partnerSocket = io.sockets.sockets.get(partner.socketId);
+            if (partnerSocket) partnerSocket.join(roomId);
+
+            // Avisar a ambos que se encontró pareja
+            io.to(socket.id).emit('match_found', { roomId, partnerId: partner.userId });
+            io.to(partner.socketId).emit('match_found', { roomId, partnerId: userId });
+            
+            console.log(`🛸 MATCH: ${userId} + ${partner.userId} en ${roomId}`);
+        } else {
+            // No hay nadie, lo ponemos en la cola
+            matchQueue.push({ userId, socketId: socket.id });
+            console.log(`⏲️ Usuario ${userId} esperando pareja...`);
+        }
+    });
+
+    socket.on('cancel_match_search', () => {
+        matchQueue = matchQueue.filter(u => u.socketId !== socket.id);
+    });
+
+    socket.on('press_match_like', async (data) => {
+        const { roomId } = data;
+        const userId = socket.userId;
+        if (!pendingMatchLikes[roomId]) pendingMatchLikes[roomId] = [];
+
+        if (!pendingMatchLikes[roomId].includes(userId)) {
+            pendingMatchLikes[roomId].push(userId);
+        }
+
+        if (pendingMatchLikes[roomId].length === 2) {
+            io.to(roomId).emit('match_finalized');
+            delete pendingMatchLikes[roomId];
+            console.log(`✨ MATCH PERMANENTE en sala ${roomId}`);
+        }
+    });
+
+    socket.on('match_time_expired', async (data) => {
+        const { roomId } = data;
+        if (pendingMatchLikes[roomId]) {
+            io.to(roomId).emit('match_terminated', { reason: 'timeout' });
+            delete pendingMatchLikes[roomId];
+            console.log(`🗑️ Tiempo agotado en sala ${roomId}`);
+        }
+    });
+
+    // --- 3. DESCONEXIÓN ---
     socket.on('disconnect', () => {
         console.log(`🔌 Un usuario se ha desconectado: ${socket.id}`);
+        matchQueue = matchQueue.filter(u => u.socketId !== socket.id);
         if (socket.userId) {
             onlineUsers.delete(socket.id);
             notifyFriendsOfStatusChange(socket.userId, false, null);
