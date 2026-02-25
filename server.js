@@ -308,19 +308,17 @@ io.on('connection', (socket) => {
             const partner = matchQueue.shift();
             const roomId = `match_${Math.min(userId, partner.userId)}_${Math.max(userId, partner.userId)}`;
 
-            // 🚀 LA LÍNEA QUE TE FALTA (Agrégala aquí):
+            // 🚀 LA SOLUCIÓN AL "SALAS EN MEMORIA: []"
+            // Registramos la sala en el objeto global para que el DELETE sepa que existe
             pendingMatchLikes[roomId] = []; 
-            console.log(`🛸 MATCH CREADO y registrado en pendientes: ${roomId}`);
+            console.log(`🛸 MATCH CREADO: Registrando en memoria "${roomId}"`);
 
             socket.join(roomId);
             const partnerSocket = io.sockets.sockets.get(partner.socketId);
             if (partnerSocket) partnerSocket.join(roomId);
 
-            // Avisar a ambos que se encontró pareja
             io.to(socket.id).emit('match_found', { roomId, partnerId: partner.userId });
             io.to(partner.socketId).emit('match_found', { roomId, partnerId: userId });
-            
-            console.log(`🛸 MATCH: ${userId} + ${partner.userId} en ${roomId}`);
         } else {
             // No hay nadie, lo ponemos en la cola
             matchQueue.push({ userId, socketId: socket.id });
