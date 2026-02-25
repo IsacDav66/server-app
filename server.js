@@ -91,29 +91,38 @@ app.set('onlineUsers', onlineUsers);
 // --- LÓGICA DE WEBSOCKETS ---
 io.on('connection', (socket) => {
     // 🚀 FUNCIÓN DE CIERRE DE MATCH (Ponla al principio del io.on)
-    const handleMatchLeave = async (userId, socketInstance) => {
-        // Buscamos en las salas pendientes si este usuario estaba en un match
+    const handleMatchLeave = async (userId) => {
+        // Recorremos todas las salas que están esperando un Match (pendientes)
         for (const roomId in pendingMatchLikes) {
-            if (roomId.includes(`_${userId}`) || roomId.includes(`match_${userId}_`)) {
-                console.log(`🛸 Match Terminado: Usuario ${userId} salió de ${roomId}`);
+            if (roomId.startsWith('match_') && roomId.includes(`_${userId}`)) {
+                
+                // 1. Identificar quién es el compañero que se quedó solo
+                const parts = roomId.replace('match_', '').split('_');
+                const partnerId = parts.find(id => id !== String(userId));
 
-                // 1. Notificar al compañero usando el servidor global (io)
-                // Usamos io.to porque el socket individual ya se está desconectando
-                io.to(roomId).emit('match_terminated', { reason: 'partner_left' });
+                console.log(`🛸 Abandono detectado: El usuario ${userId} se fue. Avisando a ${partnerId}`);
 
-                // 2. Borrar mensajes de la DB inmediatamente
+                // 2. 🚀 LA CLAVE: Emitir a la sala personal del usuario (user-ID)
+                // Esto llegará a cualquier pestaña que el compañero tenga abierta
+                io.to(`user-${partnerId}`).emit('match_terminated', { 
+                    reason: 'partner_left',
+                    roomId: roomId 
+                });
+
+                // 3. Borrar mensajes de la DB
                 try {
                     const res = await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
-                    console.log(`🗑️ DB Limpia tras abandono: ${res.rowCount} mensajes borrados.`);
+                    console.log(`🗑️ Autodestrucción por abandono: ${res.rowCount} mensajes eliminados.`);
                 } catch (err) {
-                    console.error("❌ Error borrando mensajes tras abandono:", err);
+                    console.error("Error al borrar tras abandono:", err);
                 }
 
-                // 3. Quitar de la memoria del servidor
+                // 4. Limpiar memoria del servidor
                 delete pendingMatchLikes[roomId];
             }
         }
     };
+
 
 
     console.log('🔌 Un usuario se ha conectado:', socket.id);
@@ -461,17 +470,17 @@ io.on('connection', (socket) => {
         console.log(`🔌 Un usuario se ha desconectado: ${socket.id}`);
         matchQueue = matchQueue.filter(u => u.socketId !== socket.id);
         if (socket.userId) {
-            handleMatchLeave(socket.userId, socket);
+            handleMatchLeave(socket.userId);
             onlineUsers.delete(socket.id);
             notifyFriendsOfStatusChange(socket.userId, false, null);
         }
          matchQueue = matchQueue.filter(u => u.socketId !== socket.id);
     });
     
-    // --- Actualiza el evento leave_match ---
+    // --- Actualizar el evento leave_match ---
     socket.on('leave_match', () => {
         if (socket.userId) {
-            handleMatchLeave(socket.userId, socket);
+            handleMatchLeave(socket.userId);
         }
     });
 });
