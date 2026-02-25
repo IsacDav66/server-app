@@ -305,15 +305,11 @@ io.on('connection', (socket) => {
         matchQueue = matchQueue.filter(u => u.userId !== userId);
 
         if (matchQueue.length > 0) {
-            // ¡HAY MATCH!
             const partner = matchQueue.shift();
             const roomId = `match_${Math.min(userId, partner.userId)}_${Math.max(userId, partner.userId)}`;
 
-            // 🚀 LA SOLUCIÓN: Inicializamos la sala en el objeto de pendientes inmediatamente
-            // Esto asegura que el servidor sepa que esta sala es "temporal" y debe vigilarla.
-            if (!pendingMatchLikes[roomId]) {
-                pendingMatchLikes[roomId] = []; 
-            }
+            // 🚀 LA LÍNEA QUE TE FALTA (Agrégala aquí):
+            pendingMatchLikes[roomId] = []; 
 
             socket.join(roomId);
             const partnerSocket = io.sockets.sockets.get(partner.socketId);
@@ -354,17 +350,18 @@ io.on('connection', (socket) => {
     socket.on('match_time_expired', async (data) => {
         const { roomId } = data;
         
+        // Ahora que pusimos el paso 1, esta condición será verdadera
         if (pendingMatchLikes[roomId]) {
             try {
-                // 🚀 IMPORTANTE: Asegúrate de que en tu DB la columna sea room_name
+                // 🚀 BORRAMOS USANDO LA COLUMNA room_name
                 const res = await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
                 
-                console.log(`✅ Autodestrucción: Se eliminaron ${res.rowCount} mensajes de la sala ${roomId}`);
+                console.log(`✅ Autodestrucción ejecutada: ${res.rowCount} mensajes eliminados.`);
 
                 io.to(roomId).emit('match_terminated', { reason: 'timeout' });
                 delete pendingMatchLikes[roomId];
             } catch (error) {
-                console.error("❌ ERROR EN DELETE:", error);
+                console.error("❌ Error en DELETE:", error);
             }
         }
     });
