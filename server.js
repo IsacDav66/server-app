@@ -219,7 +219,7 @@ io.on('connection', (socket) => {
             }
         }
     });
-    
+
     socket.on('send_message', async (data) => {
      // 1. Extraemos los datos del cliente, incluyendo el pack de stickers
     const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
@@ -380,7 +380,7 @@ io.on('connection', (socket) => {
             // Registrar en memoria temporal
             pendingMatchLikes[roomId] = {
                 likes: [],
-                expiresAt: Date.now() + (1 * 60 * 1000) // 1 min para pruebas
+                expiresAt: Date.now() + (7 * 60 * 1000) // 1 min para pruebas
             };
 
             socket.join(roomId);
