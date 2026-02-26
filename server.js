@@ -22,6 +22,7 @@ const server = http.createServer(app);
 const adminRoutes = require('./api/admin'); 
 const pendingMatchLikes = {};
 let matchQueue = [];
+const matchReconnectTimers = {};
 // --- CONFIGURACIÓN DE SOCKET.IO ---
 const io = new Server(server, {
     cors: {
@@ -91,34 +92,31 @@ app.set('onlineUsers', onlineUsers);
 // --- LÓGICA DE WEBSOCKETS ---
 io.on('connection', (socket) => {
     // 🚀 FUNCIÓN DE CIERRE DE MATCH (Ponla al principio del io.on)
-    const handleMatchLeave = async (userId) => {
-        for (const roomId in pendingMatchLikes) {
-            if (roomId.startsWith('match_') && roomId.includes(`_${userId}`)) {
-                
-                // 1. Identificar al compañero
-                const parts = roomId.replace('match_', '').split('_');
-                const partnerId = parts.find(id => id !== String(userId));
+    const handleMatchLeave = (userId) => {
+        // Si ya hay un temporizador corriendo para este usuario, lo limpiamos
+        if (matchReconnectTimers[userId]) clearTimeout(matchReconnectTimers[userId]);
 
-                console.log(`🛸 Abandono detectado: El usuario ${userId} se fue. Avisando a ${partnerId}`);
+        // 🚀 Esperamos 10 segundos antes de destruir el match
+        matchReconnectTimers[userId] = setTimeout(async () => {
+            for (const roomId in pendingMatchLikes) {
+                if (roomId.startsWith('match_') && roomId.includes(`_${userId}`)) {
+                    const parts = roomId.replace('match_', '').split('_');
+                    const partnerId = parts.find(id => id !== String(userId));
 
-                // 2. 🚀 NOTIFICACIÓN DOBLE (Redundancia total)
-                // Enviamos a la sala del match Y a la sala personal del usuario
-                const payload = { reason: 'partner_left', roomId: roomId };
-                
-                io.to(roomId).emit('match_terminated', payload);
-                io.to(`user-${partnerId}`).emit('match_terminated', payload);
+                    console.log(`🛸 Abandono confirmado: El usuario ${userId} no regresó. Avisando a ${partnerId}`);
 
-                // 3. Borrado de la base de datos
-                try {
-                    await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
-                } catch (err) {
-                    console.error("Error al borrar tras abandono:", err);
+                    io.to(roomId).emit('match_terminated', { reason: 'partner_left' });
+                    io.to(`user-${partnerId}`).emit('match_terminated', { reason: 'partner_left' });
+
+                    try {
+                        await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomId]);
+                    } catch (err) { console.error("Error al borrar:", err); }
+
+                    delete pendingMatchLikes[roomId];
                 }
-
-                // 4. Limpiar memoria
-                delete pendingMatchLikes[roomId];
             }
-        }
+            delete matchReconnectTimers[userId];
+        }, 10000); // 10 segundos es tiempo suficiente para cargar el chat
     };
 
 
@@ -211,17 +209,17 @@ io.on('connection', (socket) => {
 
     socket.on('join_room', (roomName) => {
         socket.join(roomName);
-
-        // 🚀 SI ENTRA A UN MATCH: Verificar si el otro ya dio like
-        if (roomName.startsWith('match_') && pendingMatchLikes[roomName]) {
-            const currentLikes = pendingMatchLikes[roomName].likes;
-            // Si hay un like y no es el mío, es que el otro ya dio like
-            if (currentLikes.length > 0 && !currentLikes.includes(socket.userId)) {
-                socket.emit('partner_liked');
+        
+        // 🚀 SI EL USUARIO ENTRA A LA SALA DE MATCH, CANCELAMOS SU BORRADO
+        if (roomName.startsWith('match_') && socket.userId) {
+            if (matchReconnectTimers[socket.userId]) {
+                console.log(`✨ Usuario ${socket.userId} volvió a tiempo. Cancelando autodestrucción.`);
+                clearTimeout(matchReconnectTimers[socket.userId]);
+                delete matchReconnectTimers[socket.userId];
             }
         }
     });
-
+    
     socket.on('send_message', async (data) => {
      // 1. Extraemos los datos del cliente, incluyendo el pack de stickers
     const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
