@@ -1,5 +1,5 @@
 {
-  "versionCode": 11,
-  "versionName": "1.1.7",
-  "notes": "Mejoras visuales en el chat "
+  "versionCode": 12,
+  "versionName": "1.1.8",
+  "notes": "Ahora se puede importar paquetes de emoji y stickers de telegram \nNueva busqueda integrada de chats"
 }
