@@ -153,7 +153,7 @@ io.on('connection', (socket) => {
         }
     };
 
-    socket.on('authenticate', (token) => {
+    socket.on('authenticate', async(token) => {
         try {
             const jwt = require('jsonwebtoken');
             const decoded = jwt.verify(token, JWT_SECRET);
@@ -163,6 +163,8 @@ io.on('connection', (socket) => {
                 const userRoom = `user-${userId}`;
                 socket.join(userRoom);
                 onlineUsers.set(socket.id, { userId: userId, currentApp: null });
+                await broadcastMatchQueue(socket); 
+                console.log(`✅ User ${userId} sincronizado con el radar.`);
                 console.log(`✅ Socket ${socket.id} autenticado como user ${userId} y unido a la sala ${userRoom}`);
                 notifyFriendsOfStatusChange(userId, true, null);
             }
