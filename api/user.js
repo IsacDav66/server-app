@@ -948,25 +948,5 @@ router.get('/:userId/played-games', (req, res, next) => protect(req, res, next, 
         }
     });
 
-    // ==========================================================
-    // === RUTA PÚBLICA: USUARIOS PARA EL GLOBO 3D ===
-    // ==========================================================
-    router.get('/globe-users', async (req, res) => {
-        try {
-            // Obtenemos 15 usuarios aleatorios que tengan foto de perfil
-            const query = `
-                SELECT username, profile_pic_url 
-                FROM usersapp 
-                WHERE profile_pic_url IS NOT NULL 
-                ORDER BY RANDOM() LIMIT 15;
-            `;
-            const result = await pool.query(query);
-            res.json({ success: true, users: result.rows });
-        } catch (error) {
-            console.error("Error obteniendo usuarios globo:", error);
-            res.status(500).json({ success: false, users: [] });
-        }
-    });
-
     return router;
 };

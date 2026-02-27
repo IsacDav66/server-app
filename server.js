@@ -338,6 +338,21 @@ io.on('connection', (socket) => {
     }
     }); // 🚀 AQUÍ SE CIERRA CORRECTAMENTE EL EVENTO SEND_MESSAGE
 
+    // --- FUNCIÓN AUXILIAR PARA NOTIFICAR LA COLA A TODOS (NUEVO) ---
+    const broadcastMatchQueue = async () => {
+        try {
+            // Obtenemos los datos de perfil (id y foto) de todos los que están en la cola
+            const queueData = await Promise.all(matchQueue.map(async (u) => {
+                const res = await pool.query('SELECT id, profile_pic_url FROM usersapp WHERE id = $1', [u.userId]);
+                return res.rows[0];
+            }));
+            // Emitimos a TODO el servidor para que los planetas 3D se actualicen
+            io.emit('match_queue_updated', queueData);
+        } catch (e) {
+            console.error("Error al emitir cola de match:", e);
+        }
+    };
+
     // --- 2. EVENTOS DE MATCHMAKING (SALA DE ENCUENTROS) ---
     socket.on('start_match_search', async () => {
         const userId = socket.userId;
@@ -350,11 +365,10 @@ io.on('connection', (socket) => {
 
         // 2. Intentar encontrar una pareja válida en la cola
         let partnerIndex = -1;
-
         for (let i = 0; i < matchQueue.length; i++) {
             const potentialPartner = matchQueue[i];
 
-            // 🚀 VERIFICACIÓN DE SEGURIDAD: ¿Ya hablaron antes?
+            // VERIFICACIÓN: ¿Ya hablaron antes?
             const historyCheck = await pool.query(`
                 SELECT 1 FROM messagesapp 
                 WHERE (sender_id = $1 AND receiver_id = $2) 
@@ -363,31 +377,25 @@ io.on('connection', (socket) => {
             `, [userId, potentialPartner.userId]);
 
             if (historyCheck.rowCount === 0) {
-                // ¡No hay historial! Es una pareja válida
                 partnerIndex = i;
                 break; 
-            } else {
-                console.log(`Keep searching: ${userId} y ${potentialPartner.userId} ya tienen un chat previo.`);
             }
         }
 
         // 3. Lógica de Match o Espera
         if (partnerIndex !== -1) {
-            // Extraemos a la pareja elegida de la cola
             const partner = matchQueue.splice(partnerIndex, 1)[0];
             const roomId = `match_${Math.min(userId, partner.userId)}_${Math.max(userId, partner.userId)}`;
 
-            // Registrar en memoria temporal
             pendingMatchLikes[roomId] = {
                 likes: [],
-                expiresAt: Date.now() + (7 * 60 * 1000) // 1 min para pruebas
+                expiresAt: Date.now() + (1 * 60 * 1000) // 1 min para pruebas
             };
 
             socket.join(roomId);
             const partnerSocket = io.sockets.sockets.get(partner.socketId);
             if (partnerSocket) partnerSocket.join(roomId);
 
-            // Notificar a ambos
             io.to(socket.id).emit('match_found', { 
                 roomId, 
                 partnerId: partner.userId, 
@@ -400,14 +408,23 @@ io.on('connection', (socket) => {
             });
 
             console.log(`🛸 MATCH SEGURO CREADO: ${roomId}`);
+            
+            // 🚀 AVISAR A TODOS: La cola cambió porque alguien salió para entrar a un chat
+            broadcastMatchQueue(); 
+
         } else {
-            // No hay nadie disponible que no conozca, lo ponemos en la cola
+            // No hay nadie disponible, entrar a la cola
             matchQueue.push({ userId, socketId: socket.id });
+            
+            // 🚀 AVISAR A TODOS: Hay una nueva foto para el planeta
+            broadcastMatchQueue();
         }
     });
 
     socket.on('cancel_match_search', () => {
         matchQueue = matchQueue.filter(u => u.socketId !== socket.id);
+        // 🚀 AVISAR A TODOS: Un usuario se quitó del radar
+        broadcastMatchQueue();
     });
 
     socket.on('press_match_like', async (data) => {
@@ -465,13 +482,28 @@ io.on('connection', (socket) => {
     // --- 3. DESCONEXIÓN ---
     socket.on('disconnect', () => {
         console.log(`🔌 Un usuario se ha desconectado: ${socket.id}`);
+
+        // 1. Verificar si el usuario estaba en la cola de búsqueda
+        const wasInQueue = matchQueue.some(u => u.socketId === socket.id);
+        
+        // 2. Filtrar la cola para eliminarlo
         matchQueue = matchQueue.filter(u => u.socketId !== socket.id);
+
+        // 3. 🚀 SI ESTABA EN LA COLA, avisamos a todos para que su foto desaparezca del planeta
+        if (wasInQueue) {
+            broadcastMatchQueue();
+        }
+
         if (socket.userId) {
+            // Manejar el periodo de gracia de 10s para chats de match activos
             handleMatchLeave(socket.userId);
+
+            // Quitar de la lista de usuarios online
             onlineUsers.delete(socket.id);
+
+            // Notificar a los amigos del cambio de estado
             notifyFriendsOfStatusChange(socket.userId, false, null);
         }
-         matchQueue = matchQueue.filter(u => u.socketId !== socket.id);
     });
     
     // --- Actualizar el evento leave_match ---
