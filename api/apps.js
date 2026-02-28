@@ -486,6 +486,133 @@ router.post('/emojis/upload', protect, uploadStickerMiddleware, async (req, res)
 
 
 
+const AdmZip = require('adm-zip'); // 🚀 Asegúrate de que esta línea esté arriba con los demás require
+
+// --- NUEVA RUTA: Subida masiva vía ZIP (Para Android y Packs de Telegram) ---
+router.post('/emojis/upload-pack', protect, uploadStickerMiddleware, async (req, res) => {
+    if (!req.file || !req.file.path.toLowerCase().endsWith('.zip')) {
+        return res.status(400).json({ success: false, message: 'Se requiere un archivo .zip' });
+    }
+
+    const tempZipPath = req.file.path;
+    const targetDir = path.join(__dirname, '../uploads/emojis/');
+    const packName = req.file.originalname.replace(/\.[^/.]+$/, ""); // Nombre del archivo sin .zip
+    
+    try {
+        const zip = new AdmZip(tempZipPath);
+        const zipEntries = zip.getEntries();
+        const emojiGroups = {};
+
+        // 1. Agrupar archivos del ZIP por carpetas (Cada subcarpeta es un emoji)
+        zipEntries.forEach(entry => {
+            if (entry.isDirectory) return;
+            
+            const pathParts = entry.entryName.split('/');
+            // Telegram export: PackName/Subfolder(001)/archivo.ext
+            if (pathParts.length >= 2) {
+                const subfolder = pathParts[pathParts.length - 2];
+                if (!emojiGroups[subfolder]) emojiGroups[subfolder] = [];
+                emojiGroups[subfolder].push(entry);
+            }
+        });
+
+        // 2. Definir Prioridad
+        const priority = { 
+            '.lottie': 1, 
+            '.json': 2, 
+            '.webm': 3, 
+            '.mp4': 4, 
+            '.webp': 5, 
+            '.png': 6, 
+            '.jpg': 7, 
+            '.jpeg': 7 
+        };
+
+        const winners = [];
+        for (const folder in emojiGroups) {
+            let bestEntry = null;
+            let bestRank = 999;
+
+            emojiGroups[folder].forEach(entry => {
+                const ext = path.extname(entry.name).toLowerCase();
+                const rank = priority[ext] || 1000;
+                if (rank < bestRank) {
+                    bestRank = rank;
+                    bestEntry = entry;
+                }
+            });
+            if (bestEntry) winners.push(bestEntry);
+        }
+
+        // 3. Procesar y Guardar los ganadores
+        const finalUploadedFilenames = [];
+
+        for (const entry of winners) {
+            const ext = path.extname(entry.name).toLowerCase();
+            const isLottieOrJson = ext === '.lottie' || ext === '.json';
+            
+            // Nombre único para evitar colisiones
+            const uniqueId = `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+            const finalFilename = `emoji-${uniqueId}${isLottieOrJson ? ext : '.webp'}`;
+            const finalPath = path.join(targetDir, finalFilename);
+
+            const buffer = entry.getData();
+
+            if (isLottieOrJson) {
+                // Guardar JSON/Lottie directo
+                fs.writeFileSync(finalPath, buffer);
+            } else {
+                // Si es imagen o video, lo pasamos por Sharp para estandarizar a WebP 128px
+                // Nota: Para simplificar la subida masiva, procesamos solo imágenes aquí. 
+                // Los videos en un ZIP se guardarán tal cual o podrías añadir FFmpeg aquí.
+                try {
+                    await sharp(buffer)
+                        .resize(128, 128, { fit: 'cover' })
+                        .webp({ quality: 75 })
+                        .toFile(finalPath);
+                } catch (e) {
+                    // Si falla Sharp (ej. es un video), lo guardamos directo como fallback
+                    fs.writeFileSync(finalPath, buffer);
+                }
+            }
+
+            // --- 4. DEDUPLICACIÓN Y REGISTRO EN BD ---
+            const fileHash = await getHash(finalPath);
+            const existingMedia = await pool.query('SELECT file_path FROM media_library WHERE hash = $1', [fileHash]);
+
+            if (existingMedia.rows.length > 0) {
+                // Si ya existe por Hash, borramos el que acabamos de extraer y usamos el viejo
+                fs.unlinkSync(finalPath);
+                finalUploadedFilenames.push(path.basename(existingMedia.rows[0].file_path));
+            } else {
+                const relativeUrl = `/uploads/emojis/${finalFilename}`;
+                const mimeType = isLottieOrJson ? (ext === '.json' ? 'application/json' : 'application/octet-stream') : 'image/webp';
+                
+                await pool.query('INSERT INTO media_library (hash, file_path, mime_type) VALUES ($1, $2, $3)', 
+                    [fileHash, relativeUrl, mimeType]);
+                
+                finalUploadedFilenames.push(finalFilename);
+            }
+        }
+
+        // 5. Limpieza del ZIP temporal
+        fs.unlinkSync(tempZipPath);
+
+        console.log(`📦 Pack ZIP "${packName}" procesado. ${finalUploadedFilenames.length} emojis importados.`);
+
+        res.status(200).json({ 
+            success: true, 
+            filenames: finalUploadedFilenames, 
+            packName: packName 
+        });
+
+    } catch (err) {
+        console.error("❌ Error procesando pack ZIP:", err);
+        if (fs.existsSync(tempZipPath)) fs.unlinkSync(tempZipPath);
+        res.status(500).json({ success: false, message: 'Error al procesar el archivo comprimido.' });
+    }
+});
+
 
     return router;
 };

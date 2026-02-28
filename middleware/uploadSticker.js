@@ -29,8 +29,10 @@ const fileFilter = (req, file, cb) => {
         file.mimetype.startsWith('image/') || 
         file.mimetype.startsWith('video/') || 
         file.mimetype === 'application/json' ||
+        file.mimetype === 'application/zip' || // 🚀 ACEPTAR ZIP
         fileName.endsWith('.json') || 
-        fileName.endsWith('.lottie') // 🚀 ESTA ES LA LÍNEA QUE FALTA
+        fileName.endsWith('.lottie')|| // 🚀 ESTA ES LA LÍNEA QUE FALTA
+        fileName.endsWith('.zip') // 🚀 ACEPTAR extensión ZIP
     ) {
         console.log('[Multer LOG - fileFilter] El archivo fue ACEPTADO.');
         cb(null, true);
