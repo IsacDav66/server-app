@@ -614,5 +614,99 @@ router.post('/emojis/upload-pack', protect, uploadStickerMiddleware, async (req,
 });
 
 
+// --- NUEVA RUTA: Subida masiva de Stickers vía ZIP ---
+router.post('/stickers/upload-pack', protect, uploadStickerMiddleware, async (req, res) => {
+    if (!req.file || !req.file.path.toLowerCase().endsWith('.zip')) {
+        return res.status(400).json({ success: false, message: 'Se requiere un archivo .zip' });
+    }
+
+    const tempZipPath = req.file.path;
+    const targetDir = path.join(__dirname, '../uploads/stickers_temp/');
+    const packName = req.file.originalname.replace(/\.[^/.]+$/, "");
+    
+    try {
+        const zip = new AdmZip(tempZipPath);
+        const zipEntries = zip.getEntries();
+        const stickerGroups = {};
+
+        // 1. Agrupar archivos del ZIP por carpetas
+        zipEntries.forEach(entry => {
+            if (entry.isDirectory) return;
+            const pathParts = entry.entryName.split('/');
+            if (pathParts.length >= 2) {
+                const subfolder = pathParts[pathParts.length - 2];
+                if (!stickerGroups[subfolder]) stickerGroups[subfolder] = [];
+                stickerGroups[subfolder].push(entry);
+            }
+        });
+
+        // 2. Prioridad de Stickers: WebM (Video) > WebP (Animado/Estatico) > Otros
+        const priority = { '.webm': 1, '.webp': 2, '.gif': 3, '.png': 4, '.jpg': 5, '.jpeg': 5, '.mp4': 6 };
+
+        const winners = [];
+        for (const folder in stickerGroups) {
+            let bestEntry = null;
+            let bestRank = 999;
+            stickerGroups[folder].forEach(entry => {
+                const ext = path.extname(entry.name).toLowerCase();
+                const rank = priority[ext] || 1000;
+                if (rank < bestRank) { bestRank = rank; bestEntry = entry; }
+            });
+            if (bestEntry) winners.push(bestEntry);
+        }
+
+        // 3. Procesar y Guardar
+        const finalUploadedUrls = [];
+
+        for (const entry of winners) {
+            const ext = path.extname(entry.name).toLowerCase();
+            const isVideo = ext === '.webm' || ext === '.mp4';
+            const uniqueId = `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+            const finalFilename = `sticker-${uniqueId}${isVideo ? ext : '.webp'}`;
+            const finalPath = path.join(targetDir, finalFilename);
+
+            const buffer = entry.getData();
+
+            if (isVideo) {
+                fs.writeFileSync(finalPath, buffer);
+            } else {
+                try {
+                    // Stickers a 512px (Calidad superior a emojis)
+                    await sharp(buffer, { animated: true })
+                        .resize(512, 512, { fit: 'cover' })
+                        .webp({ quality: 75 })
+                        .toFile(finalPath);
+                } catch (e) {
+                    fs.writeFileSync(finalPath, buffer);
+                }
+            }
+
+            // 4. Registro y Deduplicación por Hash
+            const fileHash = await getHash(finalPath);
+            const existingMedia = await pool.query('SELECT file_path FROM media_library WHERE hash = $1', [fileHash]);
+
+            if (existingMedia.rows.length > 0) {
+                fs.unlinkSync(finalPath);
+                finalUploadedUrls.push(existingMedia.rows[0].file_path);
+            } else {
+                const relativeUrl = `/uploads/stickers_temp/${finalFilename}`;
+                const mimeType = isVideo ? `video/${ext.slice(1)}` : 'image/webp';
+                await pool.query('INSERT INTO media_library (hash, file_path, mime_type) VALUES ($1, $2, $3)', 
+                    [fileHash, relativeUrl, mimeType]);
+                finalUploadedUrls.push(relativeUrl);
+            }
+        }
+
+        fs.unlinkSync(tempZipPath);
+        res.status(200).json({ success: true, urls: finalUploadedUrls, packName });
+
+    } catch (err) {
+        console.error("❌ Error procesando ZIP de stickers:", err);
+        if (fs.existsSync(tempZipPath)) fs.unlinkSync(tempZipPath);
+        res.status(500).json({ success: false, message: 'Error al procesar el pack.' });
+    }
+});
+
+
     return router;
 };
