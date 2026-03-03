@@ -29,7 +29,8 @@ const io = new Server(server, {
         origin: "*",
         methods: ["GET", "POST"]
     },
-    path: "/app/socket.io/"
+    path: "/app/socket.io/",
+    maxHttpBufferSize: 1e8
 });
 app.set('socketio', io);
 
@@ -339,6 +340,23 @@ io.on('connection', (socket) => {
         console.error("❌ [SERVER] Error al guardar o enviar el mensaje:", error);
     }
     }); // 🚀 AQUÍ SE CIERRA CORRECTAMENTE EL EVENTO SEND_MESSAGE
+
+    // ==========================================================
+    // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
+    // ==========================================================
+    socket.on('send_media_relay', (data) => {
+        // data contiene { roomName, file, type, sender_id }
+        
+        // El servidor no toca el archivo, solo lo retransmite como un puente
+        socket.to(data.roomName).emit('receive_media_relay', {
+            file: data.file,      // El buffer binario del archivo
+            type: data.type,      // 'IMAGE' o 'VIDEO'
+            sender_id: data.sender_id
+        });
+
+        console.log(`📡 [RELAY] ${data.type} retransmitido en sala ${data.roomName} (Sin guardado)`);
+    });
+    // ==========================================================
 
     // --- FUNCIÓN AUXILIAR PARA NOTIFICAR LA COLA A TODOS (NUEVO) ---
     const broadcastMatchQueue = async () => {
