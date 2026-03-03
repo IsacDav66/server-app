@@ -359,32 +359,43 @@ io.on('connection', (socket) => {
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
     socket.on('send_media_relay', async (data) => {
-    const { roomName, file, type, sender_id, receiver_id, mediaId, lqPreview } = data;
-    const contentToSave = `[MEDIA_${type}:${mediaId}|${lqPreview}|${totalSize}]`;
-
-    try {
-        // 1. Guardar en DB
-        const result = await pool.query(
-            `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name) 
-             VALUES ($1, $2, $3, $4) RETURNING *`,
-            [sender_id, receiver_id, contentToSave, roomName]
-        );
+        // 🚀 LA CORRECCIÓN: Añadimos 'totalSize' aquí
+        const { roomName, file, type, sender_id, receiver_id, mediaId, lqPreview, totalSize, tempId } = data;
         
-        const savedMessage = result.rows[0];
+        // 1. El contenido ahora incluye: Tipo, ID, Miniatura y Tamaño
+        const contentToSave = `[MEDIA_${type}:${mediaId}|${lqPreview}|${totalSize}]`;
 
-        // 2. Retransmitir al receptor
-        socket.to(roomName).emit('receive_media_relay', {
-            file, type, sender_id, mediaId, lqPreview
-        });
+        try {
+            // 2. Guardamos en Postgres para que aparezca en el historial
+            const result = await pool.query(
+                `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name) 
+                 VALUES ($1, $2, $3, $4) RETURNING *`,
+                [sender_id, receiver_id, contentToSave, roomName]
+            );
+            
+            const savedMessage = result.rows[0];
 
-        // 🚀 3. NUEVO: Confirmar al EMISOR para quitar el reloj de arena
-        socket.emit('media_confirmed', {
-            tempId: data.tempId, // El ID temporal que envió el emisor
-            realMessage: savedMessage
-        });
+            // 3. Retransmitimos al destinatario
+            socket.to(roomName).emit('receive_media_relay', {
+                file: file,
+                type: type,
+                sender_id: sender_id,
+                mediaId: mediaId,
+                lqPreview: lqPreview,
+                totalSize: totalSize // También se lo pasamos al receptor
+            });
 
-    } catch (err) { console.error(err); }
-});
+            // 4. Confirmamos al emisor para quitar el "reloj de arena"
+            socket.emit('media_confirmed', {
+                tempId: tempId,
+                realMessage: savedMessage
+            });
+
+            console.log(`📡 [RELAY] ${type} (${totalSize} bytes) retransmitido con ID ${mediaId}`);
+        } catch (err) {
+            console.error("❌ Error al procesar relay en server:", err);
+        }
+    });
     // ==========================================================
 
     // --- FUNCIÓN AUXILIAR PARA NOTIFICAR LA COLA A TODOS (NUEVO) ---
