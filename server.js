@@ -349,9 +349,9 @@ io.on('connection', (socket) => {
             file: data.file,
             type: data.type,
             sender_id: data.sender_id,
-            msgId: data.msgId // 🚀 AÑADE ESTA LÍNEA: Sin esto el receptor falla
+            mediaId: data.mediaId // 🚀 CAMBIA msgId por mediaId
         });
-        console.log(`📡 [RELAY] ${data.type} retransmitido con ID ${data.msgId}`);
+        console.log(`📡 [RELAY] ${data.type} retransmitido con ID ${data.mediaId}`);
     });
     // ==========================================================
 
