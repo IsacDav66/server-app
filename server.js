@@ -360,7 +360,7 @@ io.on('connection', (socket) => {
     // ==========================================================
     socket.on('send_media_relay', async (data) => {
     const { roomName, file, type, sender_id, receiver_id, mediaId, lqPreview } = data;
-    const contentToSave = `[MEDIA_${type}:${mediaId}|${lqPreview}]`;
+    const contentToSave = `[MEDIA_${type}:${mediaId}|${lqPreview}|${totalSize}]`;
 
     try {
         // 1. Guardar en DB
