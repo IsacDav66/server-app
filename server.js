@@ -344,14 +344,32 @@ io.on('connection', (socket) => {
     // ==========================================================
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
-    socket.on('send_media_relay', (data) => {
-        socket.to(data.roomName).emit('receive_media_relay', {
-            file: data.file,
-            type: data.type,
-            sender_id: data.sender_id,
-            mediaId: data.mediaId // 🚀 CAMBIA msgId por mediaId
-        });
-        console.log(`📡 [RELAY] ${data.type} retransmitido con ID ${data.mediaId}`);
+    socket.on('send_media_relay', async (data) => {
+        const { roomName, file, type, sender_id, receiver_id, mediaId } = data;
+        
+        // 1. Creamos el contenido que se guardará en Postgres (la referencia al ID local)
+        const contentToSave = `[MEDIA_${type}:${mediaId}]`;
+
+        try {
+            // 2. Guardamos en la base de datos
+            await pool.query(
+                `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name) 
+                VALUES ($1, $2, $3, $4)`,
+                [sender_id, receiver_id, contentToSave, roomName]
+            );
+
+            // 3. Retransmitimos el archivo real al destinatario
+            socket.to(roomName).emit('receive_media_relay', {
+                file: file,
+                type: type,
+                sender_id: sender_id,
+                mediaId: mediaId
+            });
+
+            console.log(`📡 [RELAY & SAVE] ${type} guardado y retransmitido: ${mediaId}`);
+        } catch (err) {
+            console.error("❌ Error al guardar relay en DB:", err);
+        }
     });
     // ==========================================================
 
