@@ -341,6 +341,20 @@ io.on('connection', (socket) => {
     }
     }); // 🚀 AQUÍ SE CIERRA CORRECTAMENTE EL EVENTO SEND_MESSAGE
 
+    // Evento para solicitar a un usuario que vuelva a enviar un archivo binario
+    socket.on('request_media_relay', (data) => {
+        const { mediaId, targetUserId, requesterId, roomName } = data;
+        
+        // Enviamos la petición directamente al "dueño" del archivo (targetUserId)
+        // Usamos la sala personal 'user-ID' que ya tienes implementada
+        io.to(`user-${targetUserId}`).emit('media_request_incoming', {
+            mediaId,
+            requesterId,
+            roomName
+        });
+        console.log(`🔍 [Petición] Usuario ${requesterId} solicita media ${mediaId} a ${targetUserId}`);
+    });
+
     // ==========================================================
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
