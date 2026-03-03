@@ -345,16 +345,13 @@ io.on('connection', (socket) => {
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
     socket.on('send_media_relay', (data) => {
-        // data contiene { roomName, file, type, sender_id }
-        
-        // El servidor no toca el archivo, solo lo retransmite como un puente
         socket.to(data.roomName).emit('receive_media_relay', {
-            file: data.file,      // El buffer binario del archivo
-            type: data.type,      // 'IMAGE' o 'VIDEO'
-            sender_id: data.sender_id
+            file: data.file,
+            type: data.type,
+            sender_id: data.sender_id,
+            msgId: data.msgId // 🚀 AÑADE ESTA LÍNEA: Sin esto el receptor falla
         });
-
-        console.log(`📡 [RELAY] ${data.type} retransmitido en sala ${data.roomName} (Sin guardado)`);
+        console.log(`📡 [RELAY] ${data.type} retransmitido con ID ${data.msgId}`);
     });
     // ==========================================================
 
