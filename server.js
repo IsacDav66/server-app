@@ -359,37 +359,38 @@ io.on('connection', (socket) => {
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
     socket.on('send_media_relay', async (data) => {
-        const { roomName, file, type, sender_id, receiver_id, mediaId, lqPreview, totalSize, tempId, isNew } = data;
+        const { roomName, sender_id, receiver_id, items, isNew, isGrid, tempId } = data;
         
-        const contentToSave = `[MEDIA_${type}:${mediaId}|${lqPreview}|${totalSize}]`;
+        // Si es grid, creamos el contenido especial para Postgres
+        let contentToSave = "";
+        if (isGrid) {
+            contentToSave = `[MEDIA_GRID:${items.map(m => `${m.mediaId},${m.type},${m.lqPreview},${m.totalSize}`).join(';')}]`;
+        } else {
+            const m = items[0];
+            contentToSave = `[MEDIA_${m.type}:${m.mediaId}|${m.lqPreview}|${m.totalSize}]`;
+        }
 
         try {
-            // 🚀 LA CLAVE: Solo hacemos el INSERT si 'isNew' es verdadero
             if (isNew) {
                 const result = await pool.query(
                     `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name) 
                     VALUES ($1, $2, $3, $4) RETURNING *`,
                     [sender_id, receiver_id, contentToSave, roomName]
                 );
-                
-                const savedMessage = result.rows[0];
-
-                // Confirmamos al emisor original
-                socket.emit('media_confirmed', {
-                    tempId: tempId,
-                    realMessage: savedMessage
-                });
+                socket.emit('media_confirmed', { tempId, realMessage: result.rows[0] });
             }
 
-            // Retransmitimos SIEMPRE (sea nuevo o redescarga)
-            socket.to(roomName).emit('receive_media_relay', {
-                file, type, sender_id, mediaId, lqPreview, totalSize
+            // Retransmitir items al receptor
+            items.forEach(item => {
+                socket.to(roomName).emit('receive_media_relay', {
+                    ...item,
+                    sender_id,
+                    isGrid: isGrid,
+                    totalCount: items.length,
+                    fullGridContent: contentToSave // Para que el receptor reconstruya el mensaje
+                });
             });
-
-            console.log(`📡 [RELAY] ${type} procesado. ¿Fue guardado?: ${isNew ? 'SÍ' : 'NO (Redescarga)'}`);
-        } catch (err) {
-            console.error("❌ Error en relay:", err);
-        }
+        } catch (e) { console.error(e); }
     });
     // ==========================================================
 
