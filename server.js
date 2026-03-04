@@ -359,14 +359,25 @@ io.on('connection', (socket) => {
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
     socket.on('send_media_relay', async (data) => {
-        // 🚀 LA CORRECCIÓN: Añadimos 'totalSize' aquí
-        const { roomName, file, type, sender_id, receiver_id, mediaId, lqPreview, totalSize, tempId } = data;
+        // 1. Extraemos los datos con valores por defecto para evitar NaN/undefined
+        const { 
+            roomName, 
+            file, 
+            type, 
+            sender_id, 
+            receiver_id, 
+            mediaId, 
+            lqPreview = "", 
+            totalSize = 0, 
+            tempId 
+        } = data;
         
-        // 1. El contenido ahora incluye: Tipo, ID, Miniatura y Tamaño
+        // 2. Formateamos el contenido para la base de datos (Postgres)
+        // Guardar el tamaño asegura que al recargar el chat no salga "NaN"
         const contentToSave = `[MEDIA_${type}:${mediaId}|${lqPreview}|${totalSize}]`;
 
         try {
-            // 2. Guardamos en Postgres para que aparezca en el historial
+            // 3. Guardamos en Postgres para que persista en el historial
             const result = await pool.query(
                 `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name) 
                  VALUES ($1, $2, $3, $4) RETURNING *`,
@@ -375,25 +386,26 @@ io.on('connection', (socket) => {
             
             const savedMessage = result.rows[0];
 
-            // 3. Retransmitimos al destinatario
+            // 4. RETRANSMITIMOS AL RECEPTOR (excepto al que envía)
             socket.to(roomName).emit('receive_media_relay', {
                 file: file,
                 type: type,
                 sender_id: sender_id,
                 mediaId: mediaId,
                 lqPreview: lqPreview,
-                totalSize: totalSize // También se lo pasamos al receptor
+                totalSize: totalSize
             });
 
-            // 4. Confirmamos al emisor para quitar el "reloj de arena"
+            // 5. CONFIRMAMOS AL EMISOR (para que su App sepa que ya se guardó)
+            // Esto es lo que quita el "reloj de arena" y actualiza su ID temporal
             socket.emit('media_confirmed', {
                 tempId: tempId,
                 realMessage: savedMessage
             });
 
-            console.log(`📡 [RELAY] ${type} (${totalSize} bytes) retransmitido con ID ${mediaId}`);
+            console.log(`📡 [RELAY] ${type} (${totalSize} bytes) procesado para sala ${roomName}`);
         } catch (err) {
-            console.error("❌ Error al procesar relay en server:", err);
+            console.error("❌ Error en send_media_relay:", err);
         }
     });
     // ==========================================================
