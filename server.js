@@ -359,53 +359,36 @@ io.on('connection', (socket) => {
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
     socket.on('send_media_relay', async (data) => {
-        // 1. Extraemos los datos con valores por defecto para evitar NaN/undefined
-        const { 
-            roomName, 
-            file, 
-            type, 
-            sender_id, 
-            receiver_id, 
-            mediaId, 
-            lqPreview = "", 
-            totalSize = 0, 
-            tempId 
-        } = data;
+        const { roomName, file, type, sender_id, receiver_id, mediaId, lqPreview, totalSize, tempId, isNew } = data;
         
-        // 2. Formateamos el contenido para la base de datos (Postgres)
-        // Guardar el tamaño asegura que al recargar el chat no salga "NaN"
         const contentToSave = `[MEDIA_${type}:${mediaId}|${lqPreview}|${totalSize}]`;
 
         try {
-            // 3. Guardamos en Postgres para que persista en el historial
-            const result = await pool.query(
-                `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name) 
-                 VALUES ($1, $2, $3, $4) RETURNING *`,
-                [sender_id, receiver_id, contentToSave, roomName]
-            );
-            
-            const savedMessage = result.rows[0];
+            // 🚀 LA CLAVE: Solo hacemos el INSERT si 'isNew' es verdadero
+            if (isNew) {
+                const result = await pool.query(
+                    `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name) 
+                    VALUES ($1, $2, $3, $4) RETURNING *`,
+                    [sender_id, receiver_id, contentToSave, roomName]
+                );
+                
+                const savedMessage = result.rows[0];
 
-            // 4. RETRANSMITIMOS AL RECEPTOR (excepto al que envía)
+                // Confirmamos al emisor original
+                socket.emit('media_confirmed', {
+                    tempId: tempId,
+                    realMessage: savedMessage
+                });
+            }
+
+            // Retransmitimos SIEMPRE (sea nuevo o redescarga)
             socket.to(roomName).emit('receive_media_relay', {
-                file: file,
-                type: type,
-                sender_id: sender_id,
-                mediaId: mediaId,
-                lqPreview: lqPreview,
-                totalSize: totalSize
+                file, type, sender_id, mediaId, lqPreview, totalSize
             });
 
-            // 5. CONFIRMAMOS AL EMISOR (para que su App sepa que ya se guardó)
-            // Esto es lo que quita el "reloj de arena" y actualiza su ID temporal
-            socket.emit('media_confirmed', {
-                tempId: tempId,
-                realMessage: savedMessage
-            });
-
-            console.log(`📡 [RELAY] ${type} (${totalSize} bytes) procesado para sala ${roomName}`);
+            console.log(`📡 [RELAY] ${type} procesado. ¿Fue guardado?: ${isNew ? 'SÍ' : 'NO (Redescarga)'}`);
         } catch (err) {
-            console.error("❌ Error en send_media_relay:", err);
+            console.error("❌ Error en relay:", err);
         }
     });
     // ==========================================================
