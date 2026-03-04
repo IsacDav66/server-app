@@ -364,7 +364,8 @@ io.on('connection', (socket) => {
         // Si es grid, creamos el contenido especial para Postgres
         let contentToSave = "";
         if (isGrid) {
-            contentToSave = `[MEDIA_GRID:${items.map(m => `${m.mediaId},${m.type},${m.lqPreview},${m.totalSize}`).join(';')}]`;
+            // 🚀 USAMOS | PARA DATOS Y ; PARA ITEMS
+            contentToSave = `[MEDIA_GRID:${items.map(m => `${m.mediaId}|${m.type}|${m.lqPreview}|${m.totalSize}`).join(';')}]`;
         } else {
             const m = items[0];
             contentToSave = `[MEDIA_${m.type}:${m.mediaId}|${m.lqPreview}|${m.totalSize}]`;
