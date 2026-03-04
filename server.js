@@ -358,40 +358,56 @@ io.on('connection', (socket) => {
     // ==========================================================
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
-    socket.on('send_media_relay', async (data) => {
+socket.on('send_media_relay', async (data) => {
         const { roomName, sender_id, receiver_id, items, isNew, isGrid, tempId } = data;
         
-        // Si es grid, creamos el contenido especial para Postgres
+        // 🚀 USAMOS DELIMITADORES ÚNICOS PARA EVITAR ERRORES CON BASE64
+        // _P_ = Delimitador de Propiedad (id, tipo, miniatura, tamaño)
+        // _I_ = Delimitador de Ítem (separa una foto de otra)
         let contentToSave = "";
+        
         if (isGrid) {
-            // 🚀 USAMOS | PARA DATOS Y ; PARA ITEMS
-            contentToSave = `[MEDIA_GRID:${items.map(m => `${m.mediaId}|${m.type}|${m.lqPreview}|${m.totalSize}`).join(';')}]`;
+            contentToSave = `[MEDIA_GRID:${items.map(m => 
+                `${m.mediaId}_P_${m.type}_P_${m.lqPreview}_P_${m.totalSize}`
+            ).join('_I_')}]`;
         } else {
             const m = items[0];
-            contentToSave = `[MEDIA_${m.type}:${m.mediaId}|${m.lqPreview}|${m.totalSize}]`;
+            // Usamos _P_ también en individual para que el Regex del frontend sea uniforme
+            contentToSave = `[MEDIA_${m.type}:${m.mediaId}_P_${m.lqPreview}_P_${m.totalSize}]`;
         }
 
         try {
             if (isNew) {
+                // 1. Guardar en la base de datos (Postgres)
                 const result = await pool.query(
                     `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name) 
                     VALUES ($1, $2, $3, $4) RETURNING *`,
                     [sender_id, receiver_id, contentToSave, roomName]
                 );
-                socket.emit('media_confirmed', { tempId, realMessage: result.rows[0] });
+                
+                // 2. Confirmar al emisor para quitar el "reloj de arena"
+                socket.emit('media_confirmed', { 
+                    tempId, 
+                    realMessage: result.rows[0] 
+                });
             }
 
-            // Retransmitir items al receptor
+            // 3. Retransmitir los archivos al receptor uno por uno
             items.forEach(item => {
                 socket.to(roomName).emit('receive_media_relay', {
                     ...item,
                     sender_id,
                     isGrid: isGrid,
                     totalCount: items.length,
-                    fullGridContent: contentToSave // Para que el receptor reconstruya el mensaje
+                    fullGridContent: contentToSave // 🚀 Enviamos el contenido completo para evitar duplicados
                 });
             });
-        } catch (e) { console.error(e); }
+
+            console.log(`📡 [RELAY] ${isGrid ? 'GRID' : 'SINGLE'} enviado. Total: ${items.length} items.`);
+
+        } catch (e) { 
+            console.error("❌ Error en send_media_relay:", e); 
+        }
     });
     // ==========================================================
 
