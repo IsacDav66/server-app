@@ -392,6 +392,18 @@ socket.on('send_media_relay', async (data) => {
                 });
             }
 
+            // 🚀 LA CORRECCIÓN: Si es redescarga (isNew: false), enviamos DIRECTO al usuario
+            if (!isNew && receiver_id) {
+                io.to(`user-${receiver_id}`).emit('receive_media_relay', {
+                    file, type, sender_id, mediaId, lqPreview, totalSize
+                });
+            } else {
+                // Si es nuevo, enviamos a la sala como siempre
+                socket.to(roomName).emit('receive_media_relay', {
+                    file, type, sender_id, mediaId, lqPreview, totalSize
+                });
+            }
+
             // 3. Retransmitir los archivos al receptor uno por uno
             items.forEach(item => {
                 socket.to(roomName).emit('receive_media_relay', {
