@@ -359,66 +359,67 @@ io.on('connection', (socket) => {
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
 socket.on('send_media_relay', async (data) => {
-        const { roomName, sender_id, receiver_id, items, isNew, isGrid, tempId } = data;
+        // 1. Extraer datos básicos
+        const { roomName, sender_id, receiver_id, isNew, isGrid, tempId } = data;
         
-        // 🚀 USAMOS DELIMITADORES ÚNICOS PARA EVITAR ERRORES CON BASE64
-        // _P_ = Delimitador de Propiedad (id, tipo, miniatura, tamaño)
-        // _I_ = Delimitador de Ítem (separa una foto de otra)
+        // 🚀 PROTECCIÓN: Si no viene el array 'items', lo construimos a partir de los datos sueltos
+        let items = data.items;
+        if (!items && data.file) {
+            items = [{
+                file: data.file,
+                type: data.type,
+                mediaId: data.mediaId,
+                lqPreview: data.lqPreview,
+                totalSize: data.totalSize
+            }];
+        }
+
+        // Si después de la protección sigue sin haber nada, cancelamos para no crashear
+        if (!items || items.length === 0) return;
+
+        // 2. Formatear contenido para la base de datos
         let contentToSave = "";
-        
-        if (isGrid) {
+        if (isGrid || items.length > 1) {
             contentToSave = `[MEDIA_GRID:${items.map(m => 
-                `${m.mediaId}_P_${m.type}_P_${m.lqPreview}_P_${m.totalSize}`
+                `${m.mediaId}_P_${m.type}_P_${m.lqPreview || ''}_P_${m.totalSize || 0}`
             ).join('_I_')}]`;
         } else {
-            const m = items[0];
-            // Usamos _P_ también en individual para que el Regex del frontend sea uniforme
-            contentToSave = `[MEDIA_${m.type}:${m.mediaId}_P_${m.lqPreview}_P_${m.totalSize}]`;
+            const m = items[0]; // 🛠️ Ahora 'items' siempre existe, no más error 'reading 0'
+            contentToSave = `[MEDIA_${m.type}:${m.mediaId}_P_${m.lqPreview || ''}_P_${m.totalSize || 0}]`;
         }
 
         try {
             if (isNew) {
-                // 1. Guardar en la base de datos (Postgres)
                 const result = await pool.query(
                     `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name) 
-                    VALUES ($1, $2, $3, $4) RETURNING *`,
+                     VALUES ($1, $2, $3, $4) RETURNING *`,
                     [sender_id, receiver_id, contentToSave, roomName]
                 );
-                
-                // 2. Confirmar al emisor para quitar el "reloj de arena"
-                socket.emit('media_confirmed', { 
-                    tempId, 
-                    realMessage: result.rows[0] 
-                });
+                socket.emit('media_confirmed', { tempId, realMessage: result.rows[0] });
             }
 
-            // 🚀 LA CORRECCIÓN: Si es redescarga (isNew: false), enviamos DIRECTO al usuario
+            // 3. Retransmitir (Si es redescarga, directo al solicitante; si es nuevo, a la sala)
             if (!isNew && receiver_id) {
-                io.to(`user-${receiver_id}`).emit('receive_media_relay', {
-                    file, type, sender_id, mediaId, lqPreview, totalSize
+                // Caso redescarga: solo al que pidió
+                items.forEach(item => {
+                    io.to(`user-${receiver_id}`).emit('receive_media_relay', {
+                        ...item,
+                        sender_id,
+                        isGrid: isGrid || false
+                    });
                 });
             } else {
-                // Si es nuevo, enviamos a la sala como siempre
-                socket.to(roomName).emit('receive_media_relay', {
-                    file, type, sender_id, mediaId, lqPreview, totalSize
+                // Caso nuevo: a todos en el chat
+                items.forEach(item => {
+                    socket.to(roomName).emit('receive_media_relay', {
+                        ...item,
+                        sender_id,
+                        isGrid: isGrid || false
+                    });
                 });
             }
-
-            // 3. Retransmitir los archivos al receptor uno por uno
-            items.forEach(item => {
-                socket.to(roomName).emit('receive_media_relay', {
-                    ...item,
-                    sender_id,
-                    isGrid: isGrid,
-                    totalCount: items.length,
-                    fullGridContent: contentToSave // 🚀 Enviamos el contenido completo para evitar duplicados
-                });
-            });
-
-            console.log(`📡 [RELAY] ${isGrid ? 'GRID' : 'SINGLE'} enviado. Total: ${items.length} items.`);
-
-        } catch (e) { 
-            console.error("❌ Error en send_media_relay:", e); 
+        } catch (e) {
+            console.error("❌ Error en relay:", e);
         }
     });
     // ==========================================================
