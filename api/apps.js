@@ -12,10 +12,6 @@ const crypto = require('crypto');
 const sharp = require('sharp'); // 👈 Importamos Sharp para las imágenes
 const processImage = require('../middleware/processImage'); // Importar el middleware
 
-const metadata = await sharp(inputFile.path).metadata();
-const width = metadata.width;
-const height = metadata.height;
-
 // Función para generar la huella digital (MD5)
 function getHash(filePath) {
     return new Promise((resolve, reject) => {
@@ -447,9 +443,7 @@ router.post('/emojis/upload', protect, uploadStickerMiddleware, async (req, res)
             return res.status(200).json({ 
                 success: true, 
                 url: existingFilePath, 
-                filename: path.basename(existingFilePath),
-                width: width,   // 🚀 Enviamos ancho
-                height: height  // 🚀 Enviamos alto
+                filename: path.basename(existingFilePath) 
             });
         }
 
