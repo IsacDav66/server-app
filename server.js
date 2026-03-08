@@ -214,29 +214,35 @@ io.on('connection', (socket) => {
         const { roomName, senderId, receiverId } = data;
 
         try {
-            // 1. Marcar como leídos
+            // 1. Actualizar base de datos
             await pool.query(
                 'UPDATE messagesapp SET is_read = TRUE WHERE room_name = $1 AND receiver_id = $2 AND sender_id = $3',
                 [roomName, receiverId, senderId]
             );
 
-            // 2. Obtener el ID del último mensaje enviado por 'senderId' en esta sala
+            // 2. ¿Cuál es el último mensaje que el emisor (senderId) envió a esta sala?
+            // Ese es el mensaje donde debe "aterrizar" la cara del lector (receiverId).
             const lastMsgResult = await pool.query(
-                'SELECT message_id FROM messagesapp WHERE room_name = $1 AND sender_id = $3 ORDER BY message_id DESC LIMIT 1',
-                [roomName, null, senderId]
+                'SELECT message_id FROM messagesapp WHERE room_name = $1 AND sender_id = $2 ORDER BY created_at DESC LIMIT 1',
+                [roomName, senderId]
             );
 
             if (lastMsgResult.rows.length > 0) {
-                // 3. Obtener el avatar de quien leyó (receiverId)
-                const userResult = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [receiverId]);
+                const lastId = lastMsgResult.rows[0].message_id;
                 
-                // 4. Avisar al emisor dónde debe poner la cara del amigo
+                // 3. Obtener el avatar de quien leyó el mensaje
+                const userRes = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [receiverId]);
+                const avatar = userRes.rows[0].profile_pic_url;
+
+                // 4. Emitir a la sala para que el emisor vea la cara saltar
                 io.to(roomName).emit('messages_read_update', {
-                    lastReadId: lastMsgResult.rows[0].message_id,
-                    readerAvatar: userResult.rows[0].profile_pic_url
+                    lastReadId: lastId,
+                    readerAvatar: avatar
                 });
             }
-        } catch (err) { console.error(err); }
+        } catch (err) {
+            console.error("Error en mark_read:", err);
+        }
     });
 
     socket.on('join_room', (roomName) => {
