@@ -210,6 +210,26 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('mark_read', async (data) => {
+        const { roomName, senderId, receiverId } = data;
+
+        try {
+            // 1. Marcar en la base de datos
+            await pool.query(
+                'UPDATE messagesapp SET is_read = TRUE WHERE room_name = $1 AND receiver_id = $2 AND sender_id = $3',
+                [roomName, receiverId, senderId] // receiverId es quien "ve" el mensaje
+            );
+
+            // 2. Avisar al que envió el mensaje que ya lo vieron
+            socket.to(roomName).emit('messages_read_update', {
+                roomName,
+                readBy: receiverId
+            });
+        } catch (err) {
+            console.error("Error al marcar como leído:", err);
+        }
+    });
+
     socket.on('join_room', (roomName) => {
         socket.join(roomName);
         
