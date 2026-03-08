@@ -214,20 +214,29 @@ io.on('connection', (socket) => {
         const { roomName, senderId, receiverId } = data;
 
         try {
-            // 1. Marcar en la base de datos
+            // 1. Marcar como leídos
             await pool.query(
                 'UPDATE messagesapp SET is_read = TRUE WHERE room_name = $1 AND receiver_id = $2 AND sender_id = $3',
-                [roomName, receiverId, senderId] // receiverId es quien "ve" el mensaje
+                [roomName, receiverId, senderId]
             );
 
-            // 2. Avisar al que envió el mensaje que ya lo vieron
-            socket.to(roomName).emit('messages_read_update', {
-                roomName,
-                readBy: receiverId
-            });
-        } catch (err) {
-            console.error("Error al marcar como leído:", err);
-        }
+            // 2. Obtener el ID del último mensaje enviado por 'senderId' en esta sala
+            const lastMsgResult = await pool.query(
+                'SELECT message_id FROM messagesapp WHERE room_name = $1 AND sender_id = $3 ORDER BY message_id DESC LIMIT 1',
+                [roomName, null, senderId]
+            );
+
+            if (lastMsgResult.rows.length > 0) {
+                // 3. Obtener el avatar de quien leyó (receiverId)
+                const userResult = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [receiverId]);
+                
+                // 4. Avisar al emisor dónde debe poner la cara del amigo
+                io.to(roomName).emit('messages_read_update', {
+                    lastReadId: lastMsgResult.rows[0].message_id,
+                    readerAvatar: userResult.rows[0].profile_pic_url
+                });
+            }
+        } catch (err) { console.error(err); }
     });
 
     socket.on('join_room', (roomName) => {
