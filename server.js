@@ -211,27 +211,36 @@ io.on('connection', (socket) => {
     });
 
     socket.on('mark_message_read', async (data) => {
-        const { messageId, roomName, readerId, senderId } = data;
+    const { messageId, roomName, readerId, senderId } = data;
 
-        try {
-            // 1. Marcamos el mensaje específico como leído
-            await pool.query(
-                'UPDATE messagesapp SET is_read = TRUE WHERE message_id = $1 AND receiver_id = $2',
-                [messageId, readerId]
-            );
+    try {
+        // 1. Marcar mensaje como leído
+        await pool.query(
+            'UPDATE messagesapp SET is_read = TRUE WHERE message_id = $1',
+            [messageId]
+        );
 
-            // 2. Obtenemos el avatar de quien leyó
-            const userRes = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [readerId]);
-            const avatar = userRes.rows[0].profile_pic_url;
+        // 2. 🚀 PARA EL EFECTO TELEGRAM/INSTAGRAM:
+        // Buscamos el mensaje más reciente (ID más alto) que el emisor (senderId) 
+        // ha enviado y que el lector (readerId) ya marcó como leído.
+        const lastReadRes = await pool.query(`
+            SELECT MAX(message_id) as last_id 
+            FROM messagesapp 
+            WHERE room_name = $1 AND sender_id = $2 AND is_read = TRUE
+        `, [roomName, senderId]);
 
-            // 3. Emitimos solo este mensaje como "Visto"
-            // User A verá su foto bajar uno por uno
-            io.to(roomName).emit('messages_read_update', {
-                lastReadId: messageId,
-                readerAvatar: avatar
-            });
-        } catch (err) { console.error(err); }
-    });
+        const lastReadId = lastReadRes.rows[0].last_id;
+
+        // 3. Obtener avatar del lector
+        const userRes = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [readerId]);
+
+        // 4. Emitir: "La foto de tu amigo debe estar en el mensaje X"
+        io.to(roomName).emit('messages_read_update', {
+            lastReadId: lastReadId,
+            readerAvatar: userRes.rows[0].profile_pic_url
+        });
+    } catch (err) { console.error(err); }
+});
 
     socket.on('join_room', (roomName) => {
         socket.join(roomName);
