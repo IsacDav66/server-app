@@ -209,6 +209,11 @@ io.on('connection', (socket) => {
             notifyFriendsOfStatusChange(socket.userId, true, finalAppData);
         }
     });
+    socket.on('typing_status', (data) => {
+        const { roomName, userId, isTyping } = data;
+        // Enviamos a todos en la sala excepto al que está escribiendo
+        socket.to(roomName).emit('user_typing_update', { userId, isTyping });
+    });
 
     socket.on('mark_message_read', async (data) => {
     const { messageId, roomName, readerId, senderId } = data;
