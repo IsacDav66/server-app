@@ -214,32 +214,50 @@ io.on('connection', (socket) => {
     const { messageId, roomName, readerId, senderId } = data;
 
     try {
-        // 1. Marcar mensaje como leído
+        // Inicializar 'lastEmittedReadId' en el socket si aún no existe
+        if (socket.lastEmittedReadId === undefined) {
+            socket.lastEmittedReadId = 0;
+        }
+
+        // 1. Marcar el mensaje específico como leído
         await pool.query(
-            'UPDATE messagesapp SET is_read = TRUE WHERE message_id = $1',
-            [messageId]
+            'UPDATE messagesapp SET is_read = TRUE WHERE message_id = $1 AND receiver_id = $2',
+            [messageId, readerId]
         );
 
-        // 2. 🚀 PARA EL EFECTO TELEGRAM/INSTAGRAM:
-        // Buscamos el mensaje más reciente (ID más alto) que el emisor (senderId) 
-        // ha enviado y que el lector (readerId) ya marcó como leído.
+        // 2. BUSCAR EL "FRONTERA" DE LECTURA ACTUAL:
+        // Obtenemos el message_id más alto (más reciente) que el emisor (senderId)
+        // ha enviado y que el lector (readerId) ha marcado como leído.
         const lastReadRes = await pool.query(`
             SELECT MAX(message_id) as last_id 
             FROM messagesapp 
             WHERE room_name = $1 AND sender_id = $2 AND is_read = TRUE
         `, [roomName, senderId]);
 
-        const lastReadId = lastReadRes.rows[0].last_id;
+        const currentTopReadId = lastReadRes.rows[0].last_id;
 
-        // 3. Obtener avatar del lector
-        const userRes = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [readerId]);
+        // 🚀 LÓGICA DE FILTRO DE ACTUALIZACIÓN:
+        // Solo emitimos si el 'currentTopReadId' es más alto que el último que ya emitimos.
+        if (currentTopReadId && parseInt(currentTopReadId) > parseInt(socket.lastEmittedReadId)) {
+            // 3. Obtener avatar del que está leyendo
+            const userRes = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [readerId]);
+            const avatar = userRes.rows[0].profile_pic_url;
 
-        // 4. Emitir: "La foto de tu amigo debe estar en el mensaje X"
-        io.to(roomName).emit('messages_read_update', {
-            lastReadId: lastReadId,
-            readerAvatar: userRes.rows[0].profile_pic_url
-        });
-    } catch (err) { console.error(err); }
+            // 4. Actualizar el registro en el socket del servidor
+            socket.lastEmittedReadId = currentTopReadId;
+
+            // 5. Emitir el "salto" de la foto al emisor original
+            io.to(roomName).emit('messages_read_update', {
+                lastReadId: currentTopReadId,
+                readerAvatar: avatar
+            });
+            console.log(`📡 [SERVER] Emitting messages_read_update for ${roomName} - Last Read ID: ${currentTopReadId}`);
+        } else {
+            console.log(`ℹ️ [SERVER] Not emitting messages_read_update (Read ID not higher or not found). Last emitted: ${socket.lastEmittedReadId}, Current: ${currentTopReadId}`);
+        }
+    } catch (err) {
+        console.error("❌ Error en mark_message_read:", err);
+    }
 });
 
     socket.on('join_room', (roomName) => {
