@@ -214,31 +214,34 @@ io.on('connection', (socket) => {
     const { messageId, roomName, readerId, senderId } = data;
 
     try {
-        // 1. Marcar mensaje como leído
+        // 1. Marcar ESTE mensaje específico como leído
         await pool.query(
-            'UPDATE messagesapp SET is_read = TRUE WHERE message_id = $1',
-            [messageId]
+            'UPDATE messagesapp SET is_read = TRUE WHERE message_id = $1 AND receiver_id = $2',
+            [messageId, readerId]
         );
 
-        // 2. 🚀 PARA EL EFECTO TELEGRAM/INSTAGRAM:
-        // Buscamos el mensaje más reciente (ID más alto) que el emisor (senderId) 
-        // ha enviado y que el lector (readerId) ya marcó como leído.
-        const lastReadRes = await pool.query(`
+        // 2. 🚀 CÁLCULO PRECISO: Buscamos el ID más alto de los mensajes 
+        // que 'senderId' envió y que 'readerId' ya marcó como leídos (is_read = TRUE)
+        const result = await pool.query(`
             SELECT MAX(message_id) as last_id 
             FROM messagesapp 
             WHERE room_name = $1 AND sender_id = $2 AND is_read = TRUE
         `, [roomName, senderId]);
 
-        const lastReadId = lastReadRes.rows[0].last_id;
+        const currentTopReadId = result.rows[0].last_id;
 
-        // 3. Obtener avatar del lector
+        // 3. Solo emitimos si hay un avance real para evitar parpadeos innecesarios
+        if (currentTopReadId && (!socket.lastReadId || currentTopReadId > socket.lastReadId)) {
+            socket.lastReadId = currentTopReadId;
+
             const userRes = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [readerId]);
+            const avatar = userRes.rows[0].profile_pic_url;
 
-        // 4. Emitir: "La foto de tu amigo debe estar en el mensaje X"
             io.to(roomName).emit('messages_read_update', {
-            lastReadId: lastReadId,
-            readerAvatar: userRes.rows[0].profile_pic_url
+                lastReadId: currentTopReadId,
+                readerAvatar: avatar
             });
+        }
     } catch (err) { console.error(err); }
 });
 
