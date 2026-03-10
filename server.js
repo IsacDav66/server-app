@@ -153,8 +153,47 @@ io.on('connection', (socket) => {
             console.error("❌ Error en notifyFriendsOfStatusChange:", error);
         }
     };
+    /**
+     * Busca a los amigos del usuario que acaba de conectar y le envía su estado actual.
+     */
+    const syncActiveFriendsToSocket = async (socket, myUserId) => {
+        try {
+            // Consultamos la lista de amigos mutuos
+            const query = `
+                SELECT f1.follower_id as friend_id
+                FROM followersapp f1
+                INNER JOIN followersapp f2 ON f1.follower_id = f2.following_id AND f1.following_id = f2.follower_id
+                WHERE f1.following_id = $1;
+            `;
+            const result = await pool.query(query, [myUserId]);
+            const friends = result.rows;
 
-    socket.on('authenticate', async(token) => {
+            if (friends.length === 0) return;
+
+            // Obtenemos todos los datos de usuarios online actualmente
+            const currentOnlineEntries = Array.from(onlineUsers.values());
+
+            friends.forEach(friend => {
+                // Buscamos si este amigo específico está en el mapa de onlineUsers
+                const activeData = currentOnlineEntries.find(u => u.userId === friend.friend_id);
+
+                if (activeData) {
+                    // Si el amigo está online, le enviamos su estado actual al Usuario A
+                    socket.emit('friend_status_update', {
+                        userId: friend.friend_id,
+                        isOnline: true,
+                        currentApp: activeData.currentApp ? activeData.currentApp.name : null,
+                        currentAppIcon: activeData.currentApp ? activeData.currentApp.icon : null,
+                        currentAppPackage: activeData.currentApp ? activeData.currentApp.package : null
+                    });
+                }
+            });
+        } catch (error) {
+            console.error("❌ Error en syncActiveFriendsToSocket:", error);
+        }
+    };
+
+    socket.on('authenticate', async (token) => {
         try {
             const jwt = require('jsonwebtoken');
             const decoded = jwt.verify(token, JWT_SECRET);
@@ -163,11 +202,20 @@ io.on('connection', (socket) => {
                 socket.userId = userId;
                 const userRoom = `user-${userId}`;
                 socket.join(userRoom);
+
+                // 1. Registrar al usuario como online
                 onlineUsers.set(socket.id, { userId: userId, currentApp: null });
-                await broadcastMatchQueue(socket); 
-                console.log(`✅ User ${userId} sincronizado con el radar.`);
-                console.log(`✅ Socket ${socket.id} autenticado como user ${userId} y unido a la sala ${userRoom}`);
+
+                console.log(`✅ Socket ${socket.id} autenticado como user ${userId}`);
+
+                // 2. Avisar a los demás que yo entré (esto ya lo tenías)
                 notifyFriendsOfStatusChange(userId, true, null);
+
+                // 3. 🚀 NUEVO: Sincronización inicial para el usuario que acaba de entrar
+                // Vamos a decirle al Usuario A quiénes de sus amigos ya están conectados.
+                await syncActiveFriendsToSocket(socket, userId);
+
+                await broadcastMatchQueue(socket); 
             }
         } catch (error) {
             console.log(`❌ Fallo de autenticación para socket ${socket.id}`);
