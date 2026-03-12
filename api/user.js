@@ -449,17 +449,13 @@ router.get('/:userId/following', (req, res, next) => softProtect(req, res, next,
 // ==========================================================
     // === ¡NUEVA RUTA PARA OBTENER LA LISTA DE AMIGOS MUTUOS! ===
     // ==========================================================
-    router.get('/friends', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    router.get('/friends', protect, async (req, res) => {
         const loggedInUserId = req.user.userId;
 
         try {
-            // Esta consulta utiliza un INNER JOIN con la misma tabla para encontrar seguimientos recíprocos.
             const query = `
                 SELECT
-                    u.id,
-                    u.username,
-                    u.profile_pic_url,
-                    u.last_seen_at
+                    u.id, u.username, u.profile_pic_url, u.last_seen_at
                 FROM followersapp f1
                 INNER JOIN followersapp f2 ON f1.follower_id = f2.following_id AND f1.following_id = f2.follower_id
                 JOIN usersapp u ON f1.following_id = u.id
@@ -468,17 +464,25 @@ router.get('/:userId/following', (req, res, next) => softProtect(req, res, next,
             
             const result = await pool.query(query, [loggedInUserId]);
             
-            // Ahora, enriquecemos el resultado con el estado en línea
-            const onlineUsers = req.app.get('onlineUsers'); // Obtenemos el mapa de usuarios en línea
-            const friendsWithStatus = result.rows.map(friend => ({
-                ...friend,
-                is_online: Array.from(onlineUsers.values()).includes(friend.id)
-            }));
+            // 🚀 LA CLAVE: Cruzar con los usuarios conectados en tiempo real
+            const onlineUsers = req.app.get('onlineUsers'); // Mapa de sockets conectados
+            const onlineUsersArray = Array.from(onlineUsers.values());
 
-            res.status(200).json({ success: true, friends: friendsWithStatus });
+            const friendsWithLiveStatus = result.rows.map(friend => {
+                // Buscamos si el ID del amigo está en nuestro mapa de conexiones activas
+                const liveData = onlineUsersArray.find(u => u.userId === friend.id);
+
+                return {
+                    ...friend,
+                    is_online: !!liveData, // true si se encontró en el mapa
+                    current_app: liveData?.currentApp?.name || null,
+                    current_app_icon: liveData?.currentApp?.icon || null
+                };
+            });
+
+            res.status(200).json({ success: true, friends: friendsWithLiveStatus });
         } catch (error) {
-            console.error('Error al obtener la lista de amigos:', error.stack);
-            res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+            res.status(500).json({ success: false, message: 'Error interno.' });
         }
     });
 
