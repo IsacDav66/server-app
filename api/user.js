@@ -449,7 +449,8 @@ router.get('/:userId/following', (req, res, next) => softProtect(req, res, next,
 // ==========================================================
     // === ¡NUEVA RUTA PARA OBTENER LA LISTA DE AMIGOS MUTUOS! ===
     // ==========================================================
-    router.get('/friends', protect, async (req, res) => {
+    router.get('/friends', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        // Ahora req.user ya no será undefined
         const loggedInUserId = req.user.userId;
 
         try {
@@ -464,8 +465,8 @@ router.get('/:userId/following', (req, res, next) => softProtect(req, res, next,
             
             const result = await pool.query(query, [loggedInUserId]);
             
-            // 🚀 LA CLAVE: Cruzar con los usuarios conectados en tiempo real
-            const onlineUsers = req.app.get('onlineUsers'); // Mapa de sockets conectados
+            // Obtener el mapa de usuarios conectados desde la app
+            const onlineUsers = req.app.get('onlineUsers'); 
             const onlineUsersArray = Array.from(onlineUsers.values());
 
             const friendsWithLiveStatus = result.rows.map(friend => {
@@ -474,7 +475,7 @@ router.get('/:userId/following', (req, res, next) => softProtect(req, res, next,
 
                 return {
                     ...friend,
-                    is_online: !!liveData, // true si se encontró en el mapa
+                    is_online: !!liveData,
                     current_app: liveData?.currentApp?.name || null,
                     current_app_icon: liveData?.currentApp?.icon || null
                 };
@@ -482,7 +483,8 @@ router.get('/:userId/following', (req, res, next) => softProtect(req, res, next,
 
             res.status(200).json({ success: true, friends: friendsWithLiveStatus });
         } catch (error) {
-            res.status(500).json({ success: false, message: 'Error interno.' });
+            console.error("Error en GET /friends:", error);
+            res.status(500).json({ success: false, message: 'Error interno al obtener amigos.' });
         }
     });
 
