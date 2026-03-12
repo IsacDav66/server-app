@@ -458,7 +458,8 @@ router.get('/:userId/following', (req, res, next) => softProtect(req, res, next,
                 SELECT
                     u.id,
                     u.username,
-                    u.profile_pic_url
+                    u.profile_pic_url,
+                    u.last_seen_at
                 FROM followersapp f1
                 INNER JOIN followersapp f2 ON f1.follower_id = f2.following_id AND f1.following_id = f2.follower_id
                 JOIN usersapp u ON f1.following_id = u.id
