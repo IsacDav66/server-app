@@ -142,7 +142,8 @@ io.on('connection', (socket) => {
                 isOnline: isOnline,
                 currentApp: currentAppInfo ? currentAppInfo.name : null,
                 currentAppIcon: currentAppInfo ? currentAppInfo.icon : null,
-                currentAppPackage: currentAppInfo ? currentAppInfo.package : null
+                currentAppPackage: currentAppInfo ? currentAppInfo.package : null,
+                lastSeenAt: currentAppInfo ? currentAppInfo.lastSeenAt : null
             };
 
             friends.forEach(friend => {
@@ -654,29 +655,30 @@ socket.on('send_media_relay', async (data) => {
 
 
     // --- 3. DESCONEXIÓN ---
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => { // 🚀 Añadimos async
         console.log(`🔌 Un usuario se ha desconectado: ${socket.id}`);
 
-        // 1. Verificar si el usuario estaba en la cola de búsqueda
         const wasInQueue = matchQueue.some(u => u.socketId === socket.id);
-        
-        // 2. Filtrar la cola para eliminarlo
         matchQueue = matchQueue.filter(u => u.socketId !== socket.id);
 
-        // 3. 🚀 SI ESTABA EN LA COLA, avisamos a todos para que su foto desaparezca del planeta
         if (wasInQueue) {
             broadcastMatchQueue();
         }
 
         if (socket.userId) {
-            // Manejar el periodo de gracia de 10s para chats de match activos
-            handleMatchLeave(socket.userId);
+            // 🚀 1. GUARDAR ÚLTIMA CONEXIÓN EN LA DB
+            const lastSeen = new Date();
+            try {
+                await pool.query('UPDATE usersapp SET last_seen_at = $1 WHERE id = $2', [lastSeen, socket.userId]);
+            } catch (err) {
+                console.error("Error al actualizar last_seen_at:", err);
+            }
 
-            // Quitar de la lista de usuarios online
+            handleMatchLeave(socket.userId);
             onlineUsers.delete(socket.id);
 
-            // Notificar a los amigos del cambio de estado
-            notifyFriendsOfStatusChange(socket.userId, false, null);
+            // 🚀 2. NOTIFICAR A AMIGOS (Pasamos el lastSeenAt en el tercer parámetro)
+            notifyFriendsOfStatusChange(socket.userId, false, { lastSeenAt: lastSeen });
         }
     });
     
