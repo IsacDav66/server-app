@@ -293,7 +293,14 @@ io.on('connection', (socket) => {
 
             io.to(roomName).emit('messages_read_update', {
                 lastReadId: currentTopReadId,
-                readerAvatar: avatar
+                readerAvatar: avatar,
+                readerId: readerId
+            });
+            // 🚀 LO QUE FALTA: Emitir a la sala personal del que envió los mensajes (senderId)
+            io.to(`user-${senderId}`).emit('messages_read_update', {
+                lastReadId: currentTopReadId,
+                readerAvatar: avatar,
+                readerId: readerId
             });
         }
     } catch (err) { console.error(err); }
@@ -372,6 +379,7 @@ io.on('connection', (socket) => {
         // 3. Emitimos el mensaje (ahora enriquecido) al otro usuario en la sala
         socket.to(roomName).emit('receive_message', savedMessage);
         console.log(`📩 [SERVER] Mensaje emitido a sala: ${roomName}. ¿Lleva pack?: ${!!savedMessage.sticker_pack}`);
+        io.to(`user-${receiver_id}`).emit('receive_message', savedMessage);
 
         // 4. Enviamos la confirmación al emisor original para quitar el reloj de carga
         socket.emit('message_confirmed', {
@@ -481,10 +489,16 @@ socket.on('send_media_relay', async (data) => {
             if (isNew) {
                 const result = await pool.query(
                     `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name) 
-                     VALUES ($1, $2, $3, $4) RETURNING *`,
+                    VALUES ($1, $2, $3, $4) RETURNING *`,
                     [sender_id, receiver_id, contentToSave, roomName]
                 );
-                socket.emit('media_confirmed', { tempId, realMessage: result.rows[0] });
+                const savedMsg = result.rows[0];
+
+                socket.emit('media_confirmed', { tempId, realMessage: savedMsg });
+
+                // 🚀 LO QUE FALTA: Avisar al receptor para que su lista de chats se actualice
+                // con el snippet de la imagen/video que acaba de recibir.
+                io.to(`user-${receiver_id}`).emit('receive_message', savedMsg);
             }
 
             // 3. Retransmitir (Si es redescarga, directo al solicitante; si es nuevo, a la sala)
