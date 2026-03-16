@@ -259,9 +259,16 @@ io.on('connection', (socket) => {
         }
     });
     socket.on('typing_status', (data) => {
-        const { roomName, userId, isTyping } = data;
-        // Enviamos a todos en la sala excepto al que está escribiendo
+        // 🚀 Extraemos receiverId para avisar a su sala personal
+        const { roomName, userId, receiverId, isTyping } = data;
+        
+        // A. Avisar a la sala del chat (para el que tiene el chat abierto)
         socket.to(roomName).emit('user_typing_update', { userId, isTyping });
+
+        // 🚀 B. Avisar a la sala personal del receptor (para su lista de chats)
+        if (receiverId) {
+            io.to(`user-${receiverId}`).emit('user_typing_update', { userId, isTyping });
+        }
     });
 
     socket.on('mark_message_read', async (data) => {
