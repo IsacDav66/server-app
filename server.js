@@ -463,75 +463,88 @@ io.on('connection', (socket) => {
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
 socket.on('send_media_relay', async (data) => {
-        // 1. Extraer datos básicos
-        const { roomName, sender_id, receiver_id, isNew, isGrid, tempId } = data;
-        
-        // 🚀 PROTECCIÓN: Si no viene el array 'items', lo construimos a partir de los datos sueltos
-        let items = data.items;
-        if (!items && data.file) {
-            items = [{
-                file: data.file,
-                type: data.type,
-                mediaId: data.mediaId,
-                lqPreview: data.lqPreview,
-                totalSize: data.totalSize
-            }];
-        }
+    // 1. Extraer datos (🚀 añadimos parent_message_id)
+    const { roomName, sender_id, receiver_id, isNew, isGrid, tempId, parent_message_id } = data;
+    
+    let items = data.items;
+    if (!items && data.file) {
+        items = [{
+            file: data.file,
+            type: data.type,
+            mediaId: data.mediaId,
+            lqPreview: data.lqPreview,
+            totalSize: data.totalSize
+        }];
+    }
 
-        // Si después de la protección sigue sin haber nada, cancelamos para no crashear
-        if (!items || items.length === 0) return;
+    if (!items || items.length === 0) return;
 
-        // 2. Formatear contenido para la base de datos
-        let contentToSave = "";
-        if (isGrid || items.length > 1) {
-            contentToSave = `[MEDIA_GRID:${items.map(m => 
-                `${m.mediaId}_P_${m.type}_P_${m.lqPreview || ''}_P_${m.totalSize || 0}`
-            ).join('_I_')}]`;
-        } else {
-            const m = items[0]; // 🛠️ Ahora 'items' siempre existe, no más error 'reading 0'
-            contentToSave = `[MEDIA_${m.type}:${m.mediaId}_P_${m.lqPreview || ''}_P_${m.totalSize || 0}]`;
-        }
+    // 2. Formatear contenido para la base de datos
+    let contentToSave = "";
+    if (isGrid || items.length > 1) {
+        contentToSave = `[MEDIA_GRID:${items.map(m => 
+            `${m.mediaId}_P_${m.type}_P_${m.lqPreview || ''}_P_${m.totalSize || 0}`
+        ).join('_I_')}]`;
+    } else {
+        const m = items[0];
+        contentToSave = `[MEDIA_${m.type}:${m.mediaId}_P_${m.lqPreview || ''}_P_${m.totalSize || 0}]`;
+    }
 
-        try {
-            if (isNew) {
-                const result = await pool.query(
-                    `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name) 
-                    VALUES ($1, $2, $3, $4) RETURNING *`,
-                    [sender_id, receiver_id, contentToSave, roomName]
+    try {
+        if (isNew) {
+            // 🚀 INSERT CORREGIDO: Ahora incluimos parent_message_id
+            const result = await pool.query(
+                `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name, parent_message_id) 
+                VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+                [sender_id, receiver_id, contentToSave, roomName, parent_message_id || null]
+            );
+            
+            // Obtenemos el mensaje guardado (que ahora tiene el parent_id)
+            let savedMsg = result.rows[0];
+
+            // 🚀 MUY IMPORTANTE: Antes de emitir, necesitamos el contenido del padre 
+            // para que el receptor vea la respuesta en tiempo real sin recargar.
+            if (savedMsg.parent_message_id) {
+                const parentData = await pool.query(
+                    `SELECT m.content, u.username 
+                     FROM messagesapp m JOIN usersapp u ON m.sender_id = u.id 
+                     WHERE m.message_id = $1`, 
+                    [savedMsg.parent_message_id]
                 );
-                const savedMsg = result.rows[0];
-
-                socket.emit('media_confirmed', { tempId, realMessage: savedMsg });
-
-                // 🚀 LO QUE FALTA: Avisar al receptor para que su lista de chats se actualice
-                // con el snippet de la imagen/video que acaba de recibir.
-                io.to(`user-${receiver_id}`).emit('receive_message', savedMsg);
+                if (parentData.rows.length > 0) {
+                    savedMsg.parent_content = parentData.rows[0].content;
+                    savedMsg.parent_username = parentData.rows[0].username;
+                }
             }
 
-            // 3. Retransmitir (Si es redescarga, directo al solicitante; si es nuevo, a la sala)
-            if (!isNew && receiver_id) {
-                // Caso redescarga: solo al que pidió
-                items.forEach(item => {
-                    io.to(`user-${receiver_id}`).emit('receive_media_relay', {
-                        ...item,
-                        sender_id,
-                        isGrid: isGrid || false
-                    });
-                });
-            } else {
-                // Caso nuevo: a todos en el chat
-                items.forEach(item => {
-                    socket.to(roomName).emit('receive_media_relay', {
-                        ...item,
-                        sender_id,
-                        isGrid: isGrid || false
-                    });
-                });
-            }
-        } catch (e) {
-            console.error("❌ Error en relay:", e);
+            socket.emit('media_confirmed', { tempId, realMessage: savedMsg });
+
+            // Avisar al receptor para que su lista de chats se actualice
+            io.to(`user-${receiver_id}`).emit('receive_message', savedMsg);
         }
-    });
+
+        // 3. Retransmitir binario (esto se queda igual)
+        if (!isNew && receiver_id) {
+            items.forEach(item => {
+                io.to(`user-${receiver_id}`).emit('receive_media_relay', {
+                    ...item,
+                    sender_id,
+                    isGrid: isGrid || false
+                });
+            });
+        } else {
+            items.forEach(item => {
+                socket.to(roomName).emit('receive_media_relay', {
+                    ...item,
+                    sender_id,
+                    isGrid: isGrid || false
+                });
+            });
+        }
+    } catch (e) {
+        console.error("❌ Error en relay:", e);
+    }
+});
     // ==========================================================
 
     // --- FUNCIÓN AUXILIAR PARA NOTIFICAR LA COLA A TODOS (NUEVO) ---
