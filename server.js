@@ -487,7 +487,9 @@ socket.on('send_media_relay', async (data) => {
         ).join('_I_')}]`;
     } else {
         const m = items[0];
-        contentToSave = `[MEDIA_${m.type}:${m.mediaId}_P_${m.lqPreview || ''}_P_${m.totalSize || 0}]`;
+        // 🚀 SI ES AUDIO, usamos el campo duration en el primer slot de parámetros
+        const param1 = (m.type === 'AUDIO') ? (m.duration || '') : (m.lqPreview || '');
+        contentToSave = `[MEDIA_${m.type}:${m.mediaId}_P_${param1}_P_${m.totalSize || 0}]`;
     }
 
     try {
