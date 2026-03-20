@@ -26,7 +26,8 @@ module.exports = (pool, JWT_SECRET, io) => {
                         ) as rn
                     FROM messagesapp m
                     WHERE (m.sender_id = $1 OR m.receiver_id = $1)
-                    -- 🚀 SOLUCIÓN: Permitimos NULLs y mensajes que no empiecen por match_
+                    -- 🚀 RESCATE DE CHATS ANTIGUOS: 
+                    -- Filtramos match_ pero permitimos NULL (chats viejos) y otros nombres de sala
                     AND (m.room_name IS NULL OR m.room_name NOT LIKE 'match_%')
                 )
                 SELECT
@@ -34,7 +35,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                     rm.content AS last_message_content,
                     rm.created_at AS last_message_at,
                     rm.sender_id AS last_message_sender_id,
-                    rm.is_read AS last_message_read,
+                    rm.is_read AS last_message_read, -- 🚀 Mantiene el fix del Visto real
                     u.id AS user_id,
                     u.username,
                     u.profile_pic_url,
@@ -43,7 +44,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                         WHERE receiver_id = $1 
                         AND sender_id = u.id 
                         AND is_read = FALSE
-                        -- 🚀 Aplicamos el mismo filtro al contador de no leídos
+                        -- Aplicamos el mismo rescate al contador de no leídos
                         AND (room_name IS NULL OR room_name NOT LIKE 'match_%')
                     ) AS unread_count
                 FROM RankedMessages rm
