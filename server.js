@@ -135,7 +135,7 @@ io.on('connection', (socket) => {
             `;
             const result = await pool.query(query, [userId]);
             const friends = result.rows;
-            if (friends.length === 0) return;
+            // No salimos aquí si no hay amigos, porque necesitamos notificar a las salas de Match
 
             const payload = { 
                 userId: userId, 
@@ -146,10 +146,30 @@ io.on('connection', (socket) => {
                 lastSeenAt: currentAppInfo ? currentAppInfo.lastSeenAt : null
             };
 
+            // 1. Notificar a los amigos mutuos (tu lógica existente)
             friends.forEach(friend => {
                 const friendRoom = `user-${friend.friend_id}`;
                 io.to(friendRoom).emit('friend_status_update', payload);
             });
+
+            // ==========================================================
+            // 🚀 NUEVO: Notificar a salas de MATCH activas
+            // ==========================================================
+            const userSockets = await io.fetchSockets(); // Obtener todos los sockets conectados
+            const mySockets = userSockets.filter(s => String(s.userId) === String(userId)); // Filtrar los sockets de este usuario
+
+            mySockets.forEach(s => {
+                s.rooms.forEach(room => {
+                    // Si el socket de este usuario está en una sala que empieza con 'match_'
+                    if (room.startsWith('match_')) {
+                        // Emitimos el estado a esa sala específica
+                        io.to(room).emit('friend_status_update', payload);
+                        console.log(`📡 [STATUS] Emitiendo a sala de MATCH "${room}" el estado de ${userId}: ${isOnline}`);
+                    }
+                });
+            });
+            // ==========================================================
+
         } catch (error) {
             console.error("❌ Error en notifyFriendsOfStatusChange:", error);
         }

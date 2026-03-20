@@ -38,56 +38,72 @@ module.exports = (pool, JWT_SECRET) => {
     });
     // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario
     // REEMPLAZA tu ruta /profile/:userId con esta
-    // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario (VERSIÓN MEJORADA)
      // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario (VERSIÓN FINAL)
     router.get('/profile/:userId', (req, res, next) => softProtect(req, res, next, JWT_SECRET), async (req, res) => {
-        const userId = parseInt(req.params.userId, 10);
-        const loggedInUserId = req.user ? req.user.userId : null;
+    const userId = parseInt(req.params.userId, 10);
+    const loggedInUserId = req.user ? req.user.userId : null;
 
-        if (isNaN(userId)) return res.status(400).json({ success: false, message: 'El ID de usuario no es válido.' });
+    if (isNaN(userId)) return res.status(400).json({ success: false, message: 'El ID de usuario no es válido.' });
 
-        try {
-            // ==========================================================
-            // === ¡CONSULTA MEJORADA CON LATERAL JOIN! ===
-            // ==========================================================
-            const query = `
-                SELECT 
-                    u.id, u.username, u.profile_pic_url, u.bio, u.last_seen_at, u.cover_pic_url, u.bio_bg_url, u.age, u.gender,
-                    (SELECT COUNT(*) FROM postapp WHERE user_id = u.id) AS post_count,
-                    (SELECT COUNT(*) FROM followersapp WHERE following_id = u.id) AS followers_count,
-                    (SELECT COUNT(*) FROM followersapp WHERE follower_id = u.id) AS following_count,
-                    EXISTS(SELECT 1 FROM followersapp WHERE follower_id = $2 AND following_id = $1) AS is_followed_by_user,
-                    
-                    -- Obtenemos el nombre, icono y fecha del último juego en una sola subconsulta eficiente
-                    lp.app_name AS last_played_game,
-                    lp.last_played_at,
-                    lp.icon_url AS last_played_game_icon_url
+    try {
+        // 1. Ejecutamos tu consulta SQL original (No tocamos nada del SQL)
+        const query = `
+            SELECT 
+                u.id, u.username, u.profile_pic_url, u.bio, u.last_seen_at, u.cover_pic_url, u.bio_bg_url, u.age, u.gender,
+                (SELECT COUNT(*) FROM postapp WHERE user_id = u.id) AS post_count,
+                (SELECT COUNT(*) FROM followersapp WHERE following_id = u.id) AS followers_count,
+                (SELECT COUNT(*) FROM followersapp WHERE follower_id = u.id) AS following_count,
+                EXISTS(SELECT 1 FROM followersapp WHERE follower_id = $2 AND following_id = $1) AS is_followed_by_user,
+                lp.app_name AS last_played_game,
+                lp.last_played_at,
+                lp.icon_url AS last_played_game_icon_url
+            FROM usersapp u
+            LEFT JOIN LATERAL (
+                SELECT da.app_name, da.icon_url, upg.last_played_at
+                FROM user_played_games upg
+                JOIN detected_apps da ON upg.package_name = da.package_name
+                WHERE upg.user_id = u.id
+                ORDER BY upg.last_played_at DESC
+                LIMIT 1
+            ) lp ON true
+            WHERE u.id = $1;
+        `;
+        
+        const result = await pool.query(query, [userId, loggedInUserId]);
+        if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Perfil no encontrado.' });
+        
+        // 2. Extraemos los datos de la fila
+        let userData = result.rows[0];
 
-                FROM usersapp u
-                LEFT JOIN LATERAL (
-                    SELECT
-                        da.app_name,
-                        da.icon_url,
-                        upg.last_played_at
-                    FROM user_played_games upg
-                    JOIN detected_apps da ON upg.package_name = da.package_name
-                    WHERE upg.user_id = u.id
-                    ORDER BY upg.last_played_at DESC
-                    LIMIT 1
-                ) lp ON true
-                WHERE u.id = $1;
-            `;
-            // ==========================================================
+        // ==========================================================
+        // 🚀 LÓGICA LIVE: Verificar si el usuario está conectado por Socket
+        // ==========================================================
+        const onlineUsers = req.app.get('onlineUsers'); 
+        // Buscamos en el mapa de memoria si hay alguna sesión activa para este ID
+        const activeSession = Array.from(onlineUsers.values()).find(u => u.userId === userId);
+
+        if (activeSession) {
+            // Si hay sesión activa, forzamos is_online a true
+            userData.is_online = true;
             
-            const result = await pool.query(query, [userId, loggedInUserId]);
-            if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Perfil no encontrado.' });
-            
-            res.status(200).json({ success: true, data: result.rows[0] });
-        } catch (error) {
-            console.error(error.stack);
-            res.status(500).json({ success: false, message: 'Error interno al obtener el perfil.' });
+            // Opcional: Si el mapa de sockets tiene info más reciente de la app que está usando, la actualizamos
+            if (activeSession.currentApp) {
+                userData.last_played_game = activeSession.currentApp.name;
+                userData.last_played_game_icon_url = activeSession.currentApp.icon;
+            }
+        } else {
+            userData.is_online = false;
         }
-    });
+        // ==========================================================
+        
+        // 3. Enviamos la respuesta enriquecida con el estado en vivo
+        res.status(200).json({ success: true, data: userData });
+
+    } catch (error) {
+        console.error(error.stack);
+        res.status(500).json({ success: false, message: 'Error interno al obtener el perfil.' });
+    }
+});
 
 
    // ----------------------------------------------------
