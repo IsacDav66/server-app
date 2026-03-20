@@ -12,22 +12,27 @@ module.exports = (pool, JWT_SECRET, io) => {
             const query = `
                 WITH RankedMessages AS (
                     SELECT
-                        m.message_id, m.sender_id, m.receiver_id, m.content, m.created_at, m.is_read,
+                        m.message_id, 
+                        m.sender_id, 
+                        m.receiver_id, 
+                        m.content, 
+                        m.created_at, 
+                        m.is_read,
                         CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END AS other_user_id,
                         ROW_NUMBER() OVER(
                             PARTITION BY CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END 
                             ORDER BY m.created_at DESC
                         ) as rn
                     FROM messagesapp m
-                    WHERE m.sender_id = $1 OR m.receiver_id = $1
+                    WHERE (m.sender_id = $1 OR m.receiver_id = $1)
                     AND m.room_name NOT LIKE 'match_%'
-
                 )
                 SELECT
+                    rm.message_id AS last_message_id, -- 🚀 ID único del último mensaje
                     rm.content AS last_message_content,
                     rm.created_at AS last_message_at,
                     rm.sender_id AS last_message_sender_id,
-                    rm.is_read, -- Estado de lectura del último mensaje
+                    rm.is_read AS last_message_read, -- 🚀 Estado de lectura real de ese mensaje
                     u.id AS user_id,
                     u.username,
                     u.profile_pic_url,
