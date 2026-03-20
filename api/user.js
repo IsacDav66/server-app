@@ -83,13 +83,20 @@ module.exports = (pool, JWT_SECRET) => {
         const activeSession = Array.from(onlineUsers.values()).find(u => u.userId === userId);
 
         if (activeSession) {
-            // Si hay sesión activa, forzamos is_online a true
             userData.is_online = true;
             
-            // Opcional: Si el mapa de sockets tiene info más reciente de la app que está usando, la actualizamos
-            if (activeSession.currentApp) {
+            // 🚀 CORRECCIÓN CRÍTICA:
+            // Si el usuario está online, verificamos si REALMENTE está en una app
+            if (activeSession.currentApp && activeSession.currentApp.name) {
+                // Si el socket dice que está en un juego, lo ponemos
                 userData.last_played_game = activeSession.currentApp.name;
                 userData.last_played_game_icon_url = activeSession.currentApp.icon;
+            } else {
+                // SI ESTÁ ONLINE PERO NO EN UN JUEGO:
+                // Borramos lo que trajo la base de datos (el historial) 
+                // para que no aparezca "Jugando a..." erróneamente.
+                userData.last_played_game = null;
+                userData.last_played_game_icon_url = null;
             }
         } else {
             userData.is_online = false;
