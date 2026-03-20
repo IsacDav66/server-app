@@ -344,6 +344,38 @@ io.on('connection', (socket) => {
                 delete matchReconnectTimers[socket.userId];
             }
         }
+
+        // ==========================================================
+        // 🚀 NUEVA LÓGICA: SEGUNDA COMPROBACIÓN (Handshake en vivo)
+        // ==========================================================
+        // Detectamos si es una sala de Match o un chat privado normal
+        if (roomName.startsWith('match_') || roomName.includes('-')) {
+            
+            // 1. Deducimos el ID del compañero desde el nombre de la sala
+            // Separamos por "_" (match_ID1_ID2) o por "-" (ID1-ID2)
+            const parts = roomName.replace('match_', '').split(/[_-]/);
+            const partnerId = parts.find(id => String(id) !== String(socket.userId));
+
+            if (partnerId) {
+                // 2. Buscamos en el mapa de usuarios online si el compañero tiene sesión activa
+                const onlineEntries = Array.from(onlineUsers.values());
+                const partnerSession = onlineEntries.find(u => String(u.userId) === String(partnerId));
+
+                if (partnerSession) {
+                    // 3. Si lo encontramos, le enviamos al usuario que acaba de entrar
+                    // el estado actual del compañero inmediatamente.
+                    socket.emit('friend_status_update', {
+                        userId: partnerId,
+                        isOnline: true,
+                        currentApp: partnerSession.currentApp ? partnerSession.currentApp.name : null,
+                        currentAppIcon: partnerSession.currentApp ? partnerSession.currentApp.icon : null,
+                        lastSeenAt: new Date()
+                    });
+                    console.log(`🤝 [HANDSHAKE] Sincronizando estado: ${partnerId} está Online para ${socket.userId}`);
+                }
+            }
+        }
+    // ==========================================================
     });
 
     socket.on('send_message', async (data) => {
