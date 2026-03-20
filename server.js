@@ -651,7 +651,7 @@ socket.on('send_media_relay', async (data) => {
 
             pendingMatchLikes[roomId] = {
                 likes: [],
-                expiresAt: Date.now() + (1 * 60 * 1000) // 1 min para pruebas
+                expiresAt: Date.now() + (7 * 60 * 1000) // 1 min para pruebas
             };
 
             socket.join(roomId);
