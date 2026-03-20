@@ -18,6 +18,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                         m.content, 
                         m.created_at, 
                         m.is_read,
+                        m.room_name,
                         CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END AS other_user_id,
                         ROW_NUMBER() OVER(
                             PARTITION BY CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END 
@@ -25,14 +26,15 @@ module.exports = (pool, JWT_SECRET, io) => {
                         ) as rn
                     FROM messagesapp m
                     WHERE (m.sender_id = $1 OR m.receiver_id = $1)
-                    AND m.room_name NOT LIKE 'match_%'
+                    -- 🚀 SOLUCIÓN: Permitimos NULLs y mensajes que no empiecen por match_
+                    AND (m.room_name IS NULL OR m.room_name NOT LIKE 'match_%')
                 )
                 SELECT
-                    rm.message_id AS last_message_id, -- 🚀 ID único del último mensaje
+                    rm.message_id AS last_message_id,
                     rm.content AS last_message_content,
                     rm.created_at AS last_message_at,
                     rm.sender_id AS last_message_sender_id,
-                    rm.is_read AS last_message_read, -- 🚀 Estado de lectura real de ese mensaje
+                    rm.is_read AS last_message_read,
                     u.id AS user_id,
                     u.username,
                     u.profile_pic_url,
@@ -40,7 +42,10 @@ module.exports = (pool, JWT_SECRET, io) => {
                         FROM messagesapp 
                         WHERE receiver_id = $1 
                         AND sender_id = u.id 
-                        AND is_read = FALSE) AS unread_count
+                        AND is_read = FALSE
+                        -- 🚀 Aplicamos el mismo filtro al contador de no leídos
+                        AND (room_name IS NULL OR room_name NOT LIKE 'match_%')
+                    ) AS unread_count
                 FROM RankedMessages rm
                 JOIN usersapp u ON rm.other_user_id = u.id
                 WHERE rm.rn = 1
