@@ -437,6 +437,8 @@ io.on('connection', (socket) => {
 
         // 3. Emitimos el mensaje (ahora enriquecido) al otro usuario en la sala
         socket.to(roomName).emit('receive_message', savedMessage);
+        io.to(`user-${receiver_id}`).emit('receive_message', savedMessage);
+
         console.log(`📩 [SERVER] Mensaje emitido a sala: ${roomName}. ¿Lleva pack?: ${!!savedMessage.sticker_pack}`);
 
         // 4. Enviamos la confirmación al emisor original para quitar el reloj de carga
