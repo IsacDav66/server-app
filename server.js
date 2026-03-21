@@ -23,6 +23,12 @@ const adminRoutes = require('./api/admin');
 const pendingMatchLikes = {};
 let matchQueue = [];
 const matchReconnectTimers = {};
+// Crear carpeta para caché temporal si no existe
+const chatTempDir = path.join(__dirname, 'uploads/chat_temp');
+if (!fs.existsSync(chatTempDir)) {
+    fs.mkdirSync(chatTempDir, { recursive: true });
+}
+
 // --- CONFIGURACIÓN DE SOCKET.IO ---
 const io = new Server(server, {
     cors: {
@@ -83,6 +89,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/uploads/emojis', express.static(path.join(__dirname, 'uploads/emojis')));
 app.use('/updates', express.static(path.join(__dirname, 'public', 'updates')));
 app.use('/api/admin', adminRoutes(pool, JWT_SECRET));
+app.use('/uploads/chat_temp', express.static(chatTempDir));
 
 // --- MAPA DE USUARIOS EN LÍNEA ---
 const onlineUsers = new Map();
@@ -531,7 +538,22 @@ socket.on('send_media_relay', async (data) => {
     }
 
     if (!items || items.length === 0) return;
-
+    // 🚀 LÓGICA DE PERSISTENCIA TEMPORAL EN SERVER
+    if (isNew) {
+        items.forEach(item => {
+            if (item.file) {
+                // Guardamos el buffer en un archivo real con el nombre del mediaId
+                // Usamos la extensión según el tipo
+                const ext = item.type === 'VIDEO' ? '.mp4' : (item.type === 'AUDIO' ? '.wav' : '.jpg');
+                const filePath = path.join(chatTempDir, `${item.mediaId}${ext}`);
+                
+                fs.writeFile(filePath, item.file, (err) => {
+                    if (err) console.error("❌ Error guardando caché en server:", err);
+                    else console.log("💾 Archivo guardado en caché del servidor:", item.mediaId);
+                });
+            }
+        });
+    }
     // 2. Formatear contenido para la base de datos
     let contentToSave = "";
     if (isGrid || items.length > 1) {
@@ -1125,6 +1147,26 @@ app.use((err, req, res, next) => {
 
 
 
+const CLEANUP_INTERVAL = 1000 * 60 * 60 * 24; // Revisar 1 vez al día
+
+setInterval(() => {
+    console.log("🧹 Iniciando limpieza de archivos temporales (7 días)...");
+    const now = Date.now();
+    const SEVEN_DAYS_MS = 1000 * 60 * 60 * 24 * 7;
+
+    fs.readdir(chatTempDir, (err, files) => {
+        if (err) return;
+        files.forEach(file => {
+            const filePath = path.join(chatTempDir, file);
+            fs.stat(filePath, (err, stats) => {
+                if (err) return;
+                if (now - stats.mtimeMs > SEVEN_DAYS_MS) {
+                    fs.unlink(filePath, () => console.log("🗑️ Archivo expirado borrado:", file));
+                }
+            });
+        });
+    });
+}, CLEANUP_INTERVAL);
 
 // --- SERVIDOR DE ESCUCHA ---
 const PRODUCTION_API_URL = 'https://davcenter.servequake.com';
