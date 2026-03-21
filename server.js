@@ -700,29 +700,26 @@ socket.on('send_media_relay', async (data) => {
         }
 
         if (pendingMatchLikes[roomId].likes.length === 2) {
-            // 🚀 LÓGICA DE PERMANENTACIÓN
+            // 🚀 1. CALCULAMOS EL NOMBRE PERMANENTE (Ej: "10-20")
+            // Obtenemos los números del ID de la sala actual match_10_20 -> [10, 20]
+            const ids = roomId.replace('match_', '').split('_');
+            const newRoomName = ids.sort((a, b) => a - b).join('-');
+
+            // 🚀 2. AVISAMOS A LOS USUARIOS INMEDIATAMENTE (Como antes)
+            // Les pasamos el nuevo nombre para que el JS del chat sepa dónde guardar los mensajes nuevos
+            io.to(roomId).emit('match_finalized', { newRoomName: newRoomName });
+
+            // 🚀 3. PERMANENTAMOS EN LA BASE DE DATOS
+            // Esto cambia el nombre de la sala en los mensajes ya enviados para que salgan en la lista
             try {
-                // 1. Calculamos el nombre de sala permanente (Ej: "123-456")
-                const ids = roomId.replace('match_', '').split('_');
-                const newRoomName = ids.sort((a, b) => a - b).join('-');
-
-                // 2. Actualizamos todos los mensajes de esa sala en la DB
-                // Al quitarles el prefijo "match_", aparecerán automáticamente en la lista de chats
-                await pool.query(
-                    'UPDATE messagesapp SET room_name = $1 WHERE room_name = $2',
-                    [newRoomName, roomId]
-                );
-
-                console.log(`✨ Match finalizado con éxito: ${roomId} ahora es ${newRoomName}`);
-
-                // 3. Avisamos a los usuarios y les pasamos el nuevo nombre
-                io.to(roomId).emit('match_finalized', { newRoomName });
-                
-                // 4. Limpiamos la memoria temporal
-                delete pendingMatchLikes[roomId];
-            } catch (error) {
-                console.error("❌ Error al permanentar el match:", error);
+                await pool.query('UPDATE messagesapp SET room_name = $1 WHERE room_name = $2', [newRoomName, roomId]);
+                console.log(`✨ Match exitoso: ${roomId} ahora es ${newRoomName}`);
+            } catch (dbErr) {
+                console.error("❌ Error al permanentar en DB:", dbErr);
             }
+
+            // 🚀 4. LIMPIAMOS MEMORIA
+            delete pendingMatchLikes[roomId];
         }
     });
     socket.on('match_time_expired', async (data) => {
