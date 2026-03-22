@@ -40,77 +40,91 @@ module.exports = (pool, JWT_SECRET) => {
     // REEMPLAZA tu ruta /profile/:userId con esta
      // RUTA PÚBLICA: Obtener datos de perfil de CUALQUIER usuario (VERSIÓN FINAL)
     router.get('/profile/:userId', (req, res, next) => softProtect(req, res, next, JWT_SECRET), async (req, res) => {
-    const userId = parseInt(req.params.userId, 10);
-    const loggedInUserId = req.user ? req.user.userId : null;
+        const userId = parseInt(req.params.userId, 10);
+        const loggedInUserId = req.user ? req.user.userId : null;
 
-    if (isNaN(userId)) return res.status(400).json({ success: false, message: 'El ID de usuario no es válido.' });
+        if (isNaN(userId)) return res.status(400).json({ success: false, message: 'El ID de usuario no es válido.' });
 
-    try {
-        // 1. Ejecutamos tu consulta SQL original (No tocamos nada del SQL)
-        const query = `
-            SELECT 
-                u.id, u.username, u.profile_pic_url, u.bio, u.last_seen_at, u.cover_pic_url, u.bio_bg_url, u.age, u.gender,
-                (SELECT COUNT(*) FROM postapp WHERE user_id = u.id) AS post_count,
-                (SELECT COUNT(*) FROM followersapp WHERE following_id = u.id) AS followers_count,
-                (SELECT COUNT(*) FROM followersapp WHERE follower_id = u.id) AS following_count,
-                EXISTS(SELECT 1 FROM followersapp WHERE follower_id = $2 AND following_id = $1) AS is_followed_by_user,
-                lp.app_name AS last_played_game,
-                lp.last_played_at,
-                lp.icon_url AS last_played_game_icon_url
-            FROM usersapp u
-            LEFT JOIN LATERAL (
-                SELECT da.app_name, da.icon_url, upg.last_played_at
-                FROM user_played_games upg
-                JOIN detected_apps da ON upg.package_name = da.package_name
-                WHERE upg.user_id = u.id
-                ORDER BY upg.last_played_at DESC
-                LIMIT 1
-            ) lp ON true
-            WHERE u.id = $1;
-        `;
-        
-        const result = await pool.query(query, [userId, loggedInUserId]);
-        if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Perfil no encontrado.' });
-        
-        // 2. Extraemos los datos de la fila
-        let userData = result.rows[0];
+        try {
+            // 1. Ejecutamos la consulta SQL ACTUALIZADA para incluir INSIGNIAS
+            const query = `
+                SELECT 
+                    u.id, u.username, u.profile_pic_url, u.bio, u.last_seen_at, u.cover_pic_url, u.bio_bg_url, u.age, u.gender,
+                    (SELECT COUNT(*) FROM postapp WHERE user_id = u.id) AS post_count,
+                    (SELECT COUNT(*) FROM followersapp WHERE following_id = u.id) AS followers_count,
+                    (SELECT COUNT(*) FROM followersapp WHERE follower_id = u.id) AS following_count,
+                    EXISTS(SELECT 1 FROM followersapp WHERE follower_id = $2 AND following_id = $1) AS is_followed_by_user,
+                    
+                    -- ==========================================================
+                    -- 🏅 NUEVA SUB-CONSULTA: OBTENER INSIGNIAS (BADGES)
+                    -- ==========================================================
+                    COALESCE(
+                        (SELECT json_agg(json_build_object(
+                            'id', b.id, 
+                            'name', b.name, 
+                            'image_url', b.image_url
+                        ))
+                        FROM badges b
+                        JOIN user_badges ub ON b.id = ub.badge_id
+                        WHERE ub.user_id = u.id),
+                        '[]'::json
+                    ) AS user_badges_data,
+                    -- ==========================================================
 
-        // ==========================================================
-        // 🚀 LÓGICA LIVE: Verificar si el usuario está conectado por Socket
-        // ==========================================================
-        const onlineUsers = req.app.get('onlineUsers'); 
-        // Buscamos en el mapa de memoria si hay alguna sesión activa para este ID
-        const activeSession = Array.from(onlineUsers.values()).find(u => u.userId === userId);
-
-        if (activeSession) {
-            userData.is_online = true;
+                    lp.app_name AS last_played_game,
+                    lp.last_played_at,
+                    lp.icon_url AS last_played_game_icon_url
+                FROM usersapp u
+                LEFT JOIN LATERAL (
+                    SELECT da.app_name, da.icon_url, upg.last_played_at
+                    FROM user_played_games upg
+                    JOIN detected_apps da ON upg.package_name = da.package_name
+                    WHERE upg.user_id = u.id
+                    ORDER BY upg.last_played_at DESC
+                    LIMIT 1
+                ) lp ON true
+                WHERE u.id = $1;
+            `;
             
-            // 🚀 CORRECCIÓN CRÍTICA:
-            // Si el usuario está online, verificamos si REALMENTE está en una app
-            if (activeSession.currentApp && activeSession.currentApp.name) {
-                // Si el socket dice que está en un juego, lo ponemos
-                userData.last_played_game = activeSession.currentApp.name;
-                userData.last_played_game_icon_url = activeSession.currentApp.icon;
-            } else {
-                // SI ESTÁ ONLINE PERO NO EN UN JUEGO:
-                // Borramos lo que trajo la base de datos (el historial) 
-                // para que no aparezca "Jugando a..." erróneamente.
-                userData.last_played_game = null;
-                userData.last_played_game_icon_url = null;
-            }
-        } else {
-            userData.is_online = false;
-        }
-        // ==========================================================
-        
-        // 3. Enviamos la respuesta enriquecida con el estado en vivo
-        res.status(200).json({ success: true, data: userData });
+            const result = await pool.query(query, [userId, loggedInUserId]);
+            if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Perfil no encontrado.' });
+            
+            let userData = result.rows[0];
 
-    } catch (error) {
-        console.error(error.stack);
-        res.status(500).json({ success: false, message: 'Error interno al obtener el perfil.' });
-    }
-});
+            // 🚀 LOG DE DEPURACIÓN EN SERVER
+            console.log(`\n--- 🛡️ DEBUG PERFIL [ID: ${userId}] ---`);
+            console.log(`👤 Usuario: ${userData.username}`);
+            console.log(`🏅 Insignias encontradas: ${userData.user_badges_data.length}`);
+            console.log(`📦 Datos:`, JSON.stringify(userData.user_badges_data));
+            console.log(`-------------------------------------\n`);
+
+            // ==========================================================
+            // 🚀 LÓGICA LIVE: Verificar si el usuario está conectado por Socket
+            // ==========================================================
+            const onlineUsers = req.app.get('onlineUsers'); 
+            const activeSession = Array.from(onlineUsers.values()).find(u => u.userId === userId);
+
+            if (activeSession) {
+                userData.is_online = true;
+                if (activeSession.currentApp && activeSession.currentApp.name) {
+                    userData.last_played_game = activeSession.currentApp.name;
+                    userData.last_played_game_icon_url = activeSession.currentApp.icon;
+                } else {
+                    userData.last_played_game = null;
+                    userData.last_played_game_icon_url = null;
+                }
+            } else {
+                userData.is_online = false;
+            }
+            
+            // 3. Enviamos la respuesta enriquecida
+            res.status(200).json({ success: true, data: userData });
+
+        } catch (error) {
+            console.error("❌ ERROR EN GET PROFILE:", error.stack);
+            res.status(500).json({ success: false, message: 'Error interno al obtener el perfil.' });
+        }
+    });
 
 
    // ----------------------------------------------------
