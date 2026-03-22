@@ -1,5 +1,5 @@
 {
-  "versionCode": 13,
-  "versionName": "1.1.9",
-  "notes": "Mejoras de estabilidad \n Ahora se pueden enviar imagenes y videos \n Los emojis consumen menos recursos \n Estado del usuario en el chat"
+  "versionCode": 14,
+  "versionName": "1.1.10",
+  "notes": "Notas de voz disponibles en el chat n\\Insignias en el perfil n\\Correccion de bugs"
 }
