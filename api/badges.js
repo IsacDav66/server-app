@@ -187,24 +187,33 @@ module.exports = (pool, JWT_SECRET) => {
     // 12. Editar datos de insignia (Nombre/Descripción)
     router.put('/:id', checkAdmin, uploadBadgeMiddleware, processImage('badge'), async (req, res) => {
         const { name, description } = req.body;
-        let query = 'UPDATE badges SET name = $1, description = $2';
-        const params = [name, description, req.params.id];
-
-        if (req.file) {
-            const imageUrl = `/uploads/badges/${req.file.filename}`;
-            query += ', image_url = $4';
-            params.push(imageUrl);
-        }
-
-        query += ' WHERE id = $3 RETURNING *';
+        const badgeId = req.params.id;
 
         try {
+            // 1. Empezamos la consulta
+            let query = 'UPDATE badges SET name = $1, description = $2';
+            let params = [name, description, badgeId];
+
+            // 2. Si el usuario subió una foto nueva, la añadimos a la query
+            if (req.file) {
+                const imageUrl = `/uploads/badges/${req.file.filename}`;
+                query += ', image_url = $4';
+                params.push(imageUrl);
+            }
+
+            query += ' WHERE id = $3 RETURNING *';
+
             const result = await pool.query(query, params);
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ success: false, message: 'Insignia no encontrada' });
+            }
+
             res.json({ success: true, badge: result.rows[0] });
         } catch (e) {
+            console.error("❌ Error al editar insignia:", e);
             res.status(500).json({ success: false });
         }
     });
-
     return router;
 };
