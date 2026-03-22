@@ -1061,6 +1061,7 @@ const postRoutes = require('./api/post');
 const chatRoutes = require('./api/chat');
 const notificationRoutes = require('./api/notifications');
 const appApiRoutes = require('./api/apps');
+const badgeRoutes = require('./api/badges');
 
 // Montamos cada router en su prefijo correcto
 app.use('/api/auth', authRoutes(pool, JWT_SECRET)); 
@@ -1068,6 +1069,8 @@ app.use('/api/user', userRoutes(pool, JWT_SECRET));
 app.use('/api/posts', postRoutes(pool, JWT_SECRET));
 app.use('/api/notifications', notificationRoutes(pool, JWT_SECRET));
 app.use('/api/chat', chatRoutes(pool, JWT_SECRET, io));
+app.use('/api/badges', badgeRoutes(pool, JWT_SECRET));
+app.use('/uploads/badges', express.static(path.join(__dirname, 'uploads/badges')));
 
 // ¡LLAMADA SIMPLIFICADA! Ya no pasamos 'fetch'
 app.use('/api/apps', appApiRoutes(pool, JWT_SECRET)); 

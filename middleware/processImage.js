@@ -14,27 +14,45 @@ const processImage = (type) => async (req, res, next) => {
     if (type === 'bio') folder = 'bio_images';
     if (type === 'card_cover') folder = 'card_cover_images';
     
-    // --- NUEVO: TIPO EMOJI ---
     if (type === 'emoji') {
         folder = 'emojis';
-        size = 128; // Los emojis son pequeñitos, ahorramos más espacio
+        size = 128;
+    }
+
+    // --- NUEVO: TIPO BADGE (INSIGNIA) ---
+    if (type === 'badge') {
+        folder = 'badges';
+        size = 128; // Tamaño optimizado para las insignias del perfil
     }
     
     const destinationPath = path.join(__dirname, `../uploads/${folder}/`);
-    fs.mkdirSync(destinationPath, { recursive: true });
+    if (!fs.existsSync(destinationPath)) {
+        fs.mkdirSync(destinationPath, { recursive: true });
+    }
 
     const userId = req.user.adminTargetId || req.user.userId;
     const timestamp = Date.now();
-    const newFilename = `${type}_${userId}_${timestamp}.webp`;
+
+    // Lógica para mantener la animación si es un GIF
+    const isGif = req.file.mimetype === 'image/gif';
+    const extension = isGif ? 'gif' : 'webp';
+    
+    const newFilename = `${type}_${userId}_${timestamp}.${extension}`;
     const fullFilePath = path.join(destinationPath, newFilename);
 
     try {
+        // { animated: true } es vital para que los GIFs no se conviertan en una imagen estática
         const pipeline = sharp(req.file.buffer, { animated: true });
 
-        await pipeline
-            .resize(size, size, { fit: 'inside', withoutEnlargement: true })
-            .webp({ quality: 70 }) // Calidad 70 es perfecta para miniaturas
-            .toFile(fullFilePath);
+        pipeline.resize(size, size, { fit: 'inside', withoutEnlargement: true });
+
+        if (isGif) {
+            // Si es GIF, procesamos manteniendo el formato
+            await pipeline.toFile(fullFilePath);
+        } else {
+            // Si es imagen normal (PNG/JPG), convertimos a WebP
+            await pipeline.webp({ quality: 70 }).toFile(fullFilePath);
+        }
 
         req.file.filename = newFilename;
         req.file.path = fullFilePath;
@@ -42,7 +60,7 @@ const processImage = (type) => async (req, res, next) => {
 
         next();
     } catch (error) {
-        console.error('❌ Error al procesar emoji con Sharp:', error);
+        console.error(`❌ Error al procesar ${type} con Sharp:`, error);
         return res.status(500).json({ success: false, message: 'Error al procesar la imagen.' });
     }
 };
