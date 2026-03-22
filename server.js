@@ -1006,7 +1006,38 @@ async function initDatabase() {
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     `;
-    
+    // 1. Tabla para definir las insignias existentes
+    const badgesQuery = `
+        CREATE TABLE IF NOT EXISTS badges (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(50) NOT NULL,
+            description TEXT,
+            image_url VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
+
+    // 2. Tabla relacional para asignar insignias a usuarios
+    const userBadgesQuery = `
+        CREATE TABLE IF NOT EXISTS user_badges (
+            user_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE,
+            badge_id INTEGER REFERENCES badges(id) ON DELETE CASCADE,
+            notified BOOLEAN DEFAULT FALSE, -- Notificación de "¡Nuevo Logro!"
+            assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, badge_id)
+        );
+    `;
+
+    // 3. Tabla para reglas de asignación masiva (Eventos)
+    const badgeRulesQuery = `
+        CREATE TABLE IF NOT EXISTS badge_rules (
+            id SERIAL PRIMARY KEY,
+            badge_id INTEGER REFERENCES badges(id) ON DELETE CASCADE,
+            type VARCHAR(20) NOT NULL, -- 'global_indefinite' o 'global_limited'
+            end_date TIMESTAMP WITH TIME ZONE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
 
     // ==========================================================
 
@@ -1050,6 +1081,15 @@ async function initDatabase() {
         // tabla media_library
         await pool.query(mediaLibraryQuery);
         console.log('✅ Tabla "media_library" verificada/creada.');
+
+        await pool.query(badgesQuery);
+        console.log('✅ Tabla "badges" verificada/creada.');
+
+        await pool.query(userBadgesQuery);
+        console.log('✅ Tabla "user_badges" verificada/creada.');
+
+        await pool.query(badgeRulesQuery);
+        console.log('✅ Tabla "badge_rules" verificada/creada.');
     } catch (err) {
         console.error('❌ Error al inicializar la base de datos:', err.stack);
     }
