@@ -141,6 +141,8 @@ io.on('connection', (socket) => {
                 WHERE f1.following_id = $1;
             `;
             const result = await pool.query(query, [userId]);
+            console.log(`[DEBUG-BACKEND] Datos de usuario ${userId}:`, result.rows[0]);
+
             const friends = result.rows;
             // No salimos aquí si no hay amigos, porque necesitamos notificar a las salas de Match
 
