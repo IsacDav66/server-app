@@ -148,6 +148,63 @@ module.exports = (pool, JWT_SECRET) => {
             res.status(500).json({ success: false });
         }
     });
+    // 10. Eliminar Insignia por completo (Cascada automática en DB)
+    router.delete('/:id', checkAdmin, async (req, res) => {
+        try {
+            // Al borrar la insignia, se borrarán automáticamente las asignaciones 
+            // si definiste las tablas con ON DELETE CASCADE
+            await pool.query('DELETE FROM badges WHERE id = $1', [req.params.id]);
+            res.json({ success: true, message: 'Insignia eliminada globalmente.' });
+        } catch (e) {
+            res.status(500).json({ success: false });
+        }
+    });
+
+    // 11. Obtener usuarios que tienen una insignia específica
+    router.get('/:id/users', checkAdmin, async (req, res) => {
+        const { q } = req.query; // Buscador opcional
+        try {
+            let query = `
+                SELECT u.id, u.username, u.profile_pic_url 
+                FROM usersapp u
+                JOIN user_badges ub ON u.id = ub.user_id
+                WHERE ub.badge_id = $1
+            `;
+            const params = [req.params.id];
+
+            if (q) {
+                query += ` AND u.username ILIKE $2`;
+                params.push(`%${q}%`);
+            }
+
+            const result = await pool.query(query, params);
+            res.json({ success: true, users: result.rows });
+        } catch (e) {
+            res.status(500).json({ success: false });
+        }
+    });
+
+    // 12. Editar datos de insignia (Nombre/Descripción)
+    router.put('/:id', checkAdmin, uploadBadgeMiddleware, processImage('badge'), async (req, res) => {
+        const { name, description } = req.body;
+        let query = 'UPDATE badges SET name = $1, description = $2';
+        const params = [name, description, req.params.id];
+
+        if (req.file) {
+            const imageUrl = `/uploads/badges/${req.file.filename}`;
+            query += ', image_url = $4';
+            params.push(imageUrl);
+        }
+
+        query += ' WHERE id = $3 RETURNING *';
+
+        try {
+            const result = await pool.query(query, params);
+            res.json({ success: true, badge: result.rows[0] });
+        } catch (e) {
+            res.status(500).json({ success: false });
+        }
+    });
 
     return router;
 };
