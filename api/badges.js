@@ -6,13 +6,13 @@ const processImage = require('../middleware/processImage');
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
 
-    // Middleware de seguridad para todas estas rutas
+    // Middleware de seguridad para administradores
     const checkAdmin = [
         (req, res, next) => protect(req, res, next, JWT_SECRET),
         adminOnly(pool)
     ];
 
-    // 1. Obtener todas las insignias creadas
+    // 1. Obtener todas las insignias creadas (Para el catálogo del admin)
     router.get('/all', async (req, res) => {
         try {
             const result = await pool.query('SELECT * FROM badges ORDER BY created_at DESC');
@@ -44,16 +44,14 @@ module.exports = (pool, JWT_SECRET) => {
     router.post('/assign', checkAdmin, async (req, res) => {
         const { userId, badgeId } = req.body;
         try {
+            // Seteamos notified = FALSE para que le salte el modal
             const result = await pool.query(
-                'INSERT INTO user_badges (user_id, badge_id) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING *', 
+                'INSERT INTO user_badges (user_id, badge_id, notified) VALUES ($1, $2, FALSE) ON CONFLICT DO NOTHING RETURNING *', 
                 [userId, badgeId]
             );
 
             if (result.rowCount > 0) {
-                // Buscamos los datos de la insignia para el socket
                 const badgeInfo = await pool.query('SELECT * FROM badges WHERE id = $1', [badgeId]);
-                
-                // Enviamos el aviso por Socket.io
                 const io = req.app.get('socketio');
                 io.to(`user-${userId}`).emit('badge_unlocked', badgeInfo.rows[0]);
             }
@@ -64,38 +62,30 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-    // ============================================================
-    // === NUEVAS RUTAS DE ASIGNACIÓN MASIVA (EVENTOS) ===
-    // ============================================================
-
     // 4. Crear Regla Masiva (Asignar a todos los actuales y futuros)
     router.post('/rules/create', checkAdmin, async (req, res) => {
         const { badgeId, type, endDate } = req.body; 
-        // type: 'global_indefinite' o 'global_limited'
 
         try {
-            // A. Guardamos la regla para los usuarios que se registren en el futuro
             await pool.query(
                 'INSERT INTO badge_rules (badge_id, type, end_date) VALUES ($1, $2, $3)',
                 [badgeId, type, endDate || null]
             );
 
-            // B. Asignamos la insignia a TODOS los usuarios que ya existen actualmente
-            // (Retroactivo: los que ya tienen cuenta también la reciben)
+            // Retroactivo: Se le da a todos los existentes con notified = FALSE
             await pool.query(`
-                INSERT INTO user_badges (user_id, badge_id)
-                SELECT id, $1 FROM usersapp
+                INSERT INTO user_badges (user_id, badge_id, notified)
+                SELECT id, $1, FALSE FROM usersapp
                 ON CONFLICT DO NOTHING
             `, [badgeId]);
 
-            res.json({ success: true, message: 'Evento activado: Todos los usuarios actuales han recibido la insignia y los nuevos la recibirán al unirse.' });
+            res.json({ success: true, message: 'Evento activado para todos.' });
         } catch (e) {
-            console.error(e);
             res.status(500).json({ success: false, message: e.message });
         }
     });
 
-    // 5. Obtener reglas/eventos de insignias activos
+    // 5. Obtener reglas/eventos activos
     router.get('/rules/active', checkAdmin, async (req, res) => {
         try {
             const result = await pool.query(`
@@ -110,33 +100,30 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-    // 6. Detener un evento (Borrar regla)
-    // Nota: Esto solo detiene que se les asigne a los NUEVOS. 
-    // Los que ya la tienen NO la pierden (como pediste).
+    // 6. Detener un evento
     router.delete('/rules/:id', checkAdmin, async (req, res) => {
         try {
             await pool.query('DELETE FROM badge_rules WHERE id = $1', [req.params.id]);
-            res.json({ success: true, message: 'Evento finalizado. Los usuarios conservan su insignia.' });
+            res.json({ success: true });
         } catch (e) {
             res.status(500).json({ success: false });
         }
     });
 
-    // ============================================================
-
-    // 7. Quitar insignia a un usuario (Solo Admin - Manual)
+    // 7. Quitar insignia manual
     router.delete('/remove-from-user', checkAdmin, async (req, res) => {
         const { userId, badgeId } = req.body;
         try {
             await pool.query('DELETE FROM user_badges WHERE user_id = $1 AND badge_id = $2', [userId, badgeId]);
-            res.json({ success: true, message: 'Insignia removida' });
+            res.json({ success: true });
         } catch (e) {
             res.status(500).json({ success: false });
         }
     });
 
-    // Obtener insignias que el usuario aún no ha visto (notified = false)
-    router.get('/unseen', protect, async (req, res) => {
+    // 8. Obtener insignias que el usuario aún no ha visto (notified = false)
+    // CORRECCIÓN: Se envuelve el middleware protect para pasar el JWT_SECRET
+    router.get('/unseen', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         try {
             const query = `
                 SELECT b.id, b.name, b.image_url, ub.badge_id
@@ -151,8 +138,9 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-    // Marcar como vistas
-    router.post('/mark-seen', protect, async (req, res) => {
+    // 9. Marcar como vistas
+    // CORRECCIÓN: Se envuelve el middleware protect para pasar el JWT_SECRET
+    router.post('/mark-seen', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         try {
             await pool.query('UPDATE user_badges SET notified = TRUE WHERE user_id = $1', [req.user.userId]);
             res.json({ success: true });
