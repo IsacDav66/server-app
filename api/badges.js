@@ -44,11 +44,21 @@ module.exports = (pool, JWT_SECRET) => {
     router.post('/assign', checkAdmin, async (req, res) => {
         const { userId, badgeId } = req.body;
         try {
-            await pool.query(
-                'INSERT INTO user_badges (user_id, badge_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', 
+            const result = await pool.query(
+                'INSERT INTO user_badges (user_id, badge_id) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING *', 
                 [userId, badgeId]
             );
-            res.json({ success: true, message: 'Insignia asignada con éxito' });
+
+            if (result.rowCount > 0) {
+                // Buscamos los datos de la insignia para el socket
+                const badgeInfo = await pool.query('SELECT * FROM badges WHERE id = $1', [badgeId]);
+                
+                // Enviamos el aviso por Socket.io
+                const io = req.app.get('socketio');
+                io.to(`user-${userId}`).emit('badge_unlocked', badgeInfo.rows[0]);
+            }
+
+            res.json({ success: true, message: 'Insignia asignada' });
         } catch (e) {
             res.status(500).json({ success: false, message: e.message });
         }
@@ -120,6 +130,32 @@ module.exports = (pool, JWT_SECRET) => {
         try {
             await pool.query('DELETE FROM user_badges WHERE user_id = $1 AND badge_id = $2', [userId, badgeId]);
             res.json({ success: true, message: 'Insignia removida' });
+        } catch (e) {
+            res.status(500).json({ success: false });
+        }
+    });
+
+    // Obtener insignias que el usuario aún no ha visto (notified = false)
+    router.get('/unseen', protect, async (req, res) => {
+        try {
+            const query = `
+                SELECT b.id, b.name, b.image_url, ub.badge_id
+                FROM user_badges ub
+                JOIN badges b ON ub.badge_id = b.id
+                WHERE ub.user_id = $1 AND ub.notified = FALSE
+            `;
+            const result = await pool.query(query, [req.user.userId]);
+            res.json({ success: true, badges: result.rows });
+        } catch (e) {
+            res.status(500).json({ success: false });
+        }
+    });
+
+    // Marcar como vistas
+    router.post('/mark-seen', protect, async (req, res) => {
+        try {
+            await pool.query('UPDATE user_badges SET notified = TRUE WHERE user_id = $1', [req.user.userId]);
+            res.json({ success: true });
         } catch (e) {
             res.status(500).json({ success: false });
         }
