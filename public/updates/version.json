@@ -1,5 +1,5 @@
 {
-  "versionCode": 14,
-  "versionName": "1.1.10",
-  "notes": "Notas de voz disponibles en el chat n\\Insignias en el perfil n\\Correccion de bugs"
+  "versionCode": 15,
+  "versionName": "1.1.11",
+  "notes": "Solucion de bugs, ahora se puede enviar audios, recortar y editar en tiempo real"
 }
