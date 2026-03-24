@@ -13,6 +13,26 @@ const { startAutonomousBot } = require('./modules/botManager'); // <--- 1. ASEGU
 
 // --- CONFIGURACIÓN PRINCIPAL ---
 const app = express();
+app.get('/.well-known/assetlinks.json', (req, res) => {
+    const assetlinks = [
+        {
+            "relation": [
+                "delegate_permission/common.handle_all_urls"
+            ],
+            "target": {
+                "namespace": "android_app",
+                "package_name": "com.omletwebfinal", // Tu App ID
+                "sha256_cert_fingerprints": [
+                    "C7:48:E9:F8:68:C8:F5:48:F7:B7:01:A4:FA:C0:7E:E9:87:C9:42:1E:FA:BE:21:D0:EE:69:67:D5:7D:7C:55:75" 
+                    // Ejemplo: "FA:C6:17:45:DC:09:03:78:6C:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C"
+                ]
+            }
+        }
+    ];
+
+    res.setHeader('Content-Type', 'application/json');
+    res.json(assetlinks);
+});
 const PORT = 3001;
 const INTERNAL_HOST = '0.0.0.0'; 
 const JWT_SECRET = 'TuSuperClaveSecretaJWT9876543210'; // ¡Usa process.env.JWT_SECRET en producción!
