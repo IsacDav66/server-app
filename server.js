@@ -109,18 +109,18 @@ app.use((req, res, next) => {
 app.get('/share', async (req, res) => {
     const postId = req.query.postId;
     
-    // 1. Valores por defecto (Fallback)
     let metadata = {
         title: "Omlet Web Arcade",
         description: "Mira esta publicación en nuestra comunidad.",
-        image: "https://davcenter.servequake.com/app/assets/img/logo-share.png", // Pon un logo real aquí
-        author: ""
+        image: "https://davcenter.servequake.com/app/assets/img/logo-share.png",
+        author: "",
+        is_video: false
     };
 
     try {
-        // 2. Buscamos los datos reales del post y el autor
+        // 1. Buscamos content, image_url y video_id
         const result = await pool.query(`
-            SELECT p.content, p.image_url, u.username 
+            SELECT p.content, p.image_url, p.video_id, u.username 
             FROM postapp p 
             JOIN usersapp u ON p.user_id = u.id 
             WHERE p.post_id = $1
@@ -131,16 +131,21 @@ app.get('/share', async (req, res) => {
             metadata.author = post.username;
             metadata.title = `Publicación de ${post.username} 🎮`;
             
-            // Truncar descripción si es muy larga
             if (post.content) {
                 metadata.description = post.content.length > 150 
                     ? post.content.substring(0, 150) + "..." 
                     : post.content;
             }
 
-            // Si el post tiene imagen, construimos la URL completa
-            if (post.image_url) {
-                // Si la URL ya es completa (http), la usamos, si no, le pegamos el dominio
+            // 2. Lógica de Miniatura para Video o Imagen
+            if (post.video_id) {
+                // Si es un video de YouTube, usamos su miniatura oficial
+                // mqdefault es un tamaño ideal para WhatsApp (320x180)
+                metadata.image = `https://img.youtube.com/vi/${post.video_id}/mqdefault.jpg`;
+                metadata.is_video = true;
+                metadata.title = `🎥 Video de ${post.username} en Omlet`;
+            } else if (post.image_url) {
+                // Si es imagen, usamos tu ruta local
                 metadata.image = post.image_url.startsWith('http') 
                     ? post.image_url 
                     : `https://davcenter.servequake.com/app${post.image_url}`;
@@ -158,27 +163,27 @@ app.get('/share', async (req, res) => {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;">
             
-            <!-- 🚀 ETIQUETAS OPEN GRAPH (PARA WHATSAPP/INSTAGRAM) -->
+            <title>${metadata.title}</title>
+            
+            <!-- 🚀 ETIQUETAS OPEN GRAPH -->
             <meta property="og:site_name" content="Omlet Web Arcade" />
             <meta property="og:title" content="${metadata.title}" />
             <meta property="og:description" content="${metadata.description}" />
             <meta property="og:image" content="${metadata.image}" />
-            <meta property="og:image:width" content="1200" />
-            <meta property="og:image:height" content="630" />
-            <meta property="og:type" content="article" />
             
-            <!-- 🐦 ETIQUETAS TWITTER CARD -->
+            <!-- Si es video, le decimos a las redes sociales que es un contenido de video -->
+            <meta property="og:type" content="${metadata.is_video ? 'video.other' : 'article'}" />
+            
+            <!-- 🐦 ETIQUETAS TWITTER -->
             <meta name="twitter:card" content="summary_large_image">
-            <meta name="twitter:title" content="${metadata.title}">
-            <meta name="twitter:description" content="${metadata.description}">
             <meta name="twitter:image" content="${metadata.image}">
 
             <style>
                 body { background: #000; color: #fff; font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }
                 .card { background: #111; padding: 30px; border-radius: 28px; border: 1px solid #333; max-width: 320px; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-                .btn { background: #8A2BE2; color: #fff; border: none; padding: 15px 30px; border-radius: 14px; font-weight: bold; text-decoration: none; display: inline-block; margin-top: 25px; cursor: pointer; transition: 0.2s; }
-                .btn:active { transform: scale(0.95); }
+                .btn { background: #8A2BE2; color: #fff; border: none; padding: 15px 30px; border-radius: 14px; font-weight: bold; text-decoration: none; display: inline-block; margin-top: 25px; cursor: pointer; }
                 .loader { border: 3px solid #222; border-top: 3px solid #8A2BE2; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 20px; }
                 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
             </style>
@@ -186,16 +191,13 @@ app.get('/share', async (req, res) => {
         <body>
             <div class="card">
                 <div class="loader"></div>
-                <h2 style="margin:0 0 10px 0;">Abriendo publicación...</h2>
-                <p style="color: #888; font-size: 14px; margin:0;">Estamos cargando el contenido de <b>${metadata.author || 'un usuario'}</b> en Omlet Web Arcade.</p>
+                <h2>Abriendo ${metadata.is_video ? 'video' : 'publicación'}...</h2>
+                <p style="color: #888; font-size: 14px;">Contenido de <b>${metadata.author || 'un usuario'}</b></p>
                 
                 <a href="${appLink}" class="btn">VER EN LA APLICACIÓN</a>
                 
                 <script>
-                    // Intentar abrir la app automáticamente
                     window.location.replace("${appLink}");
-
-                    // Fallback si no tiene la app instalada
                     setTimeout(function() {
                         window.location.replace("https://davcenter.servequake.com/app/home.html");
                     }, 4000);
