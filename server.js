@@ -110,7 +110,7 @@ app.get('/share', async (req, res) => {
     const postId = req.query.postId;
     
     let metadata = {
-        title: "Omlet Web Arcade",
+        title: "AnarkWorld",
         description: "Mira esta publicación en nuestra comunidad.",
         image: "https://davcenter.servequake.com/app/assets/img/logo-share.png",
         author: "",
@@ -168,7 +168,7 @@ app.get('/share', async (req, res) => {
             <title>${metadata.title}</title>
             
             <!-- 🚀 ETIQUETAS OPEN GRAPH -->
-            <meta property="og:site_name" content="Omlet Web Arcade" />
+            <meta property="og:site_name" content="AnarkWorld" />
             <meta property="og:title" content="${metadata.title}" />
             <meta property="og:description" content="${metadata.description}" />
             <meta property="og:image" content="${metadata.image}" />
