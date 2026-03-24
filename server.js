@@ -71,7 +71,70 @@ pool.connect()
     });
 
 // --- CONFIGURACIÓN DE MIDDLEWARE ---
+// ==========================================================
+// 🚀 RUTA PUENTE PARA COMPARTIR (DEEP LINKING)
+// Esta ruta recibe el clic de WhatsApp/Instagram y abre la App
+// ==========================================================
+app.get('/app/share', async (req, res) => {
+    const postId = req.query.postId;
+    
+    // Opcional: Podrías buscar el post en la DB para que el link tenga 
+    // la foto y texto real en la vista previa de WhatsApp.
+    let postData = { content: "Mira esta publicación", imageUrl: "/assets/img/logo-share.png" };
+    
+    try {
+        const result = await pool.query('SELECT content, image_url FROM postapp WHERE post_id = $1', [postId]);
+        if (result.rows.length > 0) {
+            postData.content = result.rows[0].content || "Publicación de Omlet Web Arcade";
+            if (result.rows[0].image_url) postData.imageUrl = result.rows[0].image_url;
+        }
+    } catch (e) { console.error("Error al buscar metadata para compartir:", e); }
 
+    const fullImageUrl = `https://davcenter.servequake.com${postData.imageUrl}`;
+
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Omlet Web Arcade</title>
+            
+            <!-- Metadata para que WhatsApp/Instagram muestren la previsualización -->
+            <meta property="og:title" content="Omlet Web Arcade" />
+            <meta property="og:description" content="${postData.content.substring(0, 100)}" />
+            <meta property="og:image" content="${fullImageUrl}" />
+            <meta property="og:type" content="website" />
+
+            <style>
+                body { background: #000; color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; margin: 0; text-align: center; }
+                .loader { border: 4px solid #f3f3f3; border-top: 4px solid #8A2BE2; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 20px; }
+                @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+            </style>
+
+            <script>
+                // 1. Intentamos abrir la aplicación usando el Custom Scheme
+                window.location.replace("omlet-arcade://comments.html?postId=${postId}");
+
+                // 2. Si el usuario no tiene la app o está en PC, redirigimos a una página de destino
+                // Le damos 2.5 segundos para que el sistema intente abrir la app
+                setTimeout(function() {
+                    // Si sigues aquí, es que la app no se abrió. 
+                    // Redirigimos al Home o a una landing page.
+                    window.location.replace("https://davcenter.servequake.com");
+                }, 2500);
+            </script>
+        </head>
+        <body>
+            <div>
+                <div class="loader"></div>
+                <p>Abriendo en Omlet Web Arcade...</p>
+                <p style="font-size: 12px; color: #666;">Si no tienes la aplicación, serás redirigido a la web.</p>
+            </div>
+        </body>
+        </html>
+    `);
+});
 // ==========================================================
 // === ¡AÑADE ESTE BLOQUE PARA HABILITAR SharedArrayBuffer! ===
 // ==========================================================
@@ -1105,70 +1168,7 @@ const notificationRoutes = require('./api/notifications');
 const appApiRoutes = require('./api/apps');
 const badgeRoutes = require('./api/badges');
 
-// ==========================================================
-// 🚀 RUTA PUENTE PARA COMPARTIR (DEEP LINKING)
-// Esta ruta recibe el clic de WhatsApp/Instagram y abre la App
-// ==========================================================
-app.get('/share', async (req, res) => {
-    const postId = req.query.postId;
-    
-    // Opcional: Podrías buscar el post en la DB para que el link tenga 
-    // la foto y texto real en la vista previa de WhatsApp.
-    let postData = { content: "Mira esta publicación", imageUrl: "/assets/img/logo-share.png" };
-    
-    try {
-        const result = await pool.query('SELECT content, image_url FROM postapp WHERE post_id = $1', [postId]);
-        if (result.rows.length > 0) {
-            postData.content = result.rows[0].content || "Publicación de Omlet Web Arcade";
-            if (result.rows[0].image_url) postData.imageUrl = result.rows[0].image_url;
-        }
-    } catch (e) { console.error("Error al buscar metadata para compartir:", e); }
 
-    const fullImageUrl = `https://davcenter.servequake.com${postData.imageUrl}`;
-
-    res.send(`
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Omlet Web Arcade</title>
-            
-            <!-- Metadata para que WhatsApp/Instagram muestren la previsualización -->
-            <meta property="og:title" content="Omlet Web Arcade" />
-            <meta property="og:description" content="${postData.content.substring(0, 100)}" />
-            <meta property="og:image" content="${fullImageUrl}" />
-            <meta property="og:type" content="website" />
-
-            <style>
-                body { background: #000; color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; margin: 0; text-align: center; }
-                .loader { border: 4px solid #f3f3f3; border-top: 4px solid #8A2BE2; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 20px; }
-                @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-            </style>
-
-            <script>
-                // 1. Intentamos abrir la aplicación usando el Custom Scheme
-                window.location.replace("omlet-arcade://comments.html?postId=${postId}");
-
-                // 2. Si el usuario no tiene la app o está en PC, redirigimos a una página de destino
-                // Le damos 2.5 segundos para que el sistema intente abrir la app
-                setTimeout(function() {
-                    // Si sigues aquí, es que la app no se abrió. 
-                    // Redirigimos al Home o a una landing page.
-                    window.location.replace("https://davcenter.servequake.com");
-                }, 2500);
-            </script>
-        </head>
-        <body>
-            <div>
-                <div class="loader"></div>
-                <p>Abriendo en Omlet Web Arcade...</p>
-                <p style="font-size: 12px; color: #666;">Si no tienes la aplicación, serás redirigido a la web.</p>
-            </div>
-        </body>
-        </html>
-    `);
-});
 // Montamos cada router en su prefijo correcto
 app.use('/api/auth', authRoutes(pool, JWT_SECRET)); 
 app.use('/api/user', userRoutes(pool, JWT_SECRET)); 
