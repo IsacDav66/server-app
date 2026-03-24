@@ -23,7 +23,7 @@ module.exports = (pool, JWT_SECRET) => {
         try {
             const query = `
                 SELECT 
-                    p.post_id, p.user_id, p.content, p.image_url, p.created_at, p.video_id,
+                    p.post_id, p.user_id, p.content, p.image_url, p.created_at, p.video_id, p.shares_count,
                     u.username, u.profile_pic_url,
                     COUNT(DISTINCT r_all.reaction_id) AS total_likes,
                     MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
@@ -401,6 +401,15 @@ router.delete('/:postId', (req, res, next) => protect(req, res, next, JWT_SECRET
     }
 });
 
+router.post('/share-increment/:postId', protect, async (req, res) => {
+    try {
+        const { postId } = req.params;
+        await pool.query('UPDATE postapp SET shares_count = shares_count + 1 WHERE post_id = $1', [postId]);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false });
+    }
+});
 
 return router;
 };
