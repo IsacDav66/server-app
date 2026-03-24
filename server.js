@@ -84,28 +84,62 @@ app.use((req, res, next) => {
 });
 app.get('/share', async (req, res) => {
     const postId = req.query.postId;
-    console.log("🚀 Procesando redirección para ID:", postId);
     
-    // El resto de tu código igual...
-    // Pero agrega esta meta etiqueta de CSP para evitar el error de fuentes que pusiste
+    // 1. Buscamos datos del post para la previsualización
+    let postData = { content: "Mira esta publicación", imageUrl: "/assets/img/logo-share.png" };
+    try {
+        const result = await pool.query('SELECT content, image_url FROM postapp WHERE post_id = $1', [postId]);
+        if (result.rows.length > 0) {
+            postData.content = result.rows[0].content || "Publicación de Omlet Web Arcade";
+            if (result.rows[0].image_url) postData.imageUrl = result.rows[0].image_url;
+        }
+    } catch (e) { console.error(e); }
+
+    const fullImageUrl = `https://davcenter.servequake.com/app${postData.imageUrl}`;
+    const appLink = `omlet-arcade://comments.html?postId=${postId}`;
+
     res.send(`
         <!DOCTYPE html>
-        <html>
+        <html lang="es">
         <head>
             <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;">
-            <title>Omlet Web Arcade</title>
-            <!-- ... tus OG Tags ... -->
-            <script>
-                // ... tu lógica de redirección ...
-                window.location.replace("omlet-arcade://comments.html?postId=${postId}");
-                setTimeout(() => {
-                    window.location.replace("https://davcenter.servequake.com/app/home.html");
-                }, 2500);
-            </script>
+            
+            <!-- Metadata para WhatsApp -->
+            <meta property="og:title" content="Omlet Web Arcade" />
+            <meta property="og:description" content="${postData.content.substring(0, 100)}" />
+            <meta property="og:image" content="${fullImageUrl}" />
+            <meta property="og:type" content="article" />
+
+            <style>
+                body { background: #000; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }
+                .card { background: #111; padding: 30px; border-radius: 20px; border: 1px solid #333; max-width: 300px; }
+                .btn { background: #8A2BE2; color: #fff; border: none; padding: 12px 25px; border-radius: 10px; font-weight: bold; text-decoration: none; display: inline-block; margin-top: 20px; cursor: pointer; }
+                .loader { border: 3px solid #333; border-top: 3px solid #8A2BE2; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto 15px; }
+                @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+            </style>
         </head>
-        <body style="background:#000; color:#fff;">
-            Cargando...
+        <body>
+            <div class="card">
+                <div class="loader"></div>
+                <h2>Abriendo publicación...</h2>
+                <p style="color: #888; font-size: 14px;">Estamos intentando abrir la aplicación.</p>
+                
+                <!-- Botón manual por si el automático falla -->
+                <a href="${appLink}" class="btn">ABRIR EN LA APP</a>
+                
+                <script>
+                    // Intentar abrir automáticamente
+                    window.location.replace("${appLink}");
+
+                    // Fallback: Si en 3 segundos no se cerró el navegador, es que no tiene la app
+                    setTimeout(function() {
+                        // Importante: añadimos /app/ para que el proxy redirija bien a home.html
+                        window.location.replace("https://davcenter.servequake.com/app/home.html");
+                    }, 3500);
+                </script>
+            </div>
         </body>
         </html>
     `);
