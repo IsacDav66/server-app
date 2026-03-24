@@ -124,7 +124,6 @@ app.get('/share', async (req, res) => {
     };
 
     try {
-        // 1. Buscamos content, image_url y video_id
         const result = await pool.query(`
             SELECT p.content, p.image_url, p.video_id, u.username 
             FROM postapp p 
@@ -136,29 +135,21 @@ app.get('/share', async (req, res) => {
             const post = result.rows[0];
             metadata.author = post.username;
             metadata.title = `Publicación de ${post.username} 🎮`;
-            
             if (post.content) {
                 metadata.description = post.content.length > 150 
                     ? post.content.substring(0, 150) + "..." 
                     : post.content;
             }
 
-            // 2. Lógica de Miniatura para Video o Imagen
             if (post.video_id) {
-                // mqdefault es un tamaño ideal para WhatsApp (320x180)
-                metadata.image = `https://img.youtube.com/vi/${post.video_id}/mqdefault.jpg`;
+                metadata.image = `https://i.ytimg.com/vi/${post.video_id}/hqdefault.jpg`;
                 metadata.is_video = true;
                 metadata.title = `🎥 Video de ${post.username} en AnarkWorld`;
             } else if (post.image_url) {
-                // Si es imagen, usamos tu ruta local
-                metadata.image = post.image_url.startsWith('http') 
-                    ? post.image_url 
-                    : `https://davcenter.servequake.com/app${post.image_url}`;
+                metadata.image = `https://davcenter.servequake.com/app${post.image_url}`;
             }
         }
-    } catch (e) { 
-        console.error("Error generando preview:", e); 
-    }
+    } catch (e) { console.error(e); }
 
     const appLink = `omlet-arcade://comments.html?postId=${postId}`;
     const downloadUrl = `https://davcenter.servequake.com/app/updates/app-release.apk`;
@@ -170,10 +161,8 @@ app.get('/share', async (req, res) => {
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;">
-            
             <title>${metadata.title}</title>
             
-            <!-- 🚀 ETIQUETAS OPEN GRAPH -->
             <meta property="og:site_name" content="AnarkWorld" />
             <meta property="og:title" content="${metadata.title}" />
             <meta property="og:description" content="${metadata.description}" />
@@ -186,42 +175,42 @@ app.get('/share', async (req, res) => {
 
             <style>
                 body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }
-                .card { background: #111; padding: 35px 25px; border-radius: 28px; border: 1px solid #333; max-width: 320px; box-shadow: 0 20px 50px rgba(0,0,0,0.5); width: 90%; }
+                .card { background: #111; padding: 40px 25px; border-radius: 32px; border: 1px solid #333; max-width: 320px; box-shadow: 0 20px 50px rgba(0,0,0,0.5); width: 90%; }
                 
-                .btn { background: #8A2BE2; color: #fff; border: none; padding: 15px 30px; border-radius: 14px; font-weight: bold; text-decoration: none; display: block; margin-top: 25px; cursor: pointer; transition: transform 0.2s; box-shadow: 0 10px 20px rgba(138, 43, 226, 0.2); }
+                .btn { background: #8A2BE2; color: #fff; border: none; padding: 18px 30px; border-radius: 16px; font-weight: 800; text-decoration: none; display: block; margin-top: 25px; cursor: pointer; transition: transform 0.2s; box-shadow: 0 10px 20px rgba(138, 43, 226, 0.3); text-transform: uppercase; letter-spacing: 1px; }
                 .btn:active { transform: scale(0.95); }
                 
                 .loader { border: 3px solid #222; border-top: 3px solid #8A2BE2; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 20px; }
                 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
                 
-                h2 { font-size: 1.4rem; margin-bottom: 10px; }
-                p { color: #888; font-size: 14px; line-height: 1.5; }
+                h2 { font-size: 1.5rem; margin-bottom: 12px; font-weight: 800; }
+                p { color: #888; font-size: 14px; line-height: 1.6; margin-bottom: 10px; }
                 
-                /* Estilo para la vista de descarga */
-                #download-view { display: none; animation: fadeIn 0.5s; }
-                @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+                #download-view { display: none; animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1); }
+                @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+                
+                .logo-img { margin-bottom: 20px; border-radius: 18px; box-shadow: 0 10px 20px rgba(0,0,0,0.3); border: 1px solid #333; }
             </style>
         </head>
         <body>
             <div class="card">
                 
-                <!-- VISTA 1: CARGANDO / INTENTANDO ABRIR APP -->
+                <!-- VISTA 1: INTENTANDO ABRIR APP -->
                 <div id="loading-view">
                     <div class="loader"></div>
-                    <h2>Abriendo en AnarkWorld</h2>
-                    <p>Cargando el contenido de <b>${metadata.author || 'un usuario'}</b>...</p>
-                    <a href="${appLink}" class="btn">ABRIR EN LA APP</a>
+                    <h2>Abriendo App</h2>
+                    <p>Estamos buscándote en <b>AnarkWorld</b>...</p>
+                    <a href="${appLink}" class="btn">Abrir manualmente</a>
                 </div>
 
-                <!-- VISTA 2: DESCARGA (Se muestra si el timer llega a cero) -->
+                <!-- VISTA 2: SOLO DESCARGA -->
                 <div id="download-view">
-                    <img src="https://davcenter.servequake.com/app/assets/img/logo-share.png" width="70" style="margin-bottom: 15px;">
-                    <h2>¿No tienes la App?</h2>
-                    <p>Necesitas la aplicación de <b>AnarkWorld</b> para ver esta publicación y unirte a la comunidad.</p>
+                    <img src="https://davcenter.servequake.com/app/assets/img/logo-share.png" class="logo-img" width="80" height="80">
+                    <h2>Únete a AnarkWorld</h2>
+                    <p>Esta publicación solo está disponible en la aplicación oficial.</p>
+                    <p style="font-size: 12px; color: #555;">Descarga el APK para instalarla en tu Android.</p>
                     
-                    <a href="${downloadUrl}" class="btn">DESCARGAR APLICACIÓN</a>
-                    
-                    <a href="https://davcenter.servequake.com/app/home.html" style="display:inline-block; margin-top: 20px; color: #555; font-size: 12px; text-decoration: none; text-transform: uppercase; letter-spacing: 1px;">Continuar en la web</a>
+                    <a href="${downloadUrl}" class="btn" download>Descargar aplicación</a>
                 </div>
 
             </div>
@@ -230,7 +219,7 @@ app.get('/share', async (req, res) => {
                 // 1. Intentar abrir la app automáticamente
                 window.location.replace("${appLink}");
 
-                // 2. Si en 3 segundos el navegador sigue activo, es que no tiene la app
+                // 2. Si pasan 3 segundos y el navegador sigue aquí, mostrar descarga
                 setTimeout(function() {
                     document.getElementById('loading-view').style.display = 'none';
                     document.getElementById('download-view').style.display = 'block';
