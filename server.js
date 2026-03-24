@@ -106,6 +106,12 @@ app.use((req, res, next) => {
     res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
     next();
 });
+// Asumiendo que tu carpeta de frontend se llama "web"
+app.use(express.static(path.join(__dirname, 'web')));
+
+// Por si acaso, añade una ruta específica para los assets para que el proxy no se pierda
+app.use('/assets', express.static(path.join(__dirname, 'web/assets')));
+
 app.get('/share', async (req, res) => {
     const postId = req.query.postId;
     
