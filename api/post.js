@@ -402,11 +402,41 @@ router.delete('/:postId', (req, res, next) => protect(req, res, next, JWT_SECRET
 });
 
 router.post('/share-increment/:postId', protect, async (req, res) => {
+    const { postId } = req.params;
+    const userId = req.user.userId;
+
     try {
-        const { postId } = req.params;
-        await pool.query('UPDATE postapp SET shares_count = shares_count + 1 WHERE post_id = $1', [postId]);
-        res.json({ success: true });
+        // 1. Intentamos registrar el compartido en la tabla de logs
+        // Si ya existe (userId + postId), el UNIQUE disparará un error
+        await pool.query(
+            'INSERT INTO post_shares (user_id, post_id) VALUES ($1, $2)',
+            [userId, postId]
+        );
+
+        // 2. Si llegamos aquí, es que es la primera vez que este usuario comparte este post.
+        // Ahora sí, incrementamos el contador global en el post
+        const result = await pool.query(
+            'UPDATE postapp SET shares_count = shares_count + 1 WHERE post_id = $1 RETURNING shares_count',
+            [postId]
+        );
+
+        res.json({ 
+            success: true, 
+            incremented: true, 
+            newCount: result.rows[0].shares_count 
+        });
+
     } catch (e) {
+        // El código 23505 es el error de "Llave duplicada" en PostgreSQL
+        if (e.code === '23505') {
+            return res.json({ 
+                success: true, 
+                incremented: false, 
+                message: 'Ya habías compartido este post anteriormente.' 
+            });
+        }
+        
+        console.error("Error share logic:", e);
         res.status(500).json({ success: false });
     }
 });
