@@ -401,20 +401,21 @@ router.delete('/:postId', (req, res, next) => protect(req, res, next, JWT_SECRET
     }
 });
 
-router.post('/share-increment/:postId', protect, async (req, res) => {
+// 🚀 Debemos pasar (req, res, next) y el JWT_SECRET al middleware protect
+router.post('/share-increment/:postId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
     const { postId } = req.params;
+    
+    // Ahora req.user ya no será undefined porque el middleware se ejecutó bien
     const userId = req.user.userId;
 
     try {
         // 1. Intentamos registrar el compartido en la tabla de logs
-        // Si ya existe (userId + postId), el UNIQUE disparará un error
         await pool.query(
             'INSERT INTO post_shares (user_id, post_id) VALUES ($1, $2)',
             [userId, postId]
         );
 
-        // 2. Si llegamos aquí, es que es la primera vez que este usuario comparte este post.
-        // Ahora sí, incrementamos el contador global en el post
+        // 2. Incrementamos el contador global
         const result = await pool.query(
             'UPDATE postapp SET shares_count = shares_count + 1 WHERE post_id = $1 RETURNING shares_count',
             [postId]
@@ -427,15 +428,13 @@ router.post('/share-increment/:postId', protect, async (req, res) => {
         });
 
     } catch (e) {
-        // El código 23505 es el error de "Llave duplicada" en PostgreSQL
         if (e.code === '23505') {
             return res.json({ 
                 success: true, 
                 incremented: false, 
-                message: 'Ya habías compartido este post anteriormente.' 
+                message: 'Ya compartido.' 
             });
         }
-        
         console.error("Error share logic:", e);
         res.status(500).json({ success: false });
     }
