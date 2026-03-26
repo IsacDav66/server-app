@@ -236,6 +236,151 @@ app.get('/share', async (req, res) => {
         </html>
     `);
 });
+
+
+// --- RUTA DE INVITACIÓN / LANDING PAGE ---
+app.get('/invite', (req, res) => {
+    const downloadUrl = `https://davcenter.servequake.com/app/updates/app-release.apk`;
+    const logoUrl = `https://davcenter.servequake.com/app/assets/img/logo-share.png`;
+
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Únete a AnarkWorld - La Red Social Gaming</title>
+            
+            <!-- Metadata para Redes Sociales -->
+            <meta property="og:title" content="AnarkWorld - Join the Evolution" />
+            <meta property="og:description" content="La red social definitiva para gamers. Comparte tus jugadas, gana insignias y conoce gente nueva." />
+            <meta property="og:image" content="${logoUrl}" />
+            <meta property="og:type" content="website" />
+
+            <style>
+                :root {
+                    --accent: #8A2BE2;
+                    --bg: #000000;
+                    --surface: #111111;
+                }
+                body {
+                    background-color: var(--bg);
+                    color: #fff;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                    margin: 0;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    min-height: 100vh;
+                    text-align: center;
+                }
+                .container {
+                    max-width: 400px;
+                    width: 90%;
+                    padding: 40px 20px;
+                    animation: fadeIn 0.8s ease-out;
+                }
+                @keyframes fadeIn {
+                    from { opacity: 0; transform: translateY(20px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+                .logo-box {
+                    width: 100px;
+                    height: 100px;
+                    background: var(--surface);
+                    border-radius: 24px;
+                    margin: 0 auto 20px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    border: 1px solid #333;
+                    box-shadow: 0 0 20px rgba(138, 43, 226, 0.3);
+                }
+                h1 { font-size: 2.2rem; font-weight: 900; margin: 0 0 10px; letter-spacing: -1px; }
+                .tagline { color: var(--accent); font-weight: bold; text-transform: uppercase; font-size: 0.8rem; letter-spacing: 2px; margin-bottom: 30px; display: block; }
+                
+                .features {
+                    text-align: left;
+                    background: var(--surface);
+                    padding: 20px;
+                    border-radius: 20px;
+                    margin-bottom: 30px;
+                    border: 1px solid #222;
+                }
+                .feature-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 15px;
+                    margin-bottom: 15px;
+                }
+                .feature-item:last-child { margin-bottom: 0; }
+                .feature-icon { font-size: 1.2rem; }
+                .feature-text { font-size: 0.9rem; color: #ccc; }
+                .feature-text b { color: #fff; }
+
+                .btn-main {
+                    background: var(--accent);
+                    color: #fff;
+                    text-decoration: none;
+                    padding: 18px;
+                    border-radius: 18px;
+                    font-weight: 800;
+                    display: block;
+                    font-size: 1.1rem;
+                    box-shadow: 0 10px 25px rgba(138, 43, 226, 0.4);
+                    transition: all 0.3s;
+                    text-transform: uppercase;
+                }
+                .btn-main:active { transform: scale(0.95); filter: brightness(1.2); }
+                
+                .footer-text {
+                    margin-top: 25px;
+                    font-size: 0.75rem;
+                    color: #555;
+                }
+                .btn-open {
+                    color: var(--accent);
+                    text-decoration: none;
+                    font-size: 0.8rem;
+                    font-weight: bold;
+                    margin-top: 15px;
+                    display: inline-block;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="logo-box">
+                    <img src="${logoUrl}" width="70" height="70" style="border-radius:12px;">
+                </div>
+                <h1>AnarkWorld</h1>
+                <span class="tagline">The Gaming Evolution</span>
+
+                <div class="features">
+                    <div class="feature-item">
+                        <span class="feature-icon">🎮</span>
+                        <span class="feature-text"><b>Game Sync:</b> Detecta lo que juegas automáticamente.</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">🛸</span>
+                        <span class="feature-text"><b>Random Match:</b> Encuentros anónimos con otros gamers.</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">🏅</span>
+                        <span class="feature-text"><b>Logros:</b> Gana insignias exclusivas por tu actividad.</span>
+                    </div>
+                </div>
+
+                <a href="${downloadUrl}" class="btn-main" download>Descargar APK</a>
+                
+                <a href="omlet-arcade://home.html" class="btn-open">¿Ya tienes la App? Abrir ahora</a>
+
+                <p class="footer-text">v1.1.11 • Solo para Android</p>
+            </div>
+        </body>
+        </html>
+    `);
+});
 // ==========================================================
 
 app.use(express.json({ limit: '50mb' }));
