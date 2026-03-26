@@ -993,8 +993,19 @@ async function initDatabase() {
             content TEXT,
             image_url VARCHAR(255),
             video_id VARCHAR(255), -- Columna para el ID de video de YouTube
+            shares_count INTEGER DEFAULT 0,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
+    // 📈 TABLA DE REGISTRO DE COMPARTIDOS (Evita duplicados)
+    const postSharesQuery = `
+        CREATE TABLE IF NOT EXISTS post_shares (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE,
+            post_id INTEGER REFERENCES postapp(post_id) ON DELETE CASCADE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (user_id, post_id)
         );
     `;
 
@@ -1194,6 +1205,9 @@ async function initDatabase() {
         console.log('✅ Tabla "usersapp" verificada/creada.');
         await pool.query(postQuery);
         console.log('✅ Tabla "postapp" verificada/creada.');
+        await pool.query(postSharesQuery);
+        console.log('✅ Tabla "post_shares" verificada/creada.');
+
         await pool.query(reactionQuery);
         console.log('✅ Tabla "post_reactionapp" verificada/creada.');
         await pool.query(savedQuery);

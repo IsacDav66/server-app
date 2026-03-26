@@ -202,7 +202,7 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
                 FROM commentsapp c
                 JOIN usersapp u ON c.user_id = u.id
                 WHERE c.post_id = $1
-                ORDER BY c.created_at ASC;
+                ORDER BY c.created_at DESC;
             `;
             const result = await pool.query(query, [postId]);
             res.status(200).json({ success: true, comments: result.rows });
