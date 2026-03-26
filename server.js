@@ -124,6 +124,7 @@ app.get('/share', async (req, res) => {
     };
 
     try {
+        // 1. Buscamos content, image_url y video_id
         const result = await pool.query(`
             SELECT p.content, p.image_url, p.video_id, u.username 
             FROM postapp p 
@@ -146,12 +147,18 @@ app.get('/share', async (req, res) => {
                 metadata.is_video = true;
                 metadata.title = `🎥 Video de ${post.username} en AnarkWorld`;
             } else if (post.image_url) {
-                metadata.image = `https://davcenter.servequake.com/app${post.image_url}`;
+                metadata.image = post.image_url.startsWith('http') 
+                    ? post.image_url 
+                    : `https://davcenter.servequake.com/app${post.image_url}`;
             }
         }
     } catch (e) { console.error(e); }
 
-    const appLink = `omlet-arcade://comments.html?postId=${postId}`;
+    // 🚀 LÓGICA DE DIRECCIONAMIENTO INTELIGENTE
+    // Si es video va al feed de video, si no a comentarios normales.
+    const targetPage = metadata.is_video ? "video_feed.html" : "comments.html";
+    const appLink = `omlet-arcade://${targetPage}?postId=${postId}`;
+    
     const downloadUrl = `https://davcenter.servequake.com/app/updates/app-release.apk`;
 
     res.send(`
@@ -216,7 +223,7 @@ app.get('/share', async (req, res) => {
             </div>
 
             <script>
-                // 1. Intentar abrir la app automáticamente
+                // 1. Intentar abrir la app automáticamente con el link dinámico
                 window.location.replace("${appLink}");
 
                 // 2. Si pasan 3 segundos y el navegador sigue aquí, mostrar descarga
