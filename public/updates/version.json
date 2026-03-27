@@ -1,5 +1,5 @@
 {
-  "versionCode": 15,
-  "versionName": "1.1.11",
-  "notes": "Solucion de bugs, ahora se puede enviar audios, recortar y editar en tiempo real"
+  "versionCode": 16,
+  "versionName": "1.1.12",
+  "notes": "Nuevo modo TikTok\n Correccion de bugs\n Ahora se puede compartir los posts"
 }
