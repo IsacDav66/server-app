@@ -971,6 +971,29 @@ socket.on('send_media_relay', async (data) => {
                 });
             });
         }
+        try {
+            // 🚀 NUEVO: Registrar notificación para Media/Audios
+            const notifQuery = `
+                INSERT INTO notificationsapp (recipient_id, sender_id, type, content)
+                VALUES ($1, $2, 'new_message', $3)
+                RETURNING *;
+            `;
+            const notifResult = await pool.query(notifQuery, [receiver_id, sender_id, contentToSave]);
+
+            const senderData = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+            
+            const notificationPayload = {
+                ...notifResult.rows[0],
+                sender_username: senderData.rows[0].username,
+                sender_profile_pic_url: senderData.rows[0].profile_pic_url
+            };
+
+            // Avisar al receptor por socket para el punto rojo
+            io.to(`user-${receiver_id}`).emit('new_notification', notificationPayload);
+        } catch (err) {
+            console.error("Error creando notif de media:", err);
+        }
+
     } catch (e) {
         console.error("❌ Error en relay:", e);
     }
