@@ -737,7 +737,29 @@ io.on('connection', (socket) => {
         ]);
         
         let savedMessage = insertResult.rows[0]; // Objeto que contiene el message_id real generado por la BD
+        try {
+            // 🚀 REGISTRAR EN LA TABLA DE NOTIFICACIONES
+            const notifQuery = `
+                INSERT INTO notificationsapp (recipient_id, sender_id, type, content)
+                VALUES ($1, $2, 'new_message', $3)
+                RETURNING *;
+            `;
+            const notifResult = await pool.query(notifQuery, [receiver_id, sender_id, content]);
 
+            // 🚀 AVISAR POR SOCKET (Para que el punto rojo aparezca en tiempo real)
+            const senderData = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+            
+            const notificationPayload = {
+                ...notifResult.rows[0],
+                sender_username: senderData.rows[0].username,
+                sender_profile_pic_url: senderData.rows[0].profile_pic_url
+            };
+
+            io.to(`user-${receiver_id}`).emit('new_notification', notificationPayload);
+
+        } catch (notifErr) {
+            console.error("Error al crear notificación de mensaje:", notifErr);
+        }
         // =========================================================
         // === ¡LA CLAVE!: RE-INYECTAR EL PACK AL OBJETO A ENVIAR ===
         // =========================================================
