@@ -288,10 +288,14 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
                         };
                         io.to(`user-${recipientId}`).emit('new_notification', notificationPayload);
 
-                        // 5. Enviar PUSH (Firebase)
+                        // 5. Enviar PUSH (Firebase) - VERSION CORREGIDA Y UNIFICADA
                         const tokenRes = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [recipientId]);
                         if (tokenRes.rows[0]?.fcm_token) {
-                            const bodyText = typeof getPushPlainText === 'function' ? getPushPlainText(content) : content.substring(0, 100);
+                            // Limpiamos el texto para que no salgan códigos [E:...] en la barra de estado del celular
+                            const bodyText = typeof getPushPlainText === 'function' 
+                                ? getPushPlainText(content) 
+                                : content.replace(/\[E:.*?\]/g, "😊").substring(0, 100);
+
                             const pushTitle = notifType === 'new_reply' ? 'Nueva respuesta' : 'AnarkWorld';
                             const pushBody = notifType === 'new_reply' 
                                 ? `${sender.username} respondió a tu comentario: ${bodyText}`
@@ -302,12 +306,20 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
                                 data: {
                                     title: pushTitle,
                                     body: pushBody,
-                                    channelId: 'default_channel',
-                                    openUrl: `comments.html?postId=${postId}&targetComment=${commentId}`,
+                                    // 🚀 ESTOS CAMPOS ACTIVAN LA LÓGICA NATIVA EN JAVA/CAPACITOR
+                                    channelId: 'social_channel',      // Canal con importancia alta
+                                    groupId: 'comments',              // Agrupa todos los comentarios en uno solo
+                                    senderId: String(userId),         // Quién envía
+                                    openUrl: `comments.html?postId=${postId}&targetComment=${commentId}`, // Link directo al comentario
                                     imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
+                                },
+                                android: {
+                                    priority: 'high'
                                 }
                             };
-                            admin.messaging().send(message).catch(e => console.error("Push Error:", e));
+
+                            // Envío asíncrono para no retrasar la respuesta al usuario
+                            admin.messaging().send(message).catch(e => console.error("❌ Error enviando Push Comentario:", e));
                         }
                     }
                 } catch (notifErr) {
@@ -527,25 +539,24 @@ router.post('/share-increment/:postId', (req, res, next) => protect(req, res, ne
 
 
 // 🚀 FUNCIÓN AUXILIAR PARA NOTIFICAR A SEGUIDORES Y AMIGOS
-async function notifyFollowersOfNewPost(pool, io, admin, authorId, postId, content) {
+// 🚀 FUNCIÓN AUXILIAR ACTUALIZADA
+async function notifyFollowersOfNewPost(pool, io, admin, authorId, postId, content, videoId = null) {
     try {
-        // 1. Buscamos a todos los seguidores y verificamos si son amigos (mutuals)
+        // 1. Buscamos a los seguidores. 
+        // Simplificamos el SQL: Solo necesitamos saber si el autor (following_id) 
+        // también sigue al seguidor (follower_id).
         const followersRes = await pool.query(`
             SELECT 
                 f.follower_id as recipient_id,
                 u.username as author_name,
                 u.profile_pic_url as author_avatar,
                 EXISTS (
-                    SELECT 1 FROM followersapp f2 
-                    WHERE f2.follower_id = f.follower_id 
-                    AND f2.following_id = f.following_id
-                ) AND EXISTS (
-                    SELECT 1 FROM followersapp f3 
-                    WHERE f3.follower_id = f.following_id 
-                    AND f3.following_id = f.follower_id
+                    SELECT 1 FROM followersapp 
+                    WHERE follower_id = f.following_id 
+                    AND following_id = f.follower_id
                 ) as is_friend
             FROM followersapp f
-            JOIN usersapp u ON u.id = $1
+            JOIN usersapp u ON u.id = f.following_id
             WHERE f.following_id = $1
         `, [authorId]);
 
@@ -554,21 +565,22 @@ async function notifyFollowersOfNewPost(pool, io, admin, authorId, postId, conte
         for (let row of followers) {
             const { recipient_id, author_name, author_avatar, is_friend } = row;
 
-            // 2. Insertar en la tabla de notificaciones (la campana)
-            const notifType = 'new_post';
+            // 2. Insertar en la campana
             const notifQuery = `
                 INSERT INTO notificationsapp (recipient_id, sender_id, type, content, post_id)
-                VALUES ($1, $2, $3, $4, $5)
+                VALUES ($1, $2, 'new_post', $3, $4)
                 RETURNING *;
             `;
-            const notifResult = await pool.query(notifQuery, [recipient_id, authorId, notifType, content, postId]);
+            // Guardamos un texto sutil para el content de la DB
+            const dbContent = videoId ? "[VIDEO]" : (content ? content.substring(0, 50) : "[IMAGEN]");
+            const notifResult = await pool.query(notifQuery, [recipient_id, authorId, dbContent, postId]);
 
-            // 3. Avisar por SOCKET (Tiempo Real)
+            // 3. Socket (Tiempo Real)
             const notificationPayload = {
                 ...notifResult.rows[0],
                 sender_username: author_name,
                 sender_profile_pic_url: author_avatar,
-                is_friend: is_friend // Pasamos este dato para el texto dinámico
+                is_friend: is_friend
             };
             io.to(`user-${recipient_id}`).emit('new_notification', notificationPayload);
 
@@ -581,17 +593,24 @@ async function notifyFollowersOfNewPost(pool, io, admin, authorId, postId, conte
                     ? `¡Tu amigo ${author_name} hizo una nueva publicación!` 
                     : `${author_name} publicó algo nuevo.`;
 
+                const targetPage = videoId ? 'video_feed.html' : 'comments.html';
+
                 const message = {
                     token: token,
                     data: {
                         title: 'AnarkWorld',
                         body: bodyText,
-                        channelId: 'default_channel',
-                        openUrl: content.includes('video_id') ? `video_feed.html?postId=${postId}` : `comments.html?postId=${postId}`,
+                        // 🚀 IMPORTANTE: Mismos campos que en send_message
+                        channelId: 'social_channel', 
+                        groupId: 'new_posts', // Agrupa todas las alertas de posts
+                        senderId: String(authorId),
+                        openUrl: `${targetPage}?postId=${postId}`,
                         imageUrl: author_avatar ? (process.env.PUBLIC_SERVER_URL + author_avatar).trim() : ""
-                    }
+                    },
+                    android: { priority: 'high' }
                 };
-                admin.messaging().send(message).catch(() => {});
+
+                admin.messaging().send(message).catch(e => console.error("Push Error (New Post):", e));
             }
         }
     } catch (err) {
