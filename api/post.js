@@ -224,16 +224,90 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
             return res.status(400).json({ success: false, message: 'El contenido del comentario no puede estar vacío.' });
         }
 
-        // --- VALIDACIÓN DE LÍMITE DE CARACTERES ---
         if (content.length > 500) {
             return res.status(400).json({ success: false, message: `El comentario no puede exceder los 500 caracteres.` });
         }
-        // ------------------------------------------
 
         try {
+            // 1. Insertar el comentario real
             const query = `INSERT INTO commentsapp (post_id, user_id, content, parent_comment_id) VALUES ($1, $2, $3, $4) RETURNING comment_id;`;
             const result = await pool.query(query, [postId, userId, content, parent_comment_id || null]);
-            res.status(201).json({ success: true, message: 'Comentario añadido.', commentId: result.rows[0].comment_id });
+            
+            if (result.rows.length > 0) {
+                const commentId = result.rows[0].comment_id;
+
+                // ==========================================================
+                // 🔔 INICIO LÓGICA DE NOTIFICACIONES
+                // ==========================================================
+                try {
+                    // A. Buscar al dueño del post y los datos del que comenta (sender)
+                    const dataRes = await pool.query(`
+                        SELECT 
+                            p.user_id as recipient_id, 
+                            u.username as sender_name, 
+                            u.profile_pic_url as sender_avatar
+                        FROM postapp p
+                        JOIN usersapp u ON u.id = $2
+                        WHERE p.post_id = $1
+                    `, [postId, userId]);
+
+                    if (dataRes.rows.length > 0) {
+                        const { recipient_id, sender_name, sender_avatar } = dataRes.rows[0];
+
+                        // 🚀 Solo notificamos si el que comenta NO es el dueño del post
+                        if (recipient_id !== userId) {
+                            
+                            // B. Guardar en la tabla de notificaciones (la campana)
+                            const notifQuery = `
+                                INSERT INTO notificationsapp (recipient_id, sender_id, type, content, post_id)
+                                VALUES ($1, $2, 'new_comment', $3, $4)
+                                RETURNING *;
+                            `;
+                            const notifResult = await pool.query(notifQuery, [recipient_id, userId, content, postId]);
+
+                            // C. Avisar por SOCKET (Tiempo Real - Punto rojo)
+                            const io = req.app.get('socketio');
+                            const notificationPayload = {
+                                ...notifResult.rows[0],
+                                sender_username: sender_name,
+                                sender_profile_pic_url: sender_avatar
+                            };
+                            io.to(`user-${recipient_id}`).emit('new_notification', notificationPayload);
+
+                            // D. Enviar NOTIFICACIÓN PUSH (Firebase)
+                            const tokenRes = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [recipient_id]);
+                            const recipientToken = tokenRes.rows[0]?.fcm_token;
+
+                            if (recipientToken) {
+                                // Usamos la función de limpieza de texto que definimos en server.js
+                                // Si no es accesible aquí, puedes usar content.substring(0, 100)
+                                const bodyText = typeof getPushPlainText === 'function' 
+                                    ? getPushPlainText(content) 
+                                    : content.replace(/\[E:.*?\]/g, "😊").substring(0, 100);
+
+                                const pushMessage = {
+                                    token: recipientToken,
+                                    data: {
+                                        title: 'AnarkWorld',
+                                        body: `${sender_name} comentó tu post: ${bodyText}`,
+                                        channelId: 'default_channel',
+                                        openUrl: `comments.html?postId=${postId}`,
+                                        imageUrl: sender_avatar ? (process.env.PUBLIC_SERVER_URL + sender_avatar).trim() : ""
+                                    },
+                                    android: { priority: 'high' }
+                                };
+                                // Asumimos que 'admin' (firebase-admin) es global o está disponible
+                                admin.messaging().send(pushMessage).catch(e => console.error("Push Error:", e));
+                            }
+                        }
+                    }
+                } catch (notifErr) {
+                    console.error("⚠️ Error procesando notificación de comentario:", notifErr);
+                }
+                // ==========================================================
+
+                res.status(201).json({ success: true, message: 'Comentario añadido.', commentId });
+            }
         } catch (error) {
             console.error('❌ Error al añadir comentario:', error.stack);
             res.status(500).json({ success: false, message: 'Error interno al añadir comentario.' });
