@@ -1,6 +1,7 @@
 // Archivo: /server/api/post.js (VERSIÓN COMPLETA Y CORREGIDA)
 
 const express = require('express');
+const admin = require('firebase-admin'); // 🚀 AÑADE ESTA LÍNEA
 const { protect, softProtect } = require('../middleware/auth');
 const uploadImageMiddleware = require('../middleware/uploadImage');
 const uploadVideoMiddleware = require('../middleware/uploadVideo');
