@@ -381,6 +381,34 @@ app.get('/invite', (req, res) => {
         </html>
     `);
 });
+
+// 🚀 UTILIDAD PARA NOTIFICACIONES PUSH (TEXTO PLANO)
+function getPushPlainText(content) {
+    if (!content) return "";
+    
+    // Convertir códigos a texto amigable
+    if (content.includes('AUDIO')) return "🎤 Mensaje de voz";
+    if (content.includes('[MEDIA_GRID:')) return "🖼️ Álbum de fotos/videos";
+    if (content.includes('[MEDIA_IMAGE:')) return "📷 Foto";
+    if (content.includes('[MEDIA_VIDEO:')) return "🎥 Video";
+    
+    if (content.startsWith('[MUSIC_V1]')) {
+        try {
+            const song = JSON.parse(content.replace('[MUSIC_V1]', ''));
+            return `🎵 Música: ${song.title}`;
+        } catch(e) { return "🎵 Música"; }
+    }
+    
+    if (content.includes('/uploads/stickers') || content.includes('giphy.com')) return "🖼️ Sticker";
+
+    // Limpiar emojis personalizados [E:archivo.webp] -> 😊
+    if (content.includes('[E:')) {
+        return content.replace(/\[E:.*?\]/g, "😊").trim();
+    }
+
+    // Texto normal (limitado para que no sea gigante)
+    return content.length > 100 ? content.substring(0, 100) + "..." : content;
+}
 // ==========================================================
 
 app.use(express.json({ limit: '50mb' }));
@@ -775,10 +803,11 @@ io.on('connection', (socket) => {
                     token: recipient.fcm_token,
                     data: {
                         title: sender.username,
-                        body: content,
+                        // 🚀 AQUÍ APLICAMOS LA FUNCIÓN
+                        body: getPushPlainText(content), 
+                        
                         channelId: 'chat_messages_channel',
                         groupId: String(sender_id),
-                        senderId: String(sender_id),
                         openUrl: `chat.html?userId=${sender_id}`,
                         imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
                     },
@@ -1231,6 +1260,7 @@ async function initDatabase() {
             recipient_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL, -- Quién recibe la notificación
             sender_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,    -- Quién la originó
             type VARCHAR(20) NOT NULL, -- 'new_follower', 'like', 'comment'
+            content TEXT,
             post_id INTEGER REFERENCES postapp(post_id) ON DELETE CASCADE, -- Opcional, para likes/comentarios
             is_read BOOLEAN DEFAULT FALSE NOT NULL,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
