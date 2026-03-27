@@ -236,75 +236,79 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
             if (result.rows.length > 0) {
                 const commentId = result.rows[0].comment_id;
 
-                // ==========================================================
-                // 🔔 INICIO LÓGICA DE NOTIFICACIONES
-                // ==========================================================
                 try {
-                    // A. Buscar al dueño del post y los datos del que comenta (sender)
-                    const dataRes = await pool.query(`
-                        SELECT 
-                            p.user_id as recipient_id, 
-                            u.username as sender_name, 
-                            u.profile_pic_url as sender_avatar
-                        FROM postapp p
-                        JOIN usersapp u ON u.id = $2
-                        WHERE p.post_id = $1
-                    `, [postId, userId]);
+                    // 1. Obtener datos del emisor (el que está comentando ahora)
+                    const senderRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [userId]);
+                    const sender = senderRes.rows[0];
 
-                    if (dataRes.rows.length > 0) {
-                        const { recipient_id, sender_name, sender_avatar } = dataRes.rows[0];
+                    let recipientId = null;
+                    let notifType = 'new_comment';
 
-                        // 🚀 Solo notificamos si el que comenta NO es el dueño del post
-                        if (recipient_id !== userId) {
-                            
-                            // B. Guardar en la tabla de notificaciones (la campana)
-                            const notifQuery = `
-                                INSERT INTO notificationsapp (recipient_id, sender_id, type, content, post_id, comment_id)
-                                VALUES ($1, $2, 'new_comment', $3, $4, $5)
-                                RETURNING *;
-                            `;
-                            const notifResult = await pool.query(notifQuery, [recipient_id, userId, content, postId, commentId]);
+                    if (parent_comment_id) {
+                        // 🚀 CASO A: ES UNA RESPUESTA
+                        // Buscamos quién es el dueño del comentario al que estamos respondiendo
+                        const parentRes = await pool.query('SELECT user_id FROM commentsapp WHERE comment_id = $1', [parent_comment_id]);
+                        if (parentRes.rows.length > 0) {
+                            recipientId = parentRes.rows[0].user_id;
+                            notifType = 'new_reply';
+                        }
+                    } 
+                    
+                    if (!recipientId) {
+                        // 🚀 CASO B: ES COMENTARIO RAÍZ
+                        // Buscamos al dueño del post
+                        const postRes = await pool.query('SELECT user_id FROM postapp WHERE post_id = $1', [postId]);
+                        if (postRes.rows.length > 0) {
+                            recipientId = postRes.rows[0].user_id;
+                            notifType = 'new_comment';
+                        }
+                    }
 
-                            // C. Avisar por SOCKET (Tiempo Real - Punto rojo)
-                            const io = req.app.get('socketio');
-                            const notificationPayload = {
-                                ...notifResult.rows[0],
-                                sender_username: sender_name,
-                                sender_profile_pic_url: sender_avatar
+                    // 2. Solo notificamos si el receptor NO es el mismo que el emisor
+                    if (recipientId && recipientId !== userId) {
+                        
+                        // 3. Insertar en la tabla de notificaciones
+                        const notifQuery = `
+                            INSERT INTO notificationsapp (recipient_id, sender_id, type, content, post_id, comment_id)
+                            VALUES ($1, $2, $3, $4, $5, $6)
+                            RETURNING *;
+                        `;
+                        const notifResult = await pool.query(notifQuery, [recipientId, userId, notifType, content, postId, commentId]);
+
+                        // 4. Avisar por SOCKET (Tiempo Real)
+                        const io = req.app.get('socketio');
+                        const notificationPayload = {
+                            ...notifResult.rows[0],
+                            sender_username: sender.username,
+                            sender_profile_pic_url: sender.profile_pic_url
+                        };
+                        io.to(`user-${recipientId}`).emit('new_notification', notificationPayload);
+
+                        // 5. Enviar PUSH (Firebase)
+                        const tokenRes = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [recipientId]);
+                        if (tokenRes.rows[0]?.fcm_token) {
+                            const bodyText = typeof getPushPlainText === 'function' ? getPushPlainText(content) : content.substring(0, 100);
+                            const pushTitle = notifType === 'new_reply' ? 'Nueva respuesta' : 'AnarkWorld';
+                            const pushBody = notifType === 'new_reply' 
+                                ? `${sender.username} respondió a tu comentario: ${bodyText}`
+                                : `${sender.username} comentó tu post: ${bodyText}`;
+
+                            const message = {
+                                token: tokenRes.rows[0].fcm_token,
+                                data: {
+                                    title: pushTitle,
+                                    body: pushBody,
+                                    channelId: 'default_channel',
+                                    openUrl: `comments.html?postId=${postId}&targetComment=${commentId}`,
+                                    imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
+                                }
                             };
-                            io.to(`user-${recipient_id}`).emit('new_notification', notificationPayload);
-
-                            // D. Enviar NOTIFICACIÓN PUSH (Firebase)
-                            const tokenRes = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [recipient_id]);
-                            const recipientToken = tokenRes.rows[0]?.fcm_token;
-
-                            if (recipientToken) {
-                                // Usamos la función de limpieza de texto que definimos en server.js
-                                // Si no es accesible aquí, puedes usar content.substring(0, 100)
-                                const bodyText = typeof getPushPlainText === 'function' 
-                                    ? getPushPlainText(content) 
-                                    : content.replace(/\[E:.*?\]/g, "😊").substring(0, 100);
-
-                                const pushMessage = {
-                                    token: recipientToken,
-                                    data: {
-                                        title: 'AnarkWorld',
-                                        body: `${sender_name} comentó tu post: ${bodyText}`,
-                                        channelId: 'default_channel',
-                                        openUrl: `comments.html?postId=${postId}`,
-                                        imageUrl: sender_avatar ? (process.env.PUBLIC_SERVER_URL + sender_avatar).trim() : ""
-                                    },
-                                    android: { priority: 'high' }
-                                };
-                                // Asumimos que 'admin' (firebase-admin) es global o está disponible
-                                admin.messaging().send(pushMessage).catch(e => console.error("Push Error:", e));
-                            }
+                            admin.messaging().send(message).catch(e => console.error("Push Error:", e));
                         }
                     }
                 } catch (notifErr) {
-                    console.error("⚠️ Error procesando notificación de comentario:", notifErr);
+                    console.error("⚠️ Error procesando notificación:", notifErr);
                 }
-                // ==========================================================
 
                 res.status(201).json({ success: true, message: 'Comentario añadido.', commentId });
             }
