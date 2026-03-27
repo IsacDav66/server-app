@@ -39,29 +39,26 @@ module.exports = (pool, JWT_SECRET) => {
     });
 
 
-    // RUTA PARA MARCAR LEÍDA UNA NOTIFICACIÓN ESPECÍFICA O TODAS LAS DE UN CHAT
+    // RUTA 1: Marcar como leída (Para seguidores, comentarios, etc)
     router.post('/read-specific', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const { notificationId, senderId, type } = req.body;
-        const recipientId = req.user.userId;
-
         try {
-            if (notificationId) {
-                // Caso 1: Marcar una sola (ej. un seguidor nuevo)
-                await pool.query(
-                    'UPDATE notificationsapp SET is_read = TRUE WHERE notification_id = $1 AND recipient_id = $2',
-                    [notificationId, recipientId]
-                );
-            } else if (senderId && type) {
-                // Caso 2: Marcar todas las de un emisor (ej. al entrar al chat)
-                await pool.query(
-                    'UPDATE notificationsapp SET is_read = TRUE WHERE recipient_id = $1 AND sender_id = $2 AND type = $3',
-                    [recipientId, senderId, type]
-                );
-            }
+            await pool.query(
+                'UPDATE notificationsapp SET is_read = TRUE WHERE notification_id = $1 AND recipient_id = $2',
+                [req.body.notificationId, req.user.userId]
+            );
             res.json({ success: true });
-        } catch (error) {
-            res.status(500).json({ success: false });
-        }
+        } catch (e) { res.status(500).json({ success: false }); }
+    });
+
+    // RUTA 2: Borrar (Para mensajes)
+    router.delete('/:id', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        try {
+            await pool.query(
+                'DELETE FROM notificationsapp WHERE notification_id = $1 AND recipient_id = $2',
+                [req.params.id, req.user.userId]
+            );
+            res.json({ success: true });
+        } catch (e) { res.status(500).json({ success: false }); }
     });
 
     return router;
