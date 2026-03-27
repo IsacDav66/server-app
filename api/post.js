@@ -136,6 +136,9 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
         try {
             const query = `INSERT INTO postapp (user_id, content, image_url) VALUES ($1, $2, $3) RETURNING post_id;`;
             const result = await pool.query(query, [userId, content, imageUrl]);
+            const postId = result.rows[0].post_id;
+            const io = req.app.get('socketio');
+            notifyFollowersOfNewPost(pool, io, admin, userId, postId, content); // 🚀 Llamada
             res.status(201).json({ success: true, message: 'Publicación creada.', postId: result.rows[0].post_id });
         } catch (error) {
             console.error('❌ Error al crear post:', error.stack);
@@ -428,7 +431,9 @@ router.get('/user/:userId', (req, res, next) => softProtect(req, res, next, JWT_
                     VALUES ($1, $2, $3) RETURNING post_id;
                 `;
                 const result = await pool.query(query, [userId, content, videoId]);
-                
+                const postId = result.rows[0].post_id;
+                const io = req.app.get('socketio');
+                notifyFollowersOfNewPost(pool, io, admin, userId, postId, content); // 🚀 Llamada
                 res.status(201).json({ 
                     success: true, 
                     message: 'Video publicado con éxito.', 
@@ -517,6 +522,81 @@ router.post('/share-increment/:postId', (req, res, next) => protect(req, res, ne
         res.status(500).json({ success: false });
     }
 });
+
+
+
+// 🚀 FUNCIÓN AUXILIAR PARA NOTIFICAR A SEGUIDORES Y AMIGOS
+async function notifyFollowersOfNewPost(pool, io, admin, authorId, postId, content) {
+    try {
+        // 1. Buscamos a todos los seguidores y verificamos si son amigos (mutuals)
+        const followersRes = await pool.query(`
+            SELECT 
+                f.follower_id as recipient_id,
+                u.username as author_name,
+                u.profile_pic_url as author_avatar,
+                EXISTS (
+                    SELECT 1 FROM followersapp f2 
+                    WHERE f2.follower_id = f.follower_id 
+                    AND f2.following_id = f.following_id
+                ) AND EXISTS (
+                    SELECT 1 FROM followersapp f3 
+                    WHERE f3.follower_id = f.following_id 
+                    AND f3.following_id = f.follower_id
+                ) as is_friend
+            FROM followersapp f
+            JOIN usersapp u ON u.id = $1
+            WHERE f.following_id = $1
+        `, [authorId]);
+
+        const followers = followersRes.rows;
+
+        for (let row of followers) {
+            const { recipient_id, author_name, author_avatar, is_friend } = row;
+
+            // 2. Insertar en la tabla de notificaciones (la campana)
+            const notifType = 'new_post';
+            const notifQuery = `
+                INSERT INTO notificationsapp (recipient_id, sender_id, type, content, post_id)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING *;
+            `;
+            const notifResult = await pool.query(notifQuery, [recipient_id, authorId, notifType, content, postId]);
+
+            // 3. Avisar por SOCKET (Tiempo Real)
+            const notificationPayload = {
+                ...notifResult.rows[0],
+                sender_username: author_name,
+                sender_profile_pic_url: author_avatar,
+                is_friend: is_friend // Pasamos este dato para el texto dinámico
+            };
+            io.to(`user-${recipient_id}`).emit('new_notification', notificationPayload);
+
+            // 4. Enviar PUSH (Firebase)
+            const tokenRes = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [recipient_id]);
+            const token = tokenRes.rows[0]?.fcm_token;
+
+            if (token) {
+                const bodyText = is_friend 
+                    ? `¡Tu amigo ${author_name} hizo una nueva publicación!` 
+                    : `${author_name} publicó algo nuevo.`;
+
+                const message = {
+                    token: token,
+                    data: {
+                        title: 'AnarkWorld',
+                        body: bodyText,
+                        channelId: 'default_channel',
+                        openUrl: content.includes('video_id') ? `video_feed.html?postId=${postId}` : `comments.html?postId=${postId}`,
+                        imageUrl: author_avatar ? (process.env.PUBLIC_SERVER_URL + author_avatar).trim() : ""
+                    }
+                };
+                admin.messaging().send(message).catch(() => {});
+            }
+        }
+    } catch (err) {
+        console.error("Error al notificar seguidores:", err);
+    }
+}
 
 return router;
 };
