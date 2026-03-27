@@ -259,11 +259,11 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
                             
                             // B. Guardar en la tabla de notificaciones (la campana)
                             const notifQuery = `
-                                INSERT INTO notificationsapp (recipient_id, sender_id, type, content, post_id)
-                                VALUES ($1, $2, 'new_comment', $3, $4)
+                                INSERT INTO notificationsapp (recipient_id, sender_id, type, content, post_id, comment_id)
+                                VALUES ($1, $2, 'new_comment', $3, $4, $5)
                                 RETURNING *;
                             `;
-                            const notifResult = await pool.query(notifQuery, [recipient_id, userId, content, postId]);
+                            const notifResult = await pool.query(notifQuery, [recipient_id, userId, content, postId, commentId]);
 
                             // C. Avisar por SOCKET (Tiempo Real - Punto rojo)
                             const io = req.app.get('socketio');
