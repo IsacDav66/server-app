@@ -303,19 +303,18 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
 
                             const message = {
                                 token: tokenRes.rows[0].fcm_token,
-                                data: {
+                                notification: { // 🚀 Agregado para apertura garantizada
                                     title: pushTitle,
-                                    body: pushBody,
-                                    // 🚀 ESTOS CAMPOS ACTIVAN LA LÓGICA NATIVA EN JAVA/CAPACITOR
-                                    channelId: 'social_channel',      // Canal con importancia alta
-                                    groupId: 'comments',              // Agrupa todos los comentarios en uno solo
-                                    senderId: String(userId),         // Quién envía
-                                    openUrl: `comments.html?postId=${postId}&targetComment=${commentId}`, // Link directo al comentario
+                                    body: pushBody
+                                },
+                                data: { // 🚀 Datos para el enrutador
+                                    channelId: 'social_channel',
+                                    groupId: 'comments',
+                                    senderId: String(userId),
+                                    openUrl: `comments.html?postId=${postId}&targetComment=${commentId}`,
                                     imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
                                 },
-                                android: {
-                                    priority: 'high'
-                                }
+                                android: { priority: 'high' }
                             };
 
                             // Envío asíncrono para no retrasar la respuesta al usuario
@@ -597,12 +596,13 @@ async function notifyFollowersOfNewPost(pool, io, admin, authorId, postId, conte
 
                 const message = {
                     token: token,
-                    data: {
+                    notification: { // 🚀 Esto despierta al sistema Android
                         title: 'AnarkWorld',
-                        body: bodyText,
-                        // 🚀 IMPORTANTE: Mismos campos que en send_message
+                        body: bodyText
+                    },
+                    data: { // 🚀 Esto lo lee tu código JS
                         channelId: 'social_channel', 
-                        groupId: 'new_posts', // Agrupa todas las alertas de posts
+                        groupId: 'new_posts',
                         senderId: String(authorId),
                         openUrl: `${targetPage}?postId=${postId}`,
                         imageUrl: author_avatar ? (process.env.PUBLIC_SERVER_URL + author_avatar).trim() : ""

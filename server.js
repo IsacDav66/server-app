@@ -381,6 +381,34 @@ app.get('/invite', (req, res) => {
         </html>
     `);
 });
+
+// 🚀 UTILIDAD PARA NOTIFICACIONES PUSH (TEXTO PLANO)
+function getPushPlainText(content) {
+    if (!content) return "";
+    
+    // Convertir códigos a texto amigable
+    if (content.includes('AUDIO')) return "🎤 Mensaje de voz";
+    if (content.includes('[MEDIA_GRID:')) return "🖼️ Álbum de fotos/videos";
+    if (content.includes('[MEDIA_IMAGE:')) return "📷 Foto";
+    if (content.includes('[MEDIA_VIDEO:')) return "🎥 Video";
+    
+    if (content.startsWith('[MUSIC_V1]')) {
+        try {
+            const song = JSON.parse(content.replace('[MUSIC_V1]', ''));
+            return `🎵 Música: ${song.title}`;
+        } catch(e) { return "🎵 Música"; }
+    }
+    
+    if (content.includes('/uploads/stickers') || content.includes('giphy.com')) return "🖼️ Sticker";
+
+    // Limpiar emojis personalizados [E:archivo.webp] -> 😊
+    if (content.includes('[E:')) {
+        return content.replace(/\[E:.*?\]/g, "😊").trim();
+    }
+
+    // Texto normal (limitado para que no sea gigante)
+    return content.length > 100 ? content.substring(0, 100) + "..." : content;
+}
 // ==========================================================
 
 app.use(express.json({ limit: '50mb' }));
@@ -688,124 +716,135 @@ io.on('connection', (socket) => {
     });
 
     socket.on('send_message', async (data) => {
-     // 1. Extraemos los datos del cliente, incluyendo el pack de stickers
-    const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
+        const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
 
-    // LOG DE ENTRADA
-    console.log(`📨 [SERVER] Recibido mensaje de ${sender_id} para ${receiver_id}. Pack: ${sticker_pack ? sticker_pack.name : 'Ninguno'}`);
-
-    try {
-        // 1. Guardar el nuevo mensaje en la base de datos
-        // Nota: No guardamos el sticker_pack en la BD porque la tabla no tiene esa columna,
-        // pero lo pasaremos "en vivo" a través del socket.
-         const insertQuery = `
-            INSERT INTO messagesapp (sender_id, receiver_id, content, room_name, parent_message_id, sticker_pack, emoji_pack) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`;
-            
-        const insertResult = await pool.query(insertQuery, [
-            sender_id, receiver_id, content, roomName, parent_message_id || null, 
-            sticker_pack ? JSON.stringify(sticker_pack) : null,
-            emoji_pack ? JSON.stringify(emoji_pack) : null // 👈 Nuevo
-        ]);
-        
-        let savedMessage = insertResult.rows[0]; // Objeto que contiene el message_id real generado por la BD
-
-        // =========================================================
-        // === ¡LA CLAVE!: RE-INYECTAR EL PACK AL OBJETO A ENVIAR ===
-        // =========================================================
-        if (sticker_pack) {
-            savedMessage.sticker_pack = sticker_pack;
-            console.log(`📦 [SERVER] Re-inyectando pack "${sticker_pack.name}" al mensaje para el destinatario.`);
-        }
-        if (emoji_pack) {
-            savedMessage.emoji_pack = emoji_pack; // 👈 Nuevo
-            console.log(`📦 [SERVER] Re-inyectando pack "${emoji_pack.name}" al mensaje para el destinatario.`);
-        }
-        // =========================================================
-
-        // =========================================================
-        // === LÓGICA DE ENRIQUECIMIENTO (RESPUESTAS) ===
-        // =========================================================
-        if (savedMessage.parent_message_id) {
-            const parentQuery = `
-                SELECT 
-                    p.content as parent_content,
-                    pu.username as parent_username
-                FROM messagesapp AS p
-                JOIN usersapp AS pu ON p.sender_id = pu.id
-                WHERE p.message_id = $1;
-            `;
-            const parentResult = await pool.query(parentQuery, [savedMessage.parent_message_id]);
-            
-            if (parentResult.rows.length > 0) {
-                savedMessage.parent_content = parentResult.rows[0].parent_content;
-                savedMessage.parent_username = parentResult.rows[0].parent_username;
-            }
-        }
-        // =========================================================
-
-        // 3. Emitimos el mensaje (ahora enriquecido) al otro usuario en la sala
-        socket.to(roomName).emit('receive_message', savedMessage);
-        io.to(`user-${receiver_id}`).emit('receive_message', savedMessage);
-
-        console.log(`📩 [SERVER] Mensaje emitido a sala: ${roomName}. ¿Lleva pack?: ${!!savedMessage.sticker_pack}`);
-
-        // 4. Enviamos la confirmación al emisor original para quitar el reloj de carga
-        socket.emit('message_confirmed', {
-            tempId: tempId,
-            realMessage: savedMessage
-        });
-
-        console.log(`📝 [DB-SAVE] Intentando guardar mensaje:`);
-        console.log(`   - De: ${sender_id} Para: ${receiver_id}`);
-        console.log(`   - En columna room_name: "${roomName}"`);
-        // ==========================================================
-        // === LÓGICA DE NOTIFICACIÓN PUSH PARA MENSAJES ===
-        // ==========================================================
+        console.log(`📨 [SERVER] Recibido mensaje de ${sender_id} para ${receiver_id}. Pack: ${sticker_pack ? sticker_pack.name : 'Ninguno'}`);
 
         try {
-            const recipientResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
-            const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+            // 1. Guardar el nuevo mensaje en la base de datos
+            const insertQuery = `
+                INSERT INTO messagesapp (sender_id, receiver_id, content, room_name, parent_message_id, sticker_pack, emoji_pack) 
+                VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`;
+                
+            const insertResult = await pool.query(insertQuery, [
+                sender_id, receiver_id, content, roomName, parent_message_id || null, 
+                sticker_pack ? JSON.stringify(sticker_pack) : null,
+                emoji_pack ? JSON.stringify(emoji_pack) : null
+            ]);
+            
+            let savedMessage = insertResult.rows[0];
 
-            const recipient = recipientResult.rows[0];
-            const sender = senderResult.rows[0];
+            // ============================================================
+            // 🚀 NUEVA LÓGICA DE NOTIFICACIÓN AGRUPADA (REEMPLAZO)
+            // ============================================================
+            try {
+                // 1. Intentamos actualizar una notificación de mensaje existente que NO haya sido leída
+                const updateResult = await pool.query(`
+                    UPDATE notificationsapp 
+                    SET message_count = message_count + 1, 
+                        content = $3, 
+                        created_at = CURRENT_TIMESTAMP 
+                    WHERE recipient_id = $1 AND sender_id = $2 AND type = 'new_message' AND is_read = FALSE
+                    RETURNING *;
+                `, [receiver_id, sender_id, content]);
 
-            if (recipient && recipient.fcm_token) {
-                const message = {
-                    token: recipient.fcm_token,
-                    data: {
-                        title: sender.username,
-                        body: content,
-                        channelId: 'chat_messages_channel',
-                        groupId: String(sender_id),
-                        senderId: String(sender_id),
-                        openUrl: `chat.html?userId=${sender_id}`,
-                        imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
-                    },
-                    android: { priority: 'high' }
+                let finalNotif;
+
+                if (updateResult.rowCount === 0) {
+                    // 2. Si no existía una previa sin leer, creamos una nueva con count 1
+                    const insertResult = await pool.query(`
+                        INSERT INTO notificationsapp (recipient_id, sender_id, type, content, message_count)
+                        VALUES ($1, $2, 'new_message', $3, 1)
+                        RETURNING *;
+                    `, [receiver_id, sender_id, content]);
+                    finalNotif = insertResult.rows[0];
+                } else {
+                    finalNotif = updateResult.rows[0];
+                }
+
+                // 3. Obtener datos del emisor para el socket
+                const senderDataRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+                const senderData = senderDataRes.rows[0];
+                
+                const notificationPayload = {
+                    ...finalNotif,
+                    sender_username: senderData.username,
+                    sender_profile_pic_url: senderData.profile_pic_url
                 };
 
-                try {
-                    await admin.messaging().send(message);
-                    console.log(`✅ [PUSH] Enviado correctamente a usuario ${receiver_id}`);
-                } catch (pushError) {
-                    if (pushError.code === 'messaging/registration-token-not-registered' || 
-                        pushError.code === 'messaging/invalid-registration-token') {
-                        console.warn(`🗑️ [PUSH] Token inválido detectado para el usuario ${receiver_id}. Borrando de la DB...`);
-                        await pool.query('UPDATE usersapp SET fcm_token = NULL WHERE id = $1', [receiver_id]);
-                    } else {
-                        console.error("❌ [PUSH] Error desconocido de Firebase:", pushError.message);
-                    }
+                // 4. Avisar al receptor por socket
+                io.to(`user-${receiver_id}`).emit('new_notification', notificationPayload);
+
+            } catch (notifErr) {
+                console.error("❌ Error en notificación agrupada:", notifErr);
+            }
+            // ============================================================
+
+            if (sticker_pack) {
+                savedMessage.sticker_pack = sticker_pack;
+            }
+            if (emoji_pack) {
+                savedMessage.emoji_pack = emoji_pack;
+            }
+
+            if (savedMessage.parent_message_id) {
+                const parentQuery = `
+                    SELECT p.content as parent_content, pu.username as parent_username
+                    FROM messagesapp AS p
+                    JOIN usersapp AS pu ON p.sender_id = pu.id
+                    WHERE p.message_id = $1;
+                `;
+                const parentResult = await pool.query(parentQuery, [savedMessage.parent_message_id]);
+                if (parentResult.rows.length > 0) {
+                    savedMessage.parent_content = parentResult.rows[0].parent_content;
+                    savedMessage.parent_username = parentResult.rows[0].parent_username;
                 }
             }
-        } catch (error) {
-            console.error("❌ [SERVER] Error general en proceso de Push:", error);
-        }
 
-    } catch (error) {
-        console.error("❌ [SERVER] Error al guardar o enviar el mensaje:", error);
-    }
-    }); // 🚀 AQUÍ SE CIERRA CORRECTAMENTE EL EVENTO SEND_MESSAGE
+            socket.to(roomName).emit('receive_message', savedMessage);
+            io.to(`user-${receiver_id}`).emit('receive_message', savedMessage);
+
+            socket.emit('message_confirmed', {
+                tempId: tempId,
+                realMessage: savedMessage
+            });
+
+            // --- LÓGICA PUSH FIREBASE ---
+            try {
+                    const recipientResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
+                    const recipient = recipientResult.rows[0];
+
+                    if (recipient && recipient.fcm_token) {
+                        const message = {
+                            token: recipient.fcm_token,
+                            notification: { // 🚀 IMPORTANTE: Esto asegura que el sistema Android muestre la alerta
+                                title: senderData.username,
+                                body: getPushPlainText(contentToSave) // "🎤 Mensaje de voz" o "📷 Foto"
+                            },
+                            data: { // 🚀 Datos para tu lógica de enrutamiento
+                                channelId: 'chat_messages_channel',
+                                groupId: String(sender_id),
+                                senderId: String(sender_id),
+                                openUrl: `chat.html?userId=${sender_id}`,
+                                imageUrl: senderData.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url).trim() : ""
+                            },
+                            android: {
+                                priority: 'high'
+                            }
+                        };
+
+                        await admin.messaging().send(message);
+                        console.log(`✅ [PUSH MEDIA] Enviado correctamente a usuario ${receiver_id}`);
+                    }
+                } catch (pushErr) {
+                    console.error("❌ Error en Push Media:", pushErr.message);
+                }
+                // ============================================================
+
+        } catch (error) {
+            console.error("❌ [SERVER] Error crítico en send_message:", error);
+        }
+    });
 
     // Evento para solicitar a un usuario que vuelva a enviar un archivo binario
     socket.on('request_media_relay', (data) => {
@@ -825,7 +864,7 @@ io.on('connection', (socket) => {
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
 socket.on('send_media_relay', async (data) => {
-    // 1. Extraer datos (🚀 añadimos parent_message_id)
+    // 1. Extraer datos
     const { roomName, sender_id, receiver_id, isNew, isGrid, tempId, parent_message_id } = data;
     
     let items = data.items;
@@ -840,15 +879,13 @@ socket.on('send_media_relay', async (data) => {
     }
 
     if (!items || items.length === 0) return;
+
     // 🚀 LÓGICA DE PERSISTENCIA TEMPORAL EN SERVER
     if (isNew) {
         items.forEach(item => {
             if (item.file) {
-                // Guardamos el buffer en un archivo real con el nombre del mediaId
-                // Usamos la extensión según el tipo
                 const ext = item.type === 'VIDEO' ? '.mp4' : (item.type === 'AUDIO' ? '.wav' : '.jpg');
                 const filePath = path.join(chatTempDir, `${item.mediaId}${ext}`);
-                
                 fs.writeFile(filePath, item.file, (err) => {
                     if (err) console.error("❌ Error guardando caché en server:", err);
                     else console.log("💾 Archivo guardado en caché del servidor:", item.mediaId);
@@ -856,6 +893,7 @@ socket.on('send_media_relay', async (data) => {
             }
         });
     }
+
     // 2. Formatear contenido para la base de datos
     let contentToSave = "";
     if (isGrid || items.length > 1) {
@@ -864,25 +902,21 @@ socket.on('send_media_relay', async (data) => {
         ).join('_I_')}]`;
     } else {
         const m = items[0];
-        // 🚀 SI ES AUDIO, usamos el campo duration en el primer slot de parámetros
         const param1 = (m.type === 'AUDIO') ? (m.duration || '') : (m.lqPreview || '');
         contentToSave = `[MEDIA_${m.type}:${m.mediaId}_P_${param1}_P_${m.totalSize || 0}]`;
     }
 
     try {
         if (isNew) {
-            // 🚀 INSERT CORREGIDO: Ahora incluimos parent_message_id
+            // Guardar el mensaje en la DB
             const result = await pool.query(
                 `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name, parent_message_id) 
                 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
                 [sender_id, receiver_id, contentToSave, roomName, parent_message_id || null]
             );
             
-            // Obtenemos el mensaje guardado (que ahora tiene el parent_id)
             let savedMsg = result.rows[0];
 
-            // 🚀 MUY IMPORTANTE: Antes de emitir, necesitamos el contenido del padre 
-            // para que el receptor vea la respuesta en tiempo real sin recargar.
             if (savedMsg.parent_message_id) {
                 const parentData = await pool.query(
                     `SELECT m.content, u.username 
@@ -897,12 +931,53 @@ socket.on('send_media_relay', async (data) => {
             }
 
             socket.emit('media_confirmed', { tempId, realMessage: savedMsg });
-
-            // Avisar al receptor para que su lista de chats se actualice
             io.to(`user-${receiver_id}`).emit('receive_message', savedMsg);
+
+            // ============================================================
+            // 🚀 NUEVA LÓGICA DE NOTIFICACIÓN AGRUPADA PARA MEDIA
+            // ============================================================
+            try {
+                // 1. Intentamos actualizar una notificación de mensaje existente que no haya sido leída
+                const updateResult = await pool.query(`
+                    UPDATE notificationsapp 
+                    SET message_count = message_count + 1, 
+                        content = $3, 
+                        created_at = CURRENT_TIMESTAMP 
+                    WHERE recipient_id = $1 AND sender_id = $2 AND type = 'new_message' AND is_read = FALSE
+                    RETURNING *;
+                `, [receiver_id, sender_id, contentToSave]);
+
+                let finalNotif;
+
+                if (updateResult.rowCount === 0) {
+                    // 2. Si no existía, creamos una nueva
+                    const insertResult = await pool.query(`
+                        INSERT INTO notificationsapp (recipient_id, sender_id, type, content, message_count)
+                        VALUES ($1, $2, 'new_message', $3, 1)
+                        RETURNING *;
+                    `, [receiver_id, sender_id, contentToSave]);
+                    finalNotif = insertResult.rows[0];
+                } else {
+                    finalNotif = updateResult.rows[0];
+                }
+
+                const senderDataRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+                const senderData = senderDataRes.rows[0];
+                
+                const notificationPayload = {
+                    ...finalNotif,
+                    sender_username: senderData.username,
+                    sender_profile_pic_url: senderData.profile_pic_url
+                };
+
+                io.to(`user-${receiver_id}`).emit('new_notification', notificationPayload);
+            } catch (notifErr) {
+                console.error("❌ Error en notificación agrupada de media:", notifErr);
+            }
+            // ============================================================
         }
 
-        // 3. Retransmitir binario (esto se queda igual)
+        // 3. Retransmitir binario (Igual que antes)
         if (!isNew && receiver_id) {
             items.forEach(item => {
                 io.to(`user-${receiver_id}`).emit('receive_media_relay', {
@@ -920,6 +995,7 @@ socket.on('send_media_relay', async (data) => {
                 });
             });
         }
+
     } catch (e) {
         console.error("❌ Error en relay:", e);
     }
@@ -1231,6 +1307,7 @@ async function initDatabase() {
             recipient_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL, -- Quién recibe la notificación
             sender_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,    -- Quién la originó
             type VARCHAR(20) NOT NULL, -- 'new_follower', 'like', 'comment'
+            content TEXT,
             post_id INTEGER REFERENCES postapp(post_id) ON DELETE CASCADE, -- Opcional, para likes/comentarios
             is_read BOOLEAN DEFAULT FALSE NOT NULL,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
