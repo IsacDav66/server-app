@@ -339,40 +339,40 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
                 const userToNotify = tokenResult.rows[0];
 
                 if (userToNotify && userToNotify.fcm_token) {
-                    
-                    // ==========================================================
-                    // === ¡AQUÍ ESTÁ LA CORRECCIÓN ESTRUCTURAL! ===
-                    // ==========================================================
-                    // Construimos un payload de "SOLO DATOS", sin el campo "notification".
                     const message = {
                         token: userToNotify.fcm_token,
-                        data: {
-                            // Datos para que el cliente construya la notificación
+                        // 1. Bloque visual (Lo que ve el sistema Android)
+                        notification: {
                             title: '¡Nuevo Seguidor!',
                             body: `${senderData.username} ha comenzado a seguirte.`,
-                            
-                            // Los campos que faltaban y que nuestro servicio Java requiere
-                            channelId: 'followers_channel', // El ID del canal para seguidores
-                            groupId: `followers-${followingId}`, // Un ID de grupo para todas las notificaciones de seguidor de este usuario
-
-                            // Datos adicionales para la acción de clic y el icono
-                            senderId: String(followerId),
-                            openUrl: `user_profile.html?id=${followerId}`
+                        },
+                        // 2. Bloque de datos (Lo que lee tu JS)
+                        data: {
+                            type: 'new_follower',
+                            openUrl: `user_profile.html?id=${followerId}`,
+                            // Agregamos logs de rastro en el propio envío
+                            serverTimestamp: new Date().toISOString()
                         },
                         android: {
-                            priority: 'high'
+                            priority: 'high',
+                            notification: {
+                                // 🚀 ESTO ES VITAL: Le dice a Android qué actividad abrir.
+                                // Usamos la constante estándar que los plugins de Capacitor/Firebase escuchan.
+                                clickAction: 'FCM_PLUGIN_ACTIVITY', 
+                                sound: 'default',
+                                channelId: 'followers_channel'
+                            }
                         }
                     };
-                    // ==========================================================
 
-                    // Añadir la URL de la imagen directamente al campo `data`
-                    if (senderData.profile_pic_url) {
-                        const fullImageUrl = (process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url).trim();
-                        message.data.imageUrl = fullImageUrl;
+                    console.log(`📡 [DEBUG-SERVER] Enviando PUSH de seguimiento a ${followingId}. Payload:`, JSON.stringify(message.data));
+
+                    try {
+                        await admin.messaging().send(message);
+                        console.log(`✅ [DEBUG-SERVER] Push de seguimiento entregado a Firebase.`);
+                    } catch (pushError) {
+                        console.error("❌ [DEBUG-SERVER] Error en Firebase:", pushError.message);
                     }
-                    
-                    await admin.messaging().send(message);
-                    console.log(`Notificación de DATOS de seguidor enviada al usuario ${followingId}`);
                 }
             } catch (pushError) {
                 console.error("❌ PUSH: Error al enviar la notificación push de seguidor:", pushError);
