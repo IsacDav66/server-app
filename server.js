@@ -810,32 +810,44 @@ io.on('connection', (socket) => {
             });
 
             // --- LÓGICA PUSH FIREBASE ---
+            // ==========================================================
+            // --- 🚀 LÓGICA PUSH FIREBASE PARA CHAT (CORREGIDA) ---
+            // ==========================================================
             try {
-                    const recipientResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
-                    const recipient = recipientResult.rows[0];
+                const recipientResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
+                const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+                const recipient = recipientResult.rows[0];
+                const sender = senderResult.rows[0];
 
-                    if (recipient && recipient.fcm_token) {
-                        const message = {
-                            token: recipient.fcm_token,
-                            data: {
-                                title: sender.username,
-                                body: getPushPlainText(content), 
-                                channelId: 'chat_messages_channel',
-                                groupId: String(sender_id), // Agrupa por persona
-                                senderId: String(sender_id),
-                                openUrl: `chat.html?userId=${sender_id}`, // Java le pondrá el "com.omletwebfinal://open/"
-                                imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
-                            },
-                            android: { priority: 'high' }
-                        };
+                if (recipient && recipient.fcm_token) {
+                    const message = {
+                        token: recipient.fcm_token,
+                        // 💡 NOTA: NO incluimos el objeto 'notification' aquí.
+                        // Al enviar solo 'data', obligamos a Android a pasarle el control a tu 
+                        // MyFirebaseMessagingService.java para que use el estilo de mensajería.
+                        data: {
+                            title: sender.username,
+                            body: getPushPlainText(content), 
+                            channelId: 'chat_messages_channel',
+                            groupId: String(sender_id),
+                            senderId: String(sender_id),
+                            // 🚀 IMPORTANTE: Añadimos &groupId=${sender_id} para que el JS limpie 
+                            // la memoria de Java al momento de entrar al chat.
+                            openUrl: `chat.html?userId=${sender_id}&groupId=${sender_id}`,
+                            imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
+                        },
+                        android: {
+                            priority: 'high'
+                        }
+                    };
 
-                        await admin.messaging().send(message);
-                        console.log(`✅ [PUSH MEDIA] Enviado correctamente a usuario ${receiver_id}`);
-                    }
-                } catch (pushErr) {
-                    console.error("❌ Error en Push Media:", pushErr.message);
+                    await admin.messaging().send(message);
+                    console.log(`✅ [PUSH CHAT] Notificación de estilo mensajería enviada a: ${receiver_id}`);
                 }
-                // ============================================================
+            } catch (pushErr) {
+                console.error("❌ Error en Push Chat:", pushErr.message);
+            }
+            // ==========================================================
 
         } catch (error) {
             console.error("❌ [SERVER] Error crítico en send_message:", error);
@@ -979,7 +991,7 @@ socket.on('send_media_relay', async (data) => {
             io.to(`user-${receiver_id}`).emit('new_notification', notificationPayload);
 
             // ============================================================
-            // 🚀 D: ENVÍO PUSH NATIVO (FIREBASE)
+            // 🚀 D: ENVÍO PUSH NATIVO (FIREBASE) PARA MEDIA
             // ============================================================
             const recipientRes = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
             const recipient = recipientRes.rows[0];
@@ -987,19 +999,27 @@ socket.on('send_media_relay', async (data) => {
             if (recipient && recipient.fcm_token) {
                 const message = {
                     token: recipient.fcm_token,
+                    // 💡 IMPORTANTE: NO incluimos el objeto 'notification' aquí.
+                    // Al enviar solo 'data', obligamos a Android a pasarle el control a tu 
+                    // MyFirebaseMessagingService.java para que use el estilo de mensajería (MessagingStyle).
                     data: {
                         title: senderData.username,
                         body: getPushPlainText(contentToSave), // "📷 Foto" o "🎤 Mensaje de voz"
                         channelId: 'chat_messages_channel',
                         groupId: String(sender_id),
                         senderId: String(sender_id),
-                        openUrl: `chat.html?userId=${sender_id}`,
+                        // 🚀 CLAVE: Añadimos &groupId=${sender_id} para que el JS limpie 
+                        // la memoria de Java al momento de entrar al chat.
+                        openUrl: `chat.html?userId=${sender_id}&groupId=${sender_id}`,
                         imageUrl: senderData.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url).trim() : ""
                     },
-                    android: { priority: 'high' }
+                    android: {
+                        priority: 'high'
+                    }
                 };
 
                 admin.messaging().send(message).catch(e => console.error("❌ Error enviando Push Media:", e.message));
+                console.log(`✅ [PUSH MEDIA] Notificación enviada a: ${receiver_id} con groupId: ${sender_id}`);
             }
             // ============================================================
 
