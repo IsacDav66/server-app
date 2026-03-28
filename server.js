@@ -817,26 +817,16 @@ io.on('connection', (socket) => {
                     if (recipient && recipient.fcm_token) {
                         const message = {
                             token: recipient.fcm_token,
-                            notification: { // 🚀 AGREGADO
+                            data: {
                                 title: sender.username,
-                                body: getPushPlainText(content)
-                            },
-                            data: { // 🚀 DATOS
-                                title: sender.username,
-                                body: getPushPlainText(content),
+                                body: getPushPlainText(content), 
                                 channelId: 'chat_messages_channel',
-                                groupId: String(sender_id),
+                                groupId: String(sender_id), // Agrupa por persona
                                 senderId: String(sender_id),
-                                openUrl: `chat.html?userId=${sender_id}`,
+                                openUrl: `chat.html?userId=${sender_id}`, // Java le pondrá el "com.omletwebfinal://open/"
                                 imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
                             },
-                            android: {
-                                priority: 'high',
-                                notification: {
-                                    clickAction: 'FCM_PLUGIN_ACTIVITY',
-                                    sound: 'default'
-                                }
-                            }
+                            android: { priority: 'high' }
                         };
 
                         await admin.messaging().send(message);
@@ -997,26 +987,16 @@ socket.on('send_media_relay', async (data) => {
             if (recipient && recipient.fcm_token) {
                 const message = {
                     token: recipient.fcm_token,
-                    notification: { // 💡 Muestra el aviso en la barra de Android
+                    data: {
                         title: senderData.username,
-                        body: getPushPlainText(contentToSave)
-                    },
-                    data: { // 💡 Datos para la lógica de redirección
-                        title: senderData.username,
-                        body: getPushPlainText(contentToSave),
+                        body: getPushPlainText(contentToSave), // "📷 Foto" o "🎤 Mensaje de voz"
                         channelId: 'chat_messages_channel',
                         groupId: String(sender_id),
                         senderId: String(sender_id),
                         openUrl: `chat.html?userId=${sender_id}`,
                         imageUrl: senderData.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url).trim() : ""
                     },
-                    android: {
-                        priority: 'high',
-                        notification: {
-                            clickAction: 'FCM_PLUGIN_ACTIVITY', // 🚀 Fuerza la apertura de la App
-                            sound: 'default'
-                        }
-                    }
+                    android: { priority: 'high' }
                 };
 
                 admin.messaging().send(message).catch(e => console.error("❌ Error enviando Push Media:", e.message));
