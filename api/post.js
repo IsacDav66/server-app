@@ -303,18 +303,26 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
 
                             const message = {
                                 token: tokenRes.rows[0].fcm_token,
-                                notification: { // 🚀 Agregado para apertura garantizada
+                                notification: { // 🚀 AGREGADO
                                     title: pushTitle,
                                     body: pushBody
                                 },
-                                data: { // 🚀 Datos para el enrutador
+                                data: { // 🚀 DATOS PARA EL ENRUTADOR
+                                    title: pushTitle,
+                                    body: pushBody,
                                     channelId: 'social_channel',
                                     groupId: 'comments',
                                     senderId: String(userId),
                                     openUrl: `comments.html?postId=${postId}&targetComment=${commentId}`,
                                     imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
                                 },
-                                android: { priority: 'high' }
+                                android: {
+                                    priority: 'high',
+                                    notification: {
+                                        clickAction: 'FCM_PLUGIN_ACTIVITY',
+                                        sound: 'default'
+                                    }
+                                }
                             };
 
                             // Envío asíncrono para no retrasar la respuesta al usuario
@@ -596,18 +604,26 @@ async function notifyFollowersOfNewPost(pool, io, admin, authorId, postId, conte
 
                 const message = {
                     token: token,
-                    notification: { // 🚀 Esto despierta al sistema Android
+                    notification: { // 🚀 ESTO ES LO QUE ABRE LA APP
                         title: 'AnarkWorld',
                         body: bodyText
                     },
-                    data: { // 🚀 Esto lo lee tu código JS
-                        channelId: 'social_channel', 
+                    data: { // 🚀 ESTO ES LO QUE LEE TU JS (handled_link)
+                        title: 'AnarkWorld', // Repetimos para seguridad
+                        body: bodyText,
+                        channelId: 'social_channel',
                         groupId: 'new_posts',
                         senderId: String(authorId),
                         openUrl: `${targetPage}?postId=${postId}`,
                         imageUrl: author_avatar ? (process.env.PUBLIC_SERVER_URL + author_avatar).trim() : ""
                     },
-                    android: { priority: 'high' }
+                    android: {
+                        priority: 'high',
+                        notification: {
+                            clickAction: 'FCM_PLUGIN_ACTIVITY', // 🚀 INDISPENSABLE
+                            sound: 'default'
+                        }
+                    }
                 };
 
                 admin.messaging().send(message).catch(e => console.error("Push Error (New Post):", e));

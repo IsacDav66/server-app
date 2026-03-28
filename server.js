@@ -817,19 +817,25 @@ io.on('connection', (socket) => {
                     if (recipient && recipient.fcm_token) {
                         const message = {
                             token: recipient.fcm_token,
-                            notification: { // 🚀 IMPORTANTE: Esto asegura que el sistema Android muestre la alerta
-                                title: senderData.username,
-                                body: getPushPlainText(contentToSave) // "🎤 Mensaje de voz" o "📷 Foto"
+                            notification: { // 🚀 AGREGADO
+                                title: sender.username,
+                                body: getPushPlainText(content)
                             },
-                            data: { // 🚀 Datos para tu lógica de enrutamiento
+                            data: { // 🚀 DATOS
+                                title: sender.username,
+                                body: getPushPlainText(content),
                                 channelId: 'chat_messages_channel',
                                 groupId: String(sender_id),
                                 senderId: String(sender_id),
                                 openUrl: `chat.html?userId=${sender_id}`,
-                                imageUrl: senderData.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url).trim() : ""
+                                imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
                             },
                             android: {
-                                priority: 'high'
+                                priority: 'high',
+                                notification: {
+                                    clickAction: 'FCM_PLUGIN_ACTIVITY',
+                                    sound: 'default'
+                                }
                             }
                         };
 
@@ -908,74 +914,119 @@ socket.on('send_media_relay', async (data) => {
 
     try {
         if (isNew) {
-            // Guardar el mensaje en la DB
-            const result = await pool.query(
-                `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name, parent_message_id) 
-                VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-                [sender_id, receiver_id, contentToSave, roomName, parent_message_id || null]
-            );
-            
-            let savedMsg = result.rows[0];
-
-            if (savedMsg.parent_message_id) {
-                const parentData = await pool.query(
-                    `SELECT m.content, u.username 
-                     FROM messagesapp m JOIN usersapp u ON m.sender_id = u.id 
-                     WHERE m.message_id = $1`, 
-                    [savedMsg.parent_message_id]
-                );
-                if (parentData.rows.length > 0) {
-                    savedMsg.parent_content = parentData.rows[0].content;
-                    savedMsg.parent_username = parentData.rows[0].username;
-                }
+        items.forEach(item => {
+            if (item.file) {
+                const ext = item.type === 'VIDEO' ? '.mp4' : (item.type === 'AUDIO' ? '.wav' : '.jpg');
+                const filePath = path.join(chatTempDir, `${item.mediaId}${ext}`);
+                fs.writeFile(filePath, item.file, (err) => {
+                    if (err) console.error("❌ Error guardando caché en server:", err);
+                    else console.log("💾 Archivo guardado en caché del servidor:", item.mediaId);
+                });
             }
+        });
 
-            socket.emit('media_confirmed', { tempId, realMessage: savedMsg });
-            io.to(`user-${receiver_id}`).emit('receive_message', savedMsg);
+        // Guardar el mensaje en la DB
+        const result = await pool.query(
+            `INSERT INTO messagesapp (sender_id, receiver_id, content, room_name, parent_message_id) 
+            VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [sender_id, receiver_id, contentToSave, roomName, parent_message_id || null]
+        );
+        
+        let savedMsg = result.rows[0];
 
-            // ============================================================
-            // 🚀 NUEVA LÓGICA DE NOTIFICACIÓN AGRUPADA PARA MEDIA
-            // ============================================================
-            try {
-                // 1. Intentamos actualizar una notificación de mensaje existente que no haya sido leída
-                const updateResult = await pool.query(`
-                    UPDATE notificationsapp 
-                    SET message_count = message_count + 1, 
-                        content = $3, 
-                        created_at = CURRENT_TIMESTAMP 
-                    WHERE recipient_id = $1 AND sender_id = $2 AND type = 'new_message' AND is_read = FALSE
+        if (savedMsg.parent_message_id) {
+            const parentData = await pool.query(
+                `SELECT m.content, u.username 
+                 FROM messagesapp m JOIN usersapp u ON m.sender_id = u.id 
+                 WHERE m.message_id = $1`, 
+                [savedMsg.parent_message_id]
+            );
+            if (parentData.rows.length > 0) {
+                savedMsg.parent_content = parentData.rows[0].content;
+                savedMsg.parent_username = parentData.rows[0].username;
+            }
+        }
+
+        socket.emit('media_confirmed', { tempId, realMessage: savedMsg });
+        io.to(`user-${receiver_id}`).emit('receive_message', savedMsg);
+
+        // ============================================================
+        // 🚀 LÓGICA DE NOTIFICACIONES (APP + PUSH)
+        // ============================================================
+        try {
+            // 1. Notificación agrupada en la base de datos (La campana)
+            const updateResult = await pool.query(`
+                UPDATE notificationsapp 
+                SET message_count = message_count + 1, 
+                    content = $3, 
+                    created_at = CURRENT_TIMESTAMP 
+                WHERE recipient_id = $1 AND sender_id = $2 AND type = 'new_message' AND is_read = FALSE
+                RETURNING *;
+            `, [receiver_id, sender_id, contentToSave]);
+
+            let finalNotif;
+            if (updateResult.rowCount === 0) {
+                const insertResult = await pool.query(`
+                    INSERT INTO notificationsapp (recipient_id, sender_id, type, content, message_count)
+                    VALUES ($1, $2, 'new_message', $3, 1)
                     RETURNING *;
                 `, [receiver_id, sender_id, contentToSave]);
+                finalNotif = insertResult.rows[0];
+            } else {
+                finalNotif = updateResult.rows[0];
+            }
 
-                let finalNotif;
+            const senderDataRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+            const senderData = senderDataRes.rows[0];
+            
+            const notificationPayload = {
+                ...finalNotif,
+                sender_username: senderData.username,
+                sender_profile_pic_url: senderData.profile_pic_url
+            };
 
-                if (updateResult.rowCount === 0) {
-                    // 2. Si no existía, creamos una nueva
-                    const insertResult = await pool.query(`
-                        INSERT INTO notificationsapp (recipient_id, sender_id, type, content, message_count)
-                        VALUES ($1, $2, 'new_message', $3, 1)
-                        RETURNING *;
-                    `, [receiver_id, sender_id, contentToSave]);
-                    finalNotif = insertResult.rows[0];
-                } else {
-                    finalNotif = updateResult.rows[0];
-                }
+            // Notificación visual en la campana (vía Socket)
+            io.to(`user-${receiver_id}`).emit('new_notification', notificationPayload);
 
-                const senderDataRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
-                const senderData = senderDataRes.rows[0];
-                
-                const notificationPayload = {
-                    ...finalNotif,
-                    sender_username: senderData.username,
-                    sender_profile_pic_url: senderData.profile_pic_url
+            // ============================================================
+            // 🚀 D: ENVÍO PUSH NATIVO (FIREBASE)
+            // ============================================================
+            const recipientRes = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
+            const recipient = recipientRes.rows[0];
+
+            if (recipient && recipient.fcm_token) {
+                const message = {
+                    token: recipient.fcm_token,
+                    notification: { // 💡 Muestra el aviso en la barra de Android
+                        title: senderData.username,
+                        body: getPushPlainText(contentToSave)
+                    },
+                    data: { // 💡 Datos para la lógica de redirección
+                        title: senderData.username,
+                        body: getPushPlainText(contentToSave),
+                        channelId: 'chat_messages_channel',
+                        groupId: String(sender_id),
+                        senderId: String(sender_id),
+                        openUrl: `chat.html?userId=${sender_id}`,
+                        imageUrl: senderData.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url).trim() : ""
+                    },
+                    android: {
+                        priority: 'high',
+                        notification: {
+                            clickAction: 'FCM_PLUGIN_ACTIVITY', // 🚀 Fuerza la apertura de la App
+                            sound: 'default'
+                        }
+                    }
                 };
 
-                io.to(`user-${receiver_id}`).emit('new_notification', notificationPayload);
-            } catch (notifErr) {
-                console.error("❌ Error en notificación agrupada de media:", notifErr);
+                admin.messaging().send(message).catch(e => console.error("❌ Error enviando Push Media:", e.message));
             }
             // ============================================================
+
+        } catch (notifErr) {
+            console.error("❌ Error en sistema de notificaciones:", notifErr);
         }
+    }
 
         // 3. Retransmitir binario (Igual que antes)
         if (!isNew && receiver_id) {
