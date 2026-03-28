@@ -339,45 +339,44 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
                 const userToNotify = tokenResult.rows[0];
 
                 if (userToNotify && userToNotify.fcm_token) {
+                    
                     const message = {
                         token: userToNotify.fcm_token,
-                        // 1. Bloque visual (Lo que ve el sistema Android)
+                        // 🚀 BLOQUE 1: NOTIFICATION (Obliga a Android a mostrar el aviso y abrir la app)
                         notification: {
                             title: '¡Nuevo Seguidor!',
                             body: `${senderData.username} ha comenzado a seguirte.`,
                         },
-                        // 2. Bloque de datos (Lo que lee tu JS)
+                        // 🚀 BLOQUE 2: DATA (Lo que tu código JS leerá al abrirse)
                         data: {
-                            type: 'new_follower',
-                            openUrl: `user_profile.html?id=${followerId}`,
-                            // Agregamos logs de rastro en el propio envío
-                            serverTimestamp: new Date().toISOString()
+                            title: '¡Nuevo Seguidor!',
+                            body: `${senderData.username} ha comenzado a seguirte.`,
+                            channelId: 'social_channel', 
+                            groupId: `followers-${followingId}`,
+                            senderId: String(followerId),
+                            openUrl: `user_profile.html?id=${followerId}`, // 👈 URL de destino
+                            imageUrl: senderData.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url).trim() : ""
                         },
                         android: {
                             priority: 'high',
                             notification: {
-                                // 🚀 ESTO ES VITAL: Le dice a Android qué actividad abrir.
-                                // Usamos la constante estándar que los plugins de Capacitor/Firebase escuchan.
+                                // 🚀 ESTO ES VITAL: Fuerza a Android a lanzar la App al tocar
                                 clickAction: 'FCM_PLUGIN_ACTIVITY', 
-                                sound: 'default',
-                                channelId: 'followers_channel'
+                                channelId: 'social_channel',
+                                icon: 'ic_stat_notification', // Asegúrate que este nombre exista en Android res/drawable
+                                color: '#8A2BE2'
                             }
                         }
                     };
 
-                    console.log(`📡 [DEBUG-SERVER] Enviando PUSH de seguimiento a ${followingId}. Payload:`, JSON.stringify(message.data));
-
-                    try {
-                        await admin.messaging().send(message);
-                        console.log(`✅ [DEBUG-SERVER] Push de seguimiento entregado a Firebase.`);
-                    } catch (pushError) {
-                        console.error("❌ [DEBUG-SERVER] Error en Firebase:", pushError.message);
-                    }
+                    await admin.messaging().send(message);
+                    // Cambiamos el log para confirmar que enviamos el bloque correcto
+                    console.log(`✅ [PUSH] Notificación COMPLETA enviada al usuario ${followingId}`);
                 }
             } catch (pushError) {
-                console.error("❌ PUSH: Error al enviar la notificación push de seguidor:", pushError);
+                console.error("❌ [PUSH] Error al enviar:", pushError.message);
             }
-            
+                        
             return res.status(201).json({ success: true, action: 'followed' });
 
         } catch (error) {
