@@ -328,7 +328,7 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
                                     channelId: 'social_channel',
                                     groupId: 'comments', // Agrupa todos los comentarios juntos
                                     senderId: String(userId),
-                                    openUrl: `comments.html?postId=${postId}&targetComment=${commentId}&groupId=comments`,
+                                    openUrl: "comments.html?postId=" + postId + "&groupId=comments",
                                     imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
                                 },
                                 android: { priority: 'high' }
