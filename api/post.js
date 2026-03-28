@@ -12,6 +12,26 @@ const path = require('path');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 
+// 🚀 Función para que las notificaciones no muestren códigos o URLs largas
+function cleanContentForPush(content) {
+    if (!content) return "";
+    if (content.includes('AUDIO')) return "🎤 Mensaje de voz";
+    if (content.includes('[MEDIA_GRID:')) return "🖼️ Álbum de fotos/videos";
+    if (content.includes('[MEDIA_IMAGE:')) return "📷 Foto";
+    if (content.includes('[MEDIA_VIDEO:')) return "🎥 Video";
+    
+    // Detectar si el contenido es un Sticker o GIF (URLs crudas)
+    if (content.includes('/uploads/stickers') || content.includes('giphy.com') || content.includes('/uploads/stickers_temp')) {
+        return "🖼️ Sticker";
+    }
+
+    // Limpiar emojis personalizados [E:archivo.webp] -> 😊
+    if (content.includes('[E:')) {
+        return content.replace(/\[E:.*?\]/g, "😊").trim();
+    }
+
+    return content.length > 100 ? content.substring(0, 100) + "..." : content;
+}
 
 module.exports = (pool, JWT_SECRET) => {
     const router = express.Router();
@@ -288,34 +308,45 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
                         };
                         io.to(`user-${recipientId}`).emit('new_notification', notificationPayload);
 
-                        // 5. Enviar PUSH (Firebase) - VERSION CORREGIDA Y UNIFICADA
+                        // 5. Enviar PUSH (Firebase) - VERSION FINAL CORREGIDA
                         const tokenRes = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [recipientId]);
                         if (tokenRes.rows[0]?.fcm_token) {
-                            // Limpiamos el texto para que no salgan códigos [E:...] en la barra de estado del celular
-                            const bodyText = typeof getPushPlainText === 'function' 
-                                ? getPushPlainText(content) 
-                                : content.replace(/\[E:.*?\]/g, "😊").substring(0, 100);
+                            
+                            // 🚀 USAMOS LA NUEVA FUNCIÓN DE LIMPIEZA
+                            const bodySnippet = cleanContentForPush(content);
 
                             const pushTitle = notifType === 'new_reply' ? 'Nueva respuesta' : 'AnarkWorld';
                             const pushBody = notifType === 'new_reply' 
-                                ? `${sender.username} respondió a tu comentario: ${bodyText}`
-                                : `${sender.username} comentó tu post: ${bodyText}`;
+                                ? `${sender.username} respondió a tu comentario: ${bodySnippet}`
+                                : `${sender.username} comentó tu post: ${bodySnippet}`;
 
                             const message = {
                                 token: tokenRes.rows[0].fcm_token,
+                                // 🚀 BLOQUE 1: NOTIFICATION (Obliga al sistema Android a mostrar el aviso y hacerlo cliqueable)
+                                notification: {
+                                    title: pushTitle,
+                                    body: pushBody
+                                },
+                                // 🚀 BLOQUE 2: DATA (Lo que tu código Java y JS leerán)
                                 data: {
-                                    title: pushTitle, // "Nueva respuesta" o "AnarkWorld"
-                                    body: pushBody,   // "Isac comentó tu post..."
+                                    title: pushTitle,
+                                    body: pushBody,
                                     channelId: 'social_channel',
-                                    groupId: 'comments', // Agrupa todos los comentarios juntos
+                                    groupId: 'comments',
                                     senderId: String(userId),
                                     openUrl: `comments.html?postId=${postId}&targetComment=${commentId}`,
                                     imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
                                 },
-                                android: { priority: 'high' }
+                                android: { 
+                                    priority: 'high',
+                                    notification: {
+                                        // Ayuda a que Android sepa que debe despertar a tu MainActivity
+                                        clickAction: 'FCM_PLUGIN_ACTIVITY',
+                                        sound: 'default'
+                                    }
+                                }
                             };
 
-                            // Envío asíncrono para no retrasar la respuesta al usuario
                             admin.messaging().send(message).catch(e => console.error("❌ Error enviando Push Comentario:", e));
                         }
                     }
