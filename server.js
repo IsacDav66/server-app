@@ -812,37 +812,46 @@ io.on('connection', (socket) => {
             // --- LÓGICA PUSH FIREBASE ---
             try {
                     const recipientResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
+            const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+
                     const recipient = recipientResult.rows[0];
+            const sender = senderResult.rows[0];
 
                     if (recipient && recipient.fcm_token) {
                         const message = {
                             token: recipient.fcm_token,
-                            notification: { // 🚀 IMPORTANTE: Esto asegura que el sistema Android muestre la alerta
-                                title: senderData.username,
-                                body: getPushPlainText(contentToSave) // "🎤 Mensaje de voz" o "📷 Foto"
-                            },
-                            data: { // 🚀 Datos para tu lógica de enrutamiento
+                    data: {
+                        title: sender.username,
+                        // 🚀 AQUÍ APLICAMOS LA FUNCIÓN
+                        body: getPushPlainText(content), 
+                        
                                 channelId: 'chat_messages_channel',
                                 groupId: String(sender_id),
-                                senderId: String(sender_id),
                                 openUrl: `chat.html?userId=${sender_id}`,
-                                imageUrl: senderData.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url).trim() : ""
+                        imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
                             },
-                            android: {
-                                priority: 'high'
-                            }
+                    android: { priority: 'high' }
                         };
 
+                try {
                         await admin.messaging().send(message);
-                        console.log(`✅ [PUSH MEDIA] Enviado correctamente a usuario ${receiver_id}`);
-                    }
-                } catch (pushErr) {
-                    console.error("❌ Error en Push Media:", pushErr.message);
+                    console.log(`✅ [PUSH] Enviado correctamente a usuario ${receiver_id}`);
+                } catch (pushError) {
+                    if (pushError.code === 'messaging/registration-token-not-registered' || 
+                        pushError.code === 'messaging/invalid-registration-token') {
+                        console.warn(`🗑️ [PUSH] Token inválido detectado para el usuario ${receiver_id}. Borrando de la DB...`);
+                        await pool.query('UPDATE usersapp SET fcm_token = NULL WHERE id = $1', [receiver_id]);
+                    } else {
+                        console.error("❌ [PUSH] Error desconocido de Firebase:", pushError.message);
                 }
-                // ============================================================
+                }
+            }
+        } catch (error) {
+            console.error("❌ [SERVER] Error general en proceso de Push:", error);
+        }
 
         } catch (error) {
-            console.error("❌ [SERVER] Error crítico en send_message:", error);
+        console.error("❌ [SERVER] Error al guardar o enviar el mensaje:", error);
         }
     });
 
