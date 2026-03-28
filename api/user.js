@@ -350,7 +350,7 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
                             // Ponemos todo aquí también por si acaso
                             title: '¡Nuevo Seguidor!',
                             body: `${senderData.username} ha comenzado a seguirte.`,
-                            openUrl: `com.omletwebfinal://user_profile.html?id=${followerId}`, 
+                            openUrl: `user_profile.html?id=${followerId}`, 
                         },
                         android: {
                             priority: 'high',
