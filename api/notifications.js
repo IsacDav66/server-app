@@ -38,28 +38,5 @@ module.exports = (pool, JWT_SECRET) => {
         }
     });
 
-
-    // RUTA 1: Marcar como leída (Para seguidores, comentarios, etc)
-    router.post('/read-specific', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        try {
-            await pool.query(
-                'UPDATE notificationsapp SET is_read = TRUE WHERE notification_id = $1 AND recipient_id = $2',
-                [req.body.notificationId, req.user.userId]
-            );
-            res.json({ success: true });
-        } catch (e) { res.status(500).json({ success: false }); }
-    });
-
-    // RUTA 2: Borrar (Para mensajes)
-    router.delete('/:id', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        try {
-            await pool.query(
-                'DELETE FROM notificationsapp WHERE notification_id = $1 AND recipient_id = $2',
-                [req.params.id, req.user.userId]
-            );
-            res.json({ success: true });
-        } catch (e) { res.status(500).json({ success: false }); }
-    });
-
     return router;
 };

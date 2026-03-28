@@ -1,7 +1,6 @@
 // Archivo: /server/api/post.js (VERSIÓN COMPLETA Y CORREGIDA)
 
 const express = require('express');
-const admin = require('firebase-admin'); // 🚀 AÑADE ESTA LÍNEA
 const { protect, softProtect } = require('../middleware/auth');
 const uploadImageMiddleware = require('../middleware/uploadImage');
 const uploadVideoMiddleware = require('../middleware/uploadVideo');
@@ -137,9 +136,6 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
         try {
             const query = `INSERT INTO postapp (user_id, content, image_url) VALUES ($1, $2, $3) RETURNING post_id;`;
             const result = await pool.query(query, [userId, content, imageUrl]);
-            const postId = result.rows[0].post_id;
-            const io = req.app.get('socketio');
-            notifyFollowersOfNewPost(pool, io, admin, userId, postId, content); // 🚀 Llamada
             res.status(201).json({ success: true, message: 'Publicación creada.', postId: result.rows[0].post_id });
         } catch (error) {
             console.error('❌ Error al crear post:', error.stack);
@@ -228,105 +224,16 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
             return res.status(400).json({ success: false, message: 'El contenido del comentario no puede estar vacío.' });
         }
 
+        // --- VALIDACIÓN DE LÍMITE DE CARACTERES ---
         if (content.length > 500) {
             return res.status(400).json({ success: false, message: `El comentario no puede exceder los 500 caracteres.` });
         }
+        // ------------------------------------------
 
         try {
-            // 1. Insertar el comentario real
             const query = `INSERT INTO commentsapp (post_id, user_id, content, parent_comment_id) VALUES ($1, $2, $3, $4) RETURNING comment_id;`;
             const result = await pool.query(query, [postId, userId, content, parent_comment_id || null]);
-            
-            if (result.rows.length > 0) {
-                const commentId = result.rows[0].comment_id;
-
-                try {
-                    // 1. Obtener datos del emisor (el que está comentando ahora)
-                    const senderRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [userId]);
-                    const sender = senderRes.rows[0];
-
-                    let recipientId = null;
-                    let notifType = 'new_comment';
-
-                    if (parent_comment_id) {
-                        // 🚀 CASO A: ES UNA RESPUESTA
-                        // Buscamos quién es el dueño del comentario al que estamos respondiendo
-                        const parentRes = await pool.query('SELECT user_id FROM commentsapp WHERE comment_id = $1', [parent_comment_id]);
-                        if (parentRes.rows.length > 0) {
-                            recipientId = parentRes.rows[0].user_id;
-                            notifType = 'new_reply';
-                        }
-                    } 
-                    
-                    if (!recipientId) {
-                        // 🚀 CASO B: ES COMENTARIO RAÍZ
-                        // Buscamos al dueño del post
-                        const postRes = await pool.query('SELECT user_id FROM postapp WHERE post_id = $1', [postId]);
-                        if (postRes.rows.length > 0) {
-                            recipientId = postRes.rows[0].user_id;
-                            notifType = 'new_comment';
-                        }
-                    }
-
-                    // 2. Solo notificamos si el receptor NO es el mismo que el emisor
-                    if (recipientId && recipientId !== userId) {
-                        
-                        // 3. Insertar en la tabla de notificaciones
-                        const notifQuery = `
-                            INSERT INTO notificationsapp (recipient_id, sender_id, type, content, post_id, comment_id)
-                            VALUES ($1, $2, $3, $4, $5, $6)
-                            RETURNING *;
-                        `;
-                        const notifResult = await pool.query(notifQuery, [recipientId, userId, notifType, content, postId, commentId]);
-
-                        // 4. Avisar por SOCKET (Tiempo Real)
-                        const io = req.app.get('socketio');
-                        const notificationPayload = {
-                            ...notifResult.rows[0],
-                            sender_username: sender.username,
-                            sender_profile_pic_url: sender.profile_pic_url
-                        };
-                        io.to(`user-${recipientId}`).emit('new_notification', notificationPayload);
-
-                        // 5. Enviar PUSH (Firebase) - VERSION CORREGIDA Y UNIFICADA
-                        const tokenRes = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [recipientId]);
-                        if (tokenRes.rows[0]?.fcm_token) {
-                            // Limpiamos el texto para que no salgan códigos [E:...] en la barra de estado del celular
-                            const bodyText = typeof getPushPlainText === 'function' 
-                                ? getPushPlainText(content) 
-                                : content.replace(/\[E:.*?\]/g, "😊").substring(0, 100);
-
-                            const pushTitle = notifType === 'new_reply' ? 'Nueva respuesta' : 'AnarkWorld';
-                            const pushBody = notifType === 'new_reply' 
-                                ? `${sender.username} respondió a tu comentario: ${bodyText}`
-                                : `${sender.username} comentó tu post: ${bodyText}`;
-
-                            const message = {
-                                token: tokenRes.rows[0].fcm_token,
-                                notification: { // 🚀 Agregado para apertura garantizada
-                                    title: pushTitle,
-                                    body: pushBody
-                                },
-                                data: { // 🚀 Datos para el enrutador
-                                    channelId: 'social_channel',
-                                    groupId: 'comments',
-                                    senderId: String(userId),
-                                    openUrl: `comments.html?postId=${postId}&targetComment=${commentId}`,
-                                    imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
-                                },
-                                android: { priority: 'high' }
-                            };
-
-                            // Envío asíncrono para no retrasar la respuesta al usuario
-                            admin.messaging().send(message).catch(e => console.error("❌ Error enviando Push Comentario:", e));
-                        }
-                    }
-                } catch (notifErr) {
-                    console.error("⚠️ Error procesando notificación:", notifErr);
-                }
-
-                res.status(201).json({ success: true, message: 'Comentario añadido.', commentId });
-            }
+            res.status(201).json({ success: true, message: 'Comentario añadido.', commentId: result.rows[0].comment_id });
         } catch (error) {
             console.error('❌ Error al añadir comentario:', error.stack);
             res.status(500).json({ success: false, message: 'Error interno al añadir comentario.' });
@@ -443,9 +350,7 @@ router.get('/user/:userId', (req, res, next) => softProtect(req, res, next, JWT_
                     VALUES ($1, $2, $3) RETURNING post_id;
                 `;
                 const result = await pool.query(query, [userId, content, videoId]);
-                const postId = result.rows[0].post_id;
-                const io = req.app.get('socketio');
-                notifyFollowersOfNewPost(pool, io, admin, userId, postId, content); // 🚀 Llamada
+                
                 res.status(201).json({ 
                     success: true, 
                     message: 'Video publicado con éxito.', 
@@ -534,89 +439,6 @@ router.post('/share-increment/:postId', (req, res, next) => protect(req, res, ne
         res.status(500).json({ success: false });
     }
 });
-
-
-
-// 🚀 FUNCIÓN AUXILIAR PARA NOTIFICAR A SEGUIDORES Y AMIGOS
-// 🚀 FUNCIÓN AUXILIAR ACTUALIZADA
-async function notifyFollowersOfNewPost(pool, io, admin, authorId, postId, content, videoId = null) {
-    try {
-        // 1. Buscamos a los seguidores. 
-        // Simplificamos el SQL: Solo necesitamos saber si el autor (following_id) 
-        // también sigue al seguidor (follower_id).
-        const followersRes = await pool.query(`
-            SELECT 
-                f.follower_id as recipient_id,
-                u.username as author_name,
-                u.profile_pic_url as author_avatar,
-                EXISTS (
-                    SELECT 1 FROM followersapp 
-                    WHERE follower_id = f.following_id 
-                    AND following_id = f.follower_id
-                ) as is_friend
-            FROM followersapp f
-            JOIN usersapp u ON u.id = f.following_id
-            WHERE f.following_id = $1
-        `, [authorId]);
-
-        const followers = followersRes.rows;
-
-        for (let row of followers) {
-            const { recipient_id, author_name, author_avatar, is_friend } = row;
-
-            // 2. Insertar en la campana
-            const notifQuery = `
-                INSERT INTO notificationsapp (recipient_id, sender_id, type, content, post_id)
-                VALUES ($1, $2, 'new_post', $3, $4)
-                RETURNING *;
-            `;
-            // Guardamos un texto sutil para el content de la DB
-            const dbContent = videoId ? "[VIDEO]" : (content ? content.substring(0, 50) : "[IMAGEN]");
-            const notifResult = await pool.query(notifQuery, [recipient_id, authorId, dbContent, postId]);
-
-            // 3. Socket (Tiempo Real)
-            const notificationPayload = {
-                ...notifResult.rows[0],
-                sender_username: author_name,
-                sender_profile_pic_url: author_avatar,
-                is_friend: is_friend
-            };
-            io.to(`user-${recipient_id}`).emit('new_notification', notificationPayload);
-
-            // 4. Enviar PUSH (Firebase)
-            const tokenRes = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [recipient_id]);
-            const token = tokenRes.rows[0]?.fcm_token;
-
-            if (token) {
-                const bodyText = is_friend 
-                    ? `¡Tu amigo ${author_name} hizo una nueva publicación!` 
-                    : `${author_name} publicó algo nuevo.`;
-
-                const targetPage = videoId ? 'video_feed.html' : 'comments.html';
-
-                const message = {
-                    token: token,
-                    notification: { // 🚀 Esto despierta al sistema Android
-                        title: 'AnarkWorld',
-                        body: bodyText
-                    },
-                    data: { // 🚀 Esto lo lee tu código JS
-                        channelId: 'social_channel', 
-                        groupId: 'new_posts',
-                        senderId: String(authorId),
-                        openUrl: `${targetPage}?postId=${postId}`,
-                        imageUrl: author_avatar ? (process.env.PUBLIC_SERVER_URL + author_avatar).trim() : ""
-                    },
-                    android: { priority: 'high' }
-                };
-
-                admin.messaging().send(message).catch(e => console.error("Push Error (New Post):", e));
-            }
-        }
-    } catch (err) {
-        console.error("Error al notificar seguidores:", err);
-    }
-}
 
 return router;
 };
