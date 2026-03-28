@@ -342,29 +342,27 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
                     
                     const message = {
                         token: userToNotify.fcm_token,
-                        // 🚀 BLOQUE 1: NOTIFICATION (Obliga a Android a mostrar el aviso y abrir la app)
                         notification: {
                             title: '¡Nuevo Seguidor!',
                             body: `${senderData.username} ha comenzado a seguirte.`,
                         },
-                        // 🚀 BLOQUE 2: DATA (Lo que tu código JS leerá al abrirse)
                         data: {
+                            // Ponemos todo aquí también por si acaso
                             title: '¡Nuevo Seguidor!',
                             body: `${senderData.username} ha comenzado a seguirte.`,
-                            channelId: 'social_channel', 
-                            groupId: `followers-${followingId}`,
-                            senderId: String(followerId),
-                            openUrl: `user_profile.html?id=${followerId}`, // 👈 URL de destino
-                            imageUrl: senderData.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url).trim() : ""
+                            openUrl: `com.omletwebfinal://user_profile.html?id=${followerId}`, 
                         },
                         android: {
                             priority: 'high',
                             notification: {
-                                // 🚀 ESTO ES VITAL: Fuerza a Android a lanzar la App al tocar
-                                clickAction: 'FCM_PLUGIN_ACTIVITY', 
+                                // 🚀 CAMBIO: No uses clickAction personalizado, usa la configuración de canal
                                 channelId: 'social_channel',
-                                icon: 'ic_stat_notification', // Asegúrate que este nombre exista en Android res/drawable
-                                color: '#8A2BE2'
+                                icon: 'ic_stat_notification',
+                                color: '#8A2BE2',
+                                // 🚀 ESTO ES VITAL PARA ALGUNAS VERSIONES:
+                                sound: 'default',
+                                sticky: false,
+                                visibility: 'public'
                             }
                         }
                     };
