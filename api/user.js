@@ -342,30 +342,30 @@ router.post('/fcm-token', (req, res, next) => protect(req, res, next, JWT_SECRET
                     
                     const message = {
                         token: userToNotify.fcm_token,
-                        notification: {
-                            title: '¡Nuevo Seguidor!',
-                            body: `${senderData.username} ha comenzado a seguirte.`,
-                        },
                         data: {
-                            // Ponemos todo aquí también por si acaso
+                            // Datos para que el cliente construya la notificación
                             title: '¡Nuevo Seguidor!',
                             body: `${senderData.username} ha comenzado a seguirte.`,
-                            openUrl: `user_profile.html?id=${followerId}`, 
+                            
+                            // Los campos que faltaban y que nuestro servicio Java requiere
+                            channelId: 'followers_channel', // El ID del canal para seguidores
+                            groupId: `followers-${followingId}`, // Un ID de grupo para todas las notificaciones de seguidor de este usuario
+
+                            // Datos adicionales para la acción de clic y el icono
+                            senderId: String(followerId),
+                            openUrl: `user_profile.html?id=${followerId}`
                         },
                         android: {
-                            priority: 'high',
-                            notification: {
-                                // 🚀 CAMBIO: No uses clickAction personalizado, usa la configuración de canal
-                                channelId: 'social_channel',
-                                icon: 'ic_stat_notification',
-                                color: '#8A2BE2',
-                                // 🚀 ESTO ES VITAL PARA ALGUNAS VERSIONES:
-                                sound: 'default',
-                                sticky: false,
-                                visibility: 'public'
-                            }
+                            priority: 'high'
                         }
                     };
+                    // ==========================================================
+
+                    // Añadir la URL de la imagen directamente al campo `data`
+                    if (senderData.profile_pic_url) {
+                        const fullImageUrl = (process.env.PUBLIC_SERVER_URL + senderData.profile_pic_url).trim();
+                        message.data.imageUrl = fullImageUrl;
+                    }
 
                     await admin.messaging().send(message);
                     // Cambiamos el log para confirmar que enviamos el bloque correcto
