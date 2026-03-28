@@ -322,31 +322,19 @@ router.get('/saved', (req, res, next) => protect(req, res, next, JWT_SECRET), as
 
                             const message = {
                                 token: tokenRes.rows[0].fcm_token,
-                                // 🚀 BLOQUE 1: NOTIFICATION (Obliga al sistema Android a mostrar el aviso y hacerlo cliqueable)
-                                notification: {
-                                    title: pushTitle,
-                                    body: pushBody
-                                },
-                                // 🚀 BLOQUE 2: DATA (Lo que tu código Java y JS leerán)
                                 data: {
-                                    title: pushTitle,
-                                    body: pushBody,
+                                    title: pushTitle, // "Nueva respuesta" o "AnarkWorld"
+                                    body: pushBody,   // "Isac comentó tu post..."
                                     channelId: 'social_channel',
-                                    groupId: 'comments',
+                                    groupId: 'comments', // Agrupa todos los comentarios juntos
                                     senderId: String(userId),
                                     openUrl: `comments.html?postId=${postId}&targetComment=${commentId}`,
                                     imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
                                 },
-                                android: { 
-                                    priority: 'high',
-                                    notification: {
-                                        // Ayuda a que Android sepa que debe despertar a tu MainActivity
-                                        clickAction: 'FCM_PLUGIN_ACTIVITY',
-                                        sound: 'default'
-                                    }
-                                }
+                                android: { priority: 'high' }
                             };
 
+                            // Envío asíncrono para no retrasar la respuesta al usuario
                             admin.messaging().send(message).catch(e => console.error("❌ Error enviando Push Comentario:", e));
                         }
                     }
