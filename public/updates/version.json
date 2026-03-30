@@ -1,5 +1,5 @@
 {
-  "versionCode": 16,
-  "versionName": "1.1.12",
-  "notes": "Nuevo modo TikTok\n Correccion de bugs\n Ahora se puede compartir los posts"
+  "versionCode": 17,
+  "versionName": "1.1.13",
+  "notes": "Mejora en las notificaciones y nuevos tipos de notificaciones, arreglo de bugs, sistema de creacion de temas terminada, funcion para poner fondo de chat desde temas"
 }
