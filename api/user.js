@@ -189,7 +189,63 @@ router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT
         res.status(500).json({ success: false, message: 'Error interno del servidor.' });
     }
 });
-    router.get('/recommendations', verifyToken, userController.getRecommendations);
+    // ==========================================================
+    // 🚀 NUEVA RUTA: Recomendaciones (Te sigue, Amigos de amigos, Random)
+    // ==========================================================
+    router.get('/recommendations', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const userId = req.user.userId;
+
+        try {
+            // Consulta SQL para PostgreSQL
+            const query = `
+                WITH candidates AS (
+                    -- 1. Usuarios que te siguen pero tú no sigues (Fans)
+                    SELECT u.id, u.username, u.profile_pic_url, 'Te sigue' as reason, 1 as priority
+                    FROM usersapp u
+                    JOIN followersapp f ON u.id = f.follower_id
+                    WHERE f.following_id = $1
+                    AND u.id NOT IN (SELECT following_id FROM followersapp WHERE follower_id = $1)
+
+                    UNION
+
+                    -- 2. Amigos de tus amigos (Sugerencia social)
+                    SELECT u.id, u.username, u.profile_pic_url, 'Sugerencia social' as reason, 2 as priority
+                    FROM usersapp u
+                    JOIN followersapp f ON u.id = f.following_id
+                    WHERE f.follower_id IN (SELECT following_id FROM followersapp WHERE follower_id = $1)
+                    AND u.id != $1
+                    AND u.id NOT IN (SELECT following_id FROM followersapp WHERE follower_id = $1)
+
+                    UNION
+
+                    -- 3. Usuarios aleatorios (Descubrimiento)
+                    SELECT id, username, profile_pic_url, 'Sugerencia' as reason, 3 as priority
+                    FROM usersapp
+                    WHERE id != $1
+                    AND id NOT IN (SELECT following_id FROM followersapp WHERE follower_id = $1)
+                )
+                SELECT DISTINCT ON (id) id, username, profile_pic_url, reason, priority
+                FROM candidates
+                WHERE username IS NOT NULL -- Solo usuarios con perfil completado
+                ORDER BY id, priority ASC
+                LIMIT 15;
+            `;
+
+            const result = await pool.query(query, [userId]);
+
+            // Re-ordenar por prioridad después del DISTINCT ON
+            const sortedUsers = result.rows.sort((a, b) => a.priority - b.priority);
+
+            res.status(200).json({
+                success: true,
+                users: sortedUsers
+            });
+
+        } catch (error) {
+            console.error("❌ Error en recomendaciones:", error);
+            res.status(500).json({ success: false, message: "Error al obtener recomendaciones." });
+        }
+    });
 
 
     // --- 5. NUEVA RUTA: Para imágenes incrustadas en la biografía ---
