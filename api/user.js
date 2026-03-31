@@ -189,6 +189,7 @@ router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT
         res.status(500).json({ success: false, message: 'Error interno del servidor.' });
     }
 });
+    router.get('/recommendations', verifyToken, userController.getRecommendations);
 
 
     // --- 5. NUEVA RUTA: Para imágenes incrustadas en la biografía ---
