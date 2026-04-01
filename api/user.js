@@ -198,13 +198,16 @@ router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT
         try {
             // Consulta SQL para PostgreSQL
             const query = `
-                WITH candidates AS (
+             WITH my_followings AS (
+                    SELECT following_id FROM followersapp WHERE follower_id = $1
+                ),
+                candidates AS (
                     -- 1. Usuarios que te siguen pero tú no sigues (Fans)
                     SELECT u.id, u.username, u.profile_pic_url, 'Te sigue' as reason, 1 as priority
                     FROM usersapp u
                     JOIN followersapp f ON u.id = f.follower_id
                     WHERE f.following_id = $1
-                    AND u.id NOT IN (SELECT following_id FROM followersapp WHERE follower_id = $1)
+                    AND u.id NOT IN (SELECT following_id FROM my_followings)
 
                     UNION
 
@@ -212,9 +215,9 @@ router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT
                     SELECT u.id, u.username, u.profile_pic_url, 'Sugerencia social' as reason, 2 as priority
                     FROM usersapp u
                     JOIN followersapp f ON u.id = f.following_id
-                    WHERE f.follower_id IN (SELECT following_id FROM followersapp WHERE follower_id = $1)
+                    WHERE f.follower_id IN (SELECT following_id FROM my_followings)
                     AND u.id != $1
-                    AND u.id NOT IN (SELECT following_id FROM followersapp WHERE follower_id = $1)
+                    AND u.id NOT IN (SELECT following_id FROM my_followings)
 
                     UNION
 
@@ -222,12 +225,25 @@ router.post('/complete-profile', (req, res, next) => protect(req, res, next, JWT
                     SELECT id, username, profile_pic_url, 'Sugerencia' as reason, 3 as priority
                     FROM usersapp
                     WHERE id != $1
-                    AND id NOT IN (SELECT following_id FROM followersapp WHERE follower_id = $1)
+                    AND id NOT IN (SELECT following_id FROM my_followings)
+                    AND username IS NOT NULL
                 )
-                SELECT DISTINCT ON (id) id, username, profile_pic_url, reason, priority
-                FROM candidates
-                WHERE username IS NOT NULL -- Solo usuarios con perfil completado
-                ORDER BY id, priority ASC
+                SELECT DISTINCT ON (c.id) 
+                    c.id, c.username, c.profile_pic_url, c.reason, c.priority,
+                    -- 🚀 NUEVO: Buscar un amigo en común y el conteo
+                    (SELECT u2.profile_pic_url 
+                    FROM followersapp f3 
+                    JOIN usersapp u2 ON f3.follower_id = u2.id 
+                    WHERE f3.following_id = c.id 
+                    AND f3.follower_id IN (SELECT following_id FROM my_followings)
+                    LIMIT 1) as mutual_friend_avatar,
+                    (SELECT COUNT(*) 
+                    FROM followersapp f4 
+                    WHERE f4.following_id = c.id 
+                    AND f4.follower_id IN (SELECT following_id FROM my_followings)) as mutual_count
+                FROM candidates c
+                WHERE c.username IS NOT NULL
+                ORDER BY c.id, c.priority ASC
                 LIMIT 15;
             `;
 
