@@ -1,5 +1,5 @@
 {
-  "versionCode": 17,
-  "versionName": "1.1.13",
-  "notes": "Mejora en las notificaciones y nuevos tipos de notificaciones, arreglo de bugs, sistema de creacion de temas terminada, funcion para poner fondo de chat desde temas"
+  "versionCode": 18,
+  "versionName": "1.1.14",
+  "notes": "Mejora en la carga de posts en el menú principal, usuarios sugeridos para seguir, editar temas, temas con video y gifs "
 }
