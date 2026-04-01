@@ -40,32 +40,48 @@ module.exports = (pool, JWT_SECRET) => {
     // RUTA: Obtener el Feed de Publicaciones (/api/posts) - VERSIÓN CORREGIDA
     // ----------------------------------------------------
     router.get('/', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const currentUserId = req.user.userId;
-        try {
-            const query = `
-                SELECT 
-                    p.post_id, p.user_id, p.content, p.image_url, p.created_at, p.video_id, p.shares_count,
-                    u.username, u.profile_pic_url,
-                    COUNT(DISTINCT r_all.reaction_id) AS total_likes,
-                    MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
-                    COUNT(DISTINCT c.comment_id) AS total_comments,
-                    MAX(CASE WHEN s.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_saved_by_user
-                FROM postapp p
-                JOIN usersapp u ON p.user_id = u.id
-                LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
-                LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1 AND r_user.reaction_type = 'like'
-                LEFT JOIN commentsapp c ON p.post_id = c.post_id
-                LEFT JOIN saved_postsapp s ON p.post_id = s.post_id AND s.user_id = $1
-                GROUP BY p.post_id, u.username, u.profile_pic_url -- <-- ¡ESTA ES LA LÍNEA CORREGIDA!
-                ORDER BY p.created_at DESC;
-            `;
-            const result = await pool.query(query, [currentUserId]); 
-            res.status(200).json({ success: true, posts: result.rows });
-        } catch (error) {
-            console.error('❌ Error al obtener posts:', error.stack);
-            res.status(500).json({ success: false, message: 'Error interno del servidor al cargar el feed.' });
-        }
-    });
+    const currentUserId = req.user.userId;
+
+    // 🚀 1. CAPTURAR PARÁMETROS DE PAGINACIÓN
+    // Si no vienen en la URL, por defecto traemos 10 posts empezando desde el 0
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = parseInt(req.query.offset) || 0;
+
+    try {
+        const query = `
+            SELECT 
+                p.post_id, p.user_id, p.content, p.image_url, p.created_at, p.video_id, p.shares_count,
+                u.username, u.profile_pic_url,
+                COUNT(DISTINCT r_all.reaction_id) AS total_likes,
+                MAX(CASE WHEN r_user.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_liked_by_user,
+                COUNT(DISTINCT c.comment_id) AS total_comments,
+                MAX(CASE WHEN s.user_id = $1 THEN 1 ELSE 0 END)::boolean AS is_saved_by_user
+            FROM postapp p
+            JOIN usersapp u ON p.user_id = u.id
+            LEFT JOIN post_reactionapp r_all ON p.post_id = r_all.post_id AND r_all.reaction_type = 'like'
+            LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1 AND r_user.reaction_type = 'like'
+            LEFT JOIN commentsapp c ON p.post_id = c.post_id
+            LEFT JOIN saved_postsapp s ON p.post_id = s.post_id AND s.user_id = $1
+            GROUP BY p.post_id, u.username, u.profile_pic_url
+            ORDER BY p.created_at DESC
+            LIMIT $2 OFFSET $3; -- 🚀 2. APLICAR LIMIT Y OFFSET
+        `;
+
+        // Pasamos el ID del usuario, el límite y el desplazamiento a la consulta
+        const result = await pool.query(query, [currentUserId, limit, offset]); 
+
+        res.status(200).json({ 
+            success: true, 
+            posts: result.rows,
+            // 🚀 3. INDICADOR PARA EL FRONTEND
+            // Si recibimos menos posts de los que pedimos (limit), es que ya no hay más.
+            hasMore: result.rows.length === limit 
+        });
+    } catch (error) {
+        console.error('❌ Error al obtener posts:', error.stack);
+        res.status(500).json({ success: false, message: 'Error interno del servidor al cargar el feed.' });
+    }
+});
 
 
     // ==========================================================
