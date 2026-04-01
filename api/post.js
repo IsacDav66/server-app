@@ -42,9 +42,9 @@ module.exports = (pool, JWT_SECRET) => {
     router.get('/', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
     const currentUserId = req.user.userId;
 
-    // 🚀 1. CAPTURAR PARÁMETROS DE PAGINACIÓN
-    // Si no vienen en la URL, por defecto traemos 10 posts empezando desde el 0
-    const limit = parseInt(req.query.limit) || 10;
+    // 🚀 MEJORA: Si no se manda limit, pero se detecta que es para el video feed,
+    // o simplemente queremos una cantidad mayor por defecto para videos.
+    const limit = req.query.limit ? parseInt(req.query.limit) : 50; // Aumentamos a 50 si no se especifica
     const offset = parseInt(req.query.offset) || 0;
 
     try {
@@ -64,22 +64,19 @@ module.exports = (pool, JWT_SECRET) => {
             LEFT JOIN saved_postsapp s ON p.post_id = s.post_id AND s.user_id = $1
             GROUP BY p.post_id, u.username, u.profile_pic_url
             ORDER BY p.created_at DESC
-            LIMIT $2 OFFSET $3; -- 🚀 2. APLICAR LIMIT Y OFFSET
+            LIMIT $2 OFFSET $3;
         `;
 
-        // Pasamos el ID del usuario, el límite y el desplazamiento a la consulta
         const result = await pool.query(query, [currentUserId, limit, offset]); 
 
         res.status(200).json({ 
             success: true, 
             posts: result.rows,
-            // 🚀 3. INDICADOR PARA EL FRONTEND
-            // Si recibimos menos posts de los que pedimos (limit), es que ya no hay más.
             hasMore: result.rows.length === limit 
         });
     } catch (error) {
         console.error('❌ Error al obtener posts:', error.stack);
-        res.status(500).json({ success: false, message: 'Error interno del servidor al cargar el feed.' });
+        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
     }
 });
 
