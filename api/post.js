@@ -41,11 +41,11 @@ module.exports = (pool, JWT_SECRET) => {
     // ----------------------------------------------------
     router.get('/', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
     const currentUserId = req.user.userId;
-
-    // 🚀 MEJORA: Si no se manda limit, pero se detecta que es para el video feed,
-    // o simplemente queremos una cantidad mayor por defecto para videos.
-    const limit = req.query.limit ? parseInt(req.query.limit) : 50; // Aumentamos a 50 si no se especifica
+    const limit = parseInt(req.query.limit) || 10;
     const offset = parseInt(req.query.offset) || 0;
+    
+    // 🚀 NUEVA LÓGICA: Detectar si solo queremos videos
+    const onlyVideos = req.query.onlyVideos === 'true';
 
     try {
         const query = `
@@ -62,12 +62,17 @@ module.exports = (pool, JWT_SECRET) => {
             LEFT JOIN post_reactionapp r_user ON p.post_id = r_user.post_id AND r_user.user_id = $1 AND r_user.reaction_type = 'like'
             LEFT JOIN commentsapp c ON p.post_id = c.post_id
             LEFT JOIN saved_postsapp s ON p.post_id = s.post_id AND s.user_id = $1
+            
+            -- 🚀 FILTRO DINÁMICO: Si onlyVideos es true, solo trae filas donde video_id no sea nulo
+            WHERE ($4 = false OR p.video_id IS NOT NULL)
+            
             GROUP BY p.post_id, u.username, u.profile_pic_url
             ORDER BY p.created_at DESC
             LIMIT $2 OFFSET $3;
         `;
 
-        const result = await pool.query(query, [currentUserId, limit, offset]); 
+        // Añadimos onlyVideos como el parámetro $4
+        const result = await pool.query(query, [currentUserId, limit, offset, onlyVideos]); 
 
         res.status(200).json({ 
             success: true, 
@@ -76,10 +81,9 @@ module.exports = (pool, JWT_SECRET) => {
         });
     } catch (error) {
         console.error('❌ Error al obtener posts:', error.stack);
-        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        res.status(500).json({ success: false, message: 'Error interno.' });
     }
 });
-
 
     // ==========================================================
     // === INICIO DE LA CORRECCIÓN DE ORDEN ===
