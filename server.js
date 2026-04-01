@@ -563,6 +563,19 @@ io.on('connection', (socket) => {
 
                 // 1. Registrar al usuario como online
                 onlineUsers.set(socket.id, { userId: userId, currentApp: null });
+                 try {
+                    const groupsRes = await pool.query(
+                        'SELECT group_id FROM group_members WHERE user_id = $1', 
+                        [userId]
+                    );
+                    groupsRes.rows.forEach(row => {
+                        const groupRoom = `group_${row.group_id}`;
+                        socket.join(groupRoom);
+                        console.log(`👥 Socket ${socket.id} unido a sala de grupo: ${groupRoom}`);
+                    });
+                } catch (err) {
+                    console.error("❌ Error al unir socket a grupos:", err);
+                }
 
                 console.log(`✅ Socket ${socket.id} autenticado como user ${userId}`);
 
@@ -716,18 +729,27 @@ io.on('connection', (socket) => {
     });
 
     socket.on('send_message', async (data) => {
-        const { sender_id, receiver_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
+        // 🚀 Agregamos group_id a la desestructuración
+        const { sender_id, receiver_id, group_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
 
-        console.log(`📨 [SERVER] Recibido mensaje de ${sender_id} para ${receiver_id}. Pack: ${sticker_pack ? sticker_pack.name : 'Ninguno'}`);
+        const isGroup = !!group_id;
+        const logTarget = isGroup ? `grupo ${group_id}` : `usuario ${receiver_id}`;
+        console.log(`📨 [SERVER] Recibido mensaje de ${sender_id} para ${logTarget}. Pack: ${sticker_pack ? sticker_pack.name : 'Ninguno'}`);
 
         try {
-            // 1. Guardar el nuevo mensaje en la base de datos
+            // 1. Guardar el nuevo mensaje en la base de datos (Añadimos group_id al INSERT)
+            // Si es grupo, el receiver_id se guarda como NULL
             const insertQuery = `
-                INSERT INTO messagesapp (sender_id, receiver_id, content, room_name, parent_message_id, sticker_pack, emoji_pack) 
-                VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`;
+                INSERT INTO messagesapp (sender_id, receiver_id, group_id, content, room_name, parent_message_id, sticker_pack, emoji_pack) 
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`;
                 
             const insertResult = await pool.query(insertQuery, [
-                sender_id, receiver_id, content, roomName, parent_message_id || null, 
+                sender_id, 
+                isGroup ? null : receiver_id, 
+                isGroup ? group_id : null,
+                content, 
+                roomName, 
+                parent_message_id || null, 
                 sticker_pack ? JSON.stringify(sticker_pack) : null,
                 emoji_pack ? JSON.stringify(emoji_pack) : null
             ]);
@@ -735,58 +757,59 @@ io.on('connection', (socket) => {
             let savedMessage = insertResult.rows[0];
 
             // ============================================================
-            // 🚀 NUEVA LÓGICA DE NOTIFICACIÓN AGRUPADA (REEMPLAZO)
+            // 🚀 LÓGICA DE NOTIFICACIÓN EN APP (Solo para Chats Privados)
             // ============================================================
-            try {
-                // 1. Intentamos actualizar una notificación de mensaje existente que NO haya sido leída
-                const updateResult = await pool.query(`
-                    UPDATE notificationsapp 
-                    SET message_count = message_count + 1, 
-                        content = $3, 
-                        created_at = CURRENT_TIMESTAMP 
-                    WHERE recipient_id = $1 AND sender_id = $2 AND type = 'new_message' AND is_read = FALSE
-                    RETURNING *;
-                `, [receiver_id, sender_id, content]);
-
-                let finalNotif;
-
-                if (updateResult.rowCount === 0) {
-                    // 2. Si no existía una previa sin leer, creamos una nueva con count 1
-                    const insertResult = await pool.query(`
-                        INSERT INTO notificationsapp (recipient_id, sender_id, type, content, message_count)
-                        VALUES ($1, $2, 'new_message', $3, 1)
+            // En grupos no insertamos en notificationsapp para evitar saturar la tabla, 
+            // el tiempo real se encarga el socket directamente.
+            if (!isGroup) {
+                try {
+                    // 1. Intentamos actualizar una notificación de mensaje existente que NO haya sido leída
+                    const updateResult = await pool.query(`
+                        UPDATE notificationsapp 
+                        SET message_count = message_count + 1, 
+                            content = $3, 
+                            created_at = CURRENT_TIMESTAMP 
+                        WHERE recipient_id = $1 AND sender_id = $2 AND type = 'new_message' AND is_read = FALSE
                         RETURNING *;
                     `, [receiver_id, sender_id, content]);
-                    finalNotif = insertResult.rows[0];
-                } else {
-                    finalNotif = updateResult.rows[0];
+
+                    let finalNotif;
+
+                    if (updateResult.rowCount === 0) {
+                        // 2. Si no existía una previa sin leer, creamos una nueva con count 1
+                        const insertResult = await pool.query(`
+                            INSERT INTO notificationsapp (recipient_id, sender_id, type, content, message_count)
+                            VALUES ($1, $2, 'new_message', $3, 1)
+                            RETURNING *;
+                        `, [receiver_id, sender_id, content]);
+                        finalNotif = insertResult.rows[0];
+                    } else {
+                        finalNotif = updateResult.rows[0];
+                    }
+
+                    // 3. Obtener datos del emisor para el socket
+                    const senderDataRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+                    const senderData = senderDataRes.rows[0];
+                    
+                    const notificationPayload = {
+                        ...finalNotif,
+                        sender_username: senderData.username,
+                        sender_profile_pic_url: senderData.profile_pic_url
+                    };
+
+                    // 4. Avisar al receptor por socket
+                    io.to(`user-${receiver_id}`).emit('new_notification', notificationPayload);
+
+                } catch (notifErr) {
+                    console.error("❌ Error en notificación agrupada:", notifErr);
                 }
-
-                // 3. Obtener datos del emisor para el socket
-                const senderDataRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
-                const senderData = senderDataRes.rows[0];
-                
-                const notificationPayload = {
-                    ...finalNotif,
-                    sender_username: senderData.username,
-                    sender_profile_pic_url: senderData.profile_pic_url
-                };
-
-                // 4. Avisar al receptor por socket
-                io.to(`user-${receiver_id}`).emit('new_notification', notificationPayload);
-
-            } catch (notifErr) {
-                console.error("❌ Error en notificación agrupada:", notifErr);
-            }
-            // ============================================================
-
-            if (sticker_pack) {
-                savedMessage.sticker_pack = sticker_pack;
-            }
-            if (emoji_pack) {
-                savedMessage.emoji_pack = emoji_pack;
             }
 
+            // Re-adjuntar los objetos de packs procesados para el broadcast
+            if (sticker_pack) savedMessage.sticker_pack = sticker_pack;
+            if (emoji_pack) savedMessage.emoji_pack = emoji_pack;
+
+            // 🚀 LÓGICA DE MENSAJE CITADO (Parent Message)
             if (savedMessage.parent_message_id) {
                 const parentQuery = `
                     SELECT p.content as parent_content, pu.username as parent_username
@@ -801,53 +824,50 @@ io.on('connection', (socket) => {
                 }
             }
 
-            socket.to(roomName).emit('receive_message', savedMessage);
-            io.to(`user-${receiver_id}`).emit('receive_message', savedMessage);
+            // 🚀 TRANSMISIÓN EN TIEMPO REAL
+            // io.to(roomName) envía a todos en la sala (funciona para "ID-ID" y para "group_ID")
+            io.to(roomName).emit('receive_message', savedMessage);
 
+            // Confirmar al emisor para que su burbuja deje de estar en estado "pending"
             socket.emit('message_confirmed', {
                 tempId: tempId,
                 realMessage: savedMessage
             });
 
-            // --- LÓGICA PUSH FIREBASE ---
             // ==========================================================
-            // --- 🚀 LÓGICA PUSH FIREBASE PARA CHAT (CORREGIDA) ---
+            // 🚀 LÓGICA PUSH FIREBASE (Solo para Chats Privados)
             // ==========================================================
-            try {
-                const recipientResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
-                const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
-                const recipient = recipientResult.rows[0];
-                const sender = senderResult.rows[0];
+            if (!isGroup) {
+                try {
+                    const recipientResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
+                    const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+                    const recipient = recipientResult.rows[0];
+                    const sender = senderResult.rows[0];
 
-                if (recipient && recipient.fcm_token) {
-                    const message = {
-                        token: recipient.fcm_token,
-                        // 💡 NOTA: NO incluimos el objeto 'notification' aquí.
-                        // Al enviar solo 'data', obligamos a Android a pasarle el control a tu 
-                        // MyFirebaseMessagingService.java para que use el estilo de mensajería.
-                        data: {
-                            title: sender.username,
-                            body: getPushPlainText(content), 
-                            channelId: 'chat_messages_channel',
-                            groupId: String(sender_id),
-                            senderId: String(sender_id),
-                            // 🚀 IMPORTANTE: Añadimos &groupId=${sender_id} para que el JS limpie 
-                            // la memoria de Java al momento de entrar al chat.
-                            openUrl: `chat.html?userId=${sender_id}&groupId=${sender_id}`,
-                            imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
-                        },
-                        android: {
-                            priority: 'high'
-                        }
-                    };
+                    if (recipient && recipient.fcm_token) {
+                        const message = {
+                            token: recipient.fcm_token,
+                            data: {
+                                title: sender.username,
+                                body: getPushPlainText(content), 
+                                channelId: 'chat_messages_channel',
+                                groupId: String(sender_id),
+                                senderId: String(sender_id),
+                                openUrl: `chat.html?userId=${sender_id}&groupId=${sender_id}`,
+                                imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
+                            },
+                            android: {
+                                priority: 'high'
+                            }
+                        };
 
-                    await admin.messaging().send(message);
-                    console.log(`✅ [PUSH CHAT] Notificación de estilo mensajería enviada a: ${receiver_id}`);
+                        await admin.messaging().send(message);
+                        console.log(`✅ [PUSH CHAT] Notificación enviada a: ${receiver_id}`);
+                    }
+                } catch (pushErr) {
+                    console.error("❌ Error en Push Chat:", pushErr.message);
                 }
-            } catch (pushErr) {
-                console.error("❌ Error en Push Chat:", pushErr.message);
             }
-            // ==========================================================
 
         } catch (error) {
             console.error("❌ [SERVER] Error crítico en send_message:", error);
@@ -1339,7 +1359,8 @@ async function initDatabase() {
         CREATE TABLE IF NOT EXISTS messagesapp (
             message_id SERIAL PRIMARY KEY,
             sender_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
-            receiver_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE NOT NULL,
+            receiver_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE, -- <--- QUITAMOS EL NOT NULL
+            group_id INTEGER REFERENCES groupsapp(id) ON DELETE CASCADE,   -- <--- NUEVA COLUMNA
             content TEXT NOT NULL,
             room_name VARCHAR(100), 
             is_read BOOLEAN DEFAULT FALSE,
@@ -1478,11 +1499,39 @@ async function initDatabase() {
         );
     `;
 
+
+    // TABLA DE GRUPOS
+    const groupsQuery = `
+        CREATE TABLE IF NOT EXISTS groupsapp (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            description TEXT,
+            photo_url VARCHAR(255) DEFAULT '/assets/img/default-group.png',
+            creator_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
+
+    // TABLA DE MIEMBROS DE GRUPO
+    const groupMembersQuery = `
+        CREATE TABLE IF NOT EXISTS group_members (
+            group_id INTEGER REFERENCES groupsapp(id) ON DELETE CASCADE,
+            user_id INTEGER REFERENCES usersapp(id) ON DELETE CASCADE,
+            role VARCHAR(20) DEFAULT 'member',
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (group_id, user_id)
+        );
+    `;
+
     // ==========================================================
 
     try {
         await pool.query(usersQuery);
         console.log('✅ Tabla "usersapp" verificada/creada.');
+        await pool.query(groupsQuery);        // <--- NUEVO
+        console.log('✅ Tabla "groupsapp" verificada/creada.');
+        await pool.query(groupMembersQuery); // <--- NUEVO
+        console.log('✅ Tabla "group_members" verificada/creada.');
         await pool.query(postQuery);
         console.log('✅ Tabla "postapp" verificada/creada.');
         await pool.query(postSharesQuery);
