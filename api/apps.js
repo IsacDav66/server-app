@@ -288,25 +288,34 @@ const qs = require('querystring');
 // --- 🚀 NUEVA RUTA: Obtener éxitos mundiales (Motor iTunes) ---
 router.get('/music/trending', async (req, res) => {
     try {
-        console.log(`🔍 Cargando tendencias desde iTunes API...`);
-        
-        // Buscamos "Top Hits" para simular una lista de tendencias
-        const response = await axios.get(`https://itunes.apple.com/search?term=hits&limit=25&media=music`, {
+        // Buscamos una lista amplia para tener de donde elegir
+        const response = await axios.get(`https://itunes.apple.com/search?term=top&limit=50&media=music&entity=song`, {
             timeout: 10000
         });
 
-        const results = response.data.results.map(v => ({
-            id: v.trackId,
-            title: v.trackName,
-            author: v.artistName,
-            thumb: v.artworkUrl100.replace('100x100bb', '400x400bb'), // Portada en alta resolución
-            preview_url: v.previewUrl, // Link de audio MP3 (30 seg)
-            duration: "0:30"
-        }));
+        const seenAlbums = new Set();
+        const results = [];
+
+        for (const v of response.data.results) {
+            // Si ya tenemos una canción con este ID de álbum, la saltamos
+            if (seenAlbums.has(v.collectionId)) continue;
+            
+            seenAlbums.add(v.collectionId);
+            results.push({
+                id: v.trackId,
+                title: v.trackName,
+                author: v.artistName,
+                thumb: v.artworkUrl100.replace('100x100bb', '400x400bb'),
+                preview_url: v.previewUrl,
+                duration: "0:30"
+            });
+
+            // Paramos cuando tengamos 20 canciones únicas de discos diferentes
+            if (results.length >= 20) break;
+        }
 
         res.json({ success: true, results });
     } catch (error) {
-        console.error("❌ ERROR ITUNES TRENDING:", error.message);
         res.status(502).json({ success: false });
     }
 });
