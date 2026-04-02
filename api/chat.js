@@ -119,6 +119,19 @@ module.exports = (pool, JWT_SECRET, io) => {
         }
     });
 
+    // Obtener quién ha leído qué en un grupo
+    router.get('/groups/reads/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        try {
+            const result = await pool.query(`
+                SELECT gm.user_id as "readerId", u.profile_pic_url as "readerAvatar", gm.last_read_message_id as "lastReadId"
+                FROM group_members gm
+                JOIN usersapp u ON gm.user_id = u.id
+                WHERE gm.group_id = $1 AND gm.last_read_message_id > 0
+            `, [req.params.groupId]);
+            res.json({ success: true, reads: result.rows });
+        } catch (e) { res.status(500).json({ success: false }); }
+    });
+
     // 3. MARCAR COMO LEÍDO
     router.post('/read-all/:senderId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const myId = req.user.userId;
