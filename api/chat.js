@@ -1,13 +1,8 @@
 // Archivo: server/api/chat.js
 const express = require('express');
 const { protect } = require('../middleware/auth');
-const multer = require('multer'); // 🚀 Importa multer directamente
-// Configura un "upload" local para esta ruta
-const storage = multer.memoryStorage();
-const upload = multer({ 
-    storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 } // 5MB
-});
+const uploadGroupPhoto = require('../middleware/uploadGroupPhoto');
+const processImage = require('../middleware/processImage');
 
 module.exports = (pool, JWT_SECRET, io) => {
     const router = express.Router();
@@ -147,7 +142,11 @@ module.exports = (pool, JWT_SECRET, io) => {
     // NUEVO: CREAR GRUPO
     const upload = require('../middleware/upload'); // Asegúrate de tener tu multer configurado
 
-    router.post('/groups/create', (req, res, next) => protect(req, res, next, JWT_SECRET), upload.single('groupPhoto'), async (req, res) => {
+    router.post('/groups/create', 
+    (req, res, next) => protect(req, res, next, JWT_SECRET), 
+    uploadGroupPhoto,          // 👈 Usar directamente
+    processImage('group'),     // 👈 Procesar con Sharp
+    async (req, res) => {
         const { name, description, members } = req.body; // members es un string JSON "[1,2,3]"
         const creatorId = req.user.userId;
         const memberIds = JSON.parse(members);
@@ -155,12 +154,15 @@ module.exports = (pool, JWT_SECRET, io) => {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
+             const photoPath = req.file 
+                ? `/uploads/group_photos/${req.file.filename}` 
+                : '/assets/img/default-group.png';
 
             // 1. Insertar Grupo
             const groupRes = await client.query(
                 `INSERT INTO groupsapp (name, description, creator_id, photo_url) 
                  VALUES ($1, $2, $3, $4) RETURNING id`,
-                [name, description, creatorId, req.file ? `/uploads/group_photos/${req.file.filename}` : '/assets/img/default-group.png']
+                [name, description, creatorId, photoPath]
             );
             const groupId = groupRes.rows[0].id;
 

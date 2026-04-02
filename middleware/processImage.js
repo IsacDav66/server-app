@@ -13,7 +13,11 @@ const processImage = (type) => async (req, res, next) => {
     if (type === 'cover') folder = 'cover_images'; 
     if (type === 'bio') folder = 'bio_images';
     if (type === 'card_cover') folder = 'card_cover_images';
-    
+    // 🚀 AÑADE ESTO:
+    if (type === 'group') {
+        folder = 'group_photos';
+        size = 500; // Tamaño optimizado para fotos de grupo
+    }
     if (type === 'emoji') {
         folder = 'emojis';
         size = 128;
