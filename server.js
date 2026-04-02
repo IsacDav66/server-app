@@ -799,8 +799,16 @@ io.on('connection', (socket) => {
                 }
             }
 
-            // 🚀 6. TRANSMISIÓN EN TIEMPO REAL (A la sala del grupo o privada)
+            // 🚀 6. TRANSMISIÓN EN TIEMPO REAL
+            // A. Enviamos a la sala del chat (para el que tiene la pantalla abierta)
             socket.to(roomName).emit('receive_message', savedMessage);
+
+            // B. 📢 ACTUALIZACIÓN DE LISTA DE CHATS (Solo para privados)
+            // Enviamos el mensaje a las salas personales del emisor y receptor.
+            // Esto hace que la lista de chats se mueva arriba y actualice el texto al instante.
+            if (!isGroup) {
+                io.to(`user-${sender_id}`).to(`user-${receiver_id}`).emit('receive_message', savedMessage);
+            }
 
 
             // 🚀 7. CONFIRMACIÓN AL EMISOR (Quitar reloj de arena)
@@ -1024,10 +1032,10 @@ socket.on('send_media_relay', async (data) => {
 
         // 3. 🚀 RETRANSMITIR A LA SALA (socket.to evita el duplicado en el emisor)
         items.forEach(item => {
-            socket.to(roomName).emit('receive_media_relay', {
+            const payload = {
                 ...item,
                 sender_id,
-                message_id: finalDbMessageId, // ID real de DB o ID enviado por cliente
+                message_id: finalDbMessageId,
                 username: senderInfo.username,
                 profile_pic_url: senderInfo.profile_pic_url,
                 parent_message_id: parent_message_id,
@@ -1035,7 +1043,15 @@ socket.on('send_media_relay', async (data) => {
                 parent_content: data.parent_content,
                 isGrid: isGrid || false,
                 isNew: isNew 
-            });
+            };
+
+            // Enviamos a la sala del chat
+            socket.to(roomName).emit('receive_media_relay', payload);
+
+            // Si es privado, enviamos a las salas personales para actualizar el snippet en la lista
+            if (!isGroup) {
+                io.to(`user-${sender_id}`).to(`user-${receiver_id}`).emit('receive_media_relay', payload);
+            }
         });
 
     } catch (e) {
