@@ -288,34 +288,47 @@ const qs = require('querystring');
 // --- 🚀 NUEVA RUTA: Obtener éxitos mundiales (Motor iTunes) ---
 router.get('/music/trending', async (req, res) => {
     try {
-        // Buscamos una lista amplia para tener de donde elegir
-        const response = await axios.get(`https://itunes.apple.com/search?term=top&limit=50&media=music&entity=song`, {
+        // 1. Lista de términos para que las tendencias siempre cambien
+        const topics = ['2024', '2025', 'hits', 'pop', 'reggaeton', 'rock', 'dance', 'phonk'];
+        const randomTopic = topics[Math.floor(Math.random() * topics.length)];
+        
+        console.log(`🎵 Generando tendencias dinámicas usando el tema: ${randomTopic}`);
+
+        // 2. Pedimos 100 resultados para tener una "piscina" grande de donde elegir
+        const response = await axios.get(`https://itunes.apple.com/search?term=${randomTopic}&limit=100&media=music&entity=song`, {
             timeout: 10000
         });
 
         const seenAlbums = new Set();
         const results = [];
 
-        for (const v of response.data.results) {
-            // Si ya tenemos una canción con este ID de álbum, la saltamos
+        // 3. Mezclamos los resultados de iTunes para que no salgan siempre en el mismo orden
+        const shuffled = response.data.results.sort(() => 0.5 - Math.random());
+
+        for (const v of shuffled) {
+            // Filtro de Álbumes Únicos: Si ya pusimos este disco, saltamos a otro
             if (seenAlbums.has(v.collectionId)) continue;
             
+            // Filtro de Seguridad: Evitar que el título sea solo "Top" o muy corto
+            if (v.trackName.length < 2) continue;
+
             seenAlbums.add(v.collectionId);
             results.push({
                 id: v.trackId,
-                title: v.trackName,
+                title: v.trackName, // 👈 Nombre real de la canción
                 author: v.artistName,
                 thumb: v.artworkUrl100.replace('100x100bb', '400x400bb'),
                 preview_url: v.previewUrl,
                 duration: "0:30"
             });
 
-            // Paramos cuando tengamos 20 canciones únicas de discos diferentes
+            // Límite visual de 20 para el panel
             if (results.length >= 20) break;
         }
 
         res.json({ success: true, results });
     } catch (error) {
+        console.error("❌ ERROR TRENDING:", error.message);
         res.status(502).json({ success: false });
     }
 });
