@@ -663,46 +663,46 @@ io.on('connection', (socket) => {
     });
 
     socket.on('mark_message_read', async (data) => {
-    const { messageId, roomName, readerId, senderId } = data;
+        const { messageId, roomName, readerId, group_id } = data;
 
-    try {
-        // 1. Marcar ESTE mensaje específico como leído
-        await pool.query(
-            'UPDATE messagesapp SET is_read = TRUE WHERE message_id = $1 AND receiver_id = $2',
-            [messageId, readerId]
-        );
+        try {
+            if (group_id) {
+                // 🚀 CASO GRUPO: Actualizar el "marcador" del miembro
+                await pool.query(
+                    'UPDATE group_members SET last_read_message_id = $1 WHERE group_id = $2 AND user_id = $3',
+                    [messageId, group_id, readerId]
+                );
 
-        // 2. 🚀 CÁLCULO PRECISO: Buscamos el ID más alto de los mensajes 
-        // que 'senderId' envió y que 'readerId' ya marcó como leídos (is_read = TRUE)
-        const result = await pool.query(`
-            SELECT MAX(message_id) as last_id 
-            FROM messagesapp 
-            WHERE room_name = $1 AND sender_id = $2 AND is_read = TRUE
-        `, [roomName, senderId]);
+                // Obtener dónde están parados todos los miembros ahora mismo
+                const result = await pool.query(`
+                    SELECT gm.user_id as "readerId", u.profile_pic_url as "readerAvatar", gm.last_read_message_id as "lastReadId"
+                    FROM group_members gm
+                    JOIN usersapp u ON gm.user_id = u.id
+                    WHERE gm.group_id = $1
+                `, [group_id]);
 
-        const currentTopReadId = result.rows[0].last_id;
+                // Avisar a todo el grupo (incluyéndote para sincronizar otros dispositivos)
+                io.to(roomName).emit('group_read_update', {
+                    reads: result.rows // Envía la lista de quién leyó qué
+                });
 
-        // 3. Solo emitimos si hay un avance real para evitar parpadeos innecesarios
-        if (currentTopReadId && (!socket.lastReadId || currentTopReadId > socket.lastReadId)) {
-            socket.lastReadId = currentTopReadId;
-
-            const userRes = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [readerId]);
-            const avatar = userRes.rows[0].profile_pic_url;
-
-            io.to(roomName).emit('messages_read_update', {
-                lastReadId: currentTopReadId,
-                readerAvatar: avatar,
-                readerId: readerId
-            });
-            // 🚀 LO QUE FALTA: Emitir a la sala personal del que envió los mensajes (senderId)
-            io.to(`user-${senderId}`).emit('messages_read_update', {
-                lastReadId: currentTopReadId,
-                readerAvatar: avatar,
-                readerId: readerId
-            });
-        }
-    } catch (err) { console.error(err); }
-});
+            } else {
+                // CASO PRIVADO (Tu lógica original mejorada)
+                await pool.query(
+                    'UPDATE messagesapp SET is_read = TRUE WHERE message_id = $1 AND receiver_id = $2',
+                    [messageId, readerId]
+                );
+                
+                const userRes = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [readerId]);
+                
+                io.to(roomName).emit('messages_read_update', {
+                    lastReadId: messageId,
+                    readerAvatar: userRes.rows[0].profile_pic_url,
+                    readerId: readerId
+                });
+            }
+        } catch (err) { console.error(err); }
+    });
 
     socket.on('join_room', (roomName) => {
         socket.join(roomName);
