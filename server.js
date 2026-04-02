@@ -1012,6 +1012,8 @@ socket.on('send_media_relay', async (data) => {
             socket.to(roomName).emit('receive_media_relay', {
                 ...item,
                 sender_id,
+                username: savedMsg ? savedMsg.username : null, 
+                profile_pic_url: savedMsg ? savedMsg.profile_pic_url : null,
                 isGrid: isGrid || false,
                 isNew: isNew // Importante para que el receptor sepa si debe crear una burbuja
             });
