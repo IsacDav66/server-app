@@ -9,52 +9,69 @@ module.exports = (pool, JWT_SECRET, io) => {
 
     // 1. OBTENER LISTA DE CONVERSACIONES (FEED DE CHATS)
     router.get('/conversations', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const loggedInUserId = req.user.userId;
-        try {
-            const query = `
-                WITH CombinedMessages AS (
-                    -- Chats Privados
-                    SELECT DISTINCT ON (CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END)
-                        m.message_id, m.sender_id, m.receiver_id, m.content, m.created_at, m.is_read, m.room_name,
-                        NULL::int as group_id,
-                        CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END AS other_user_id
-                    FROM messagesapp m
-                    WHERE (m.sender_id = $1 OR m.receiver_id = $1) AND m.group_id IS NULL
-                    AND (m.room_name IS NULL OR m.room_name NOT LIKE 'match_%')
-                    ORDER BY CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END, m.created_at DESC
+    const loggedInUserId = req.user.userId;
+    try {
+        const query = `
+            WITH CombinedMessages AS (
+                -- 1. OBTENER EL ÚLTIMO MENSAJE DE CADA CHAT PRIVADO
+                SELECT DISTINCT ON (CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END)
+                    m.message_id, m.sender_id, m.receiver_id, m.content, m.created_at, m.is_read,
+                    NULL::int as group_id, -- Columna vacía para que coincida con el UNION
+                    CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END AS other_user_id
+                FROM messagesapp m
+                WHERE (m.sender_id = $1 OR m.receiver_id = $1) 
+                  AND m.group_id IS NULL
+                  AND (m.room_name IS NULL OR m.room_name NOT LIKE 'match_%')
+                ORDER BY CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END, m.created_at DESC
 
-                    UNION ALL
+                UNION ALL
 
-                    -- Chats de Grupos
-                    SELECT DISTINCT ON (m.group_id)
-                        m.message_id, m.sender_id, NULL::int as receiver_id, m.content, m.created_at, m.is_read, m.room_name,
-                        m.group_id,
-                        NULL::int as other_user_id
-                    FROM messagesapp m
-                    JOIN group_members gm ON m.group_id = gm.group_id
-                    WHERE gm.user_id = $1
-                    ORDER BY m.group_id, m.created_at DESC
-                )
-                SELECT 
-                    cm.*,
-                    u.username, u.profile_pic_url,
-                    g.name as group_name, g.photo_url as group_photo,
-                    (SELECT COUNT(*)::int FROM messagesapp 
-                     WHERE (receiver_id = $1 AND sender_id = u.id AND is_read = FALSE)
-                     OR (group_id = cm.group_id AND sender_id != $1 AND is_read = FALSE)
-                    ) AS unread_count
-                FROM CombinedMessages cm
-                LEFT JOIN usersapp u ON cm.other_user_id = u.id
-                LEFT JOIN groupsapp g ON cm.group_id = g.id
-                ORDER BY cm.created_at DESC;
-            `;
-            const result = await pool.query(query, [loggedInUserId]);
-            res.status(200).json({ success: true, conversations: result.rows });
-        } catch (error) {
-            console.error('Error conversations:', error);
-            res.status(500).json({ success: false });
-        }
-    });
+                -- 2. OBTENER EL ÚLTIMO MENSAJE DE CADA GRUPO
+                SELECT DISTINCT ON (m.group_id)
+                    m.message_id, m.sender_id, NULL::int as receiver_id, m.content, m.created_at, m.is_read,
+                    m.group_id,
+                    NULL::int as other_user_id
+                FROM messagesapp m
+                JOIN group_members gm ON m.group_id = gm.group_id
+                WHERE gm.user_id = $1
+                ORDER BY m.group_id, m.created_at DESC
+            )
+            SELECT
+                cm.message_id AS last_message_id,
+                cm.content AS last_message_content,
+                cm.created_at AS last_message_at,
+                cm.sender_id AS last_message_sender_id,
+                cm.is_read AS last_message_read,
+                cm.group_id,
+                u.id AS user_id,
+                u.username,
+                u.profile_pic_url,
+                g.name AS group_name,
+                g.photo_url AS group_photo,
+                -- CONTADOR DE NO LEÍDOS DINÁMICO
+                CASE 
+                    WHEN cm.group_id IS NULL THEN (
+                        SELECT COUNT(*)::int FROM messagesapp 
+                        WHERE receiver_id = $1 AND sender_id = u.id AND is_read = FALSE AND group_id IS NULL
+                    )
+                    ELSE (
+                        SELECT COUNT(*)::int FROM messagesapp 
+                        WHERE group_id = cm.group_id AND sender_id != $1 AND is_read = FALSE
+                    )
+                END AS unread_count
+            FROM CombinedMessages cm
+            LEFT JOIN usersapp u ON cm.other_user_id = u.id
+            LEFT JOIN groupsapp g ON cm.group_id = g.id
+            ORDER BY cm.created_at DESC;
+        `;
+
+        const result = await pool.query(query, [loggedInUserId]);
+        res.status(200).json({ success: true, conversations: result.rows });
+    } catch (error) {
+        console.error('Error conversations:', error.stack);
+        res.status(500).json({ success: false });
+    }
+});
 
     // 2. OBTENER HISTORIAL (DENTRO DEL CHAT)
     router.get('/history/:otherUserId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
@@ -137,10 +154,6 @@ module.exports = (pool, JWT_SECRET, io) => {
     });
 
 
-
-
-    // NUEVO: CREAR GRUPO
-    const upload = require('../middleware/upload'); // Asegúrate de tener tu multer configurado
 
     router.post('/groups/create', 
     (req, res, next) => protect(req, res, next, JWT_SECRET), 
