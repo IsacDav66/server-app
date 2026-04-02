@@ -885,14 +885,24 @@ io.on('connection', (socket) => {
     // ==========================================================
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
+// --- FUNCIÓN DE AYUDA (Colócala al inicio de server.js o antes de los sockets) ---
+const safeInt = (id) => {
+    const n = parseInt(id);
+    return isNaN(n) ? null : n;
+};
+
+// --- EVENTO SOCKET ---
 socket.on('send_media_relay', async (data) => {
     // 1. Extraer datos básicos
-    const { roomName, sender_id, receiver_id, group_id, isNew, isGrid, tempId, parent_message_id } = data;
+    const { roomName, sender_id, receiver_id, group_id, isNew, isGrid, tempId, parent_message_id, message_id } = data;
     
     // 🛡️ DETECCIÓN ROBUSTA DE GRUPO
     const isGroup = !!group_id || (roomName && roomName.startsWith('group_'));
     const finalReceiverId = isGroup ? null : receiver_id;
     const finalGroupId = isGroup ? (group_id || roomName.split('_')[1]) : null;
+
+    // 🚀 VARIABLE DE CONTROL DE ID (Evita el ReferenceError)
+    let finalDbMessageId = message_id; 
 
     let items = data.items || [];
     if (items.length === 0 && data.file) {
@@ -907,22 +917,21 @@ socket.on('send_media_relay', async (data) => {
     }
 
     try {
-        // 🚀 PASO CLAVE: Obtener info del emisor ANTES de los IFs
-        // Así estará disponible para el envío final de los binarios
+        // 🚀 OBTENER INFO DEL EMISOR (Disponible para todo el evento)
         const senderRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
         const senderInfo = senderRes.rows[0] || { username: 'Usuario', profile_pic_url: null };
 
         if (isNew) {
-            // Guardar archivos en caché del servidor
+            // A. Guardar archivos en caché del servidor
             items.forEach(item => {
                 if (item.file) {
                     const ext = item.type === 'VIDEO' ? '.mp4' : (item.type === 'AUDIO' ? '.wav' : '.jpg');
                     const filePath = path.join(chatTempDir, `${item.mediaId}${ext}`);
-                    fs.writeFile(filePath, item.file, (err) => { if (err) console.error(err); });
+                    fs.writeFile(filePath, item.file, (err) => { if (err) console.error("Error FS:", err); });
                 }
             });
 
-            // Formatear contenido para DB
+            // B. Formatear contenido para DB
             let contentToSave = "";
             if (isGrid || items.length > 1) {
                 contentToSave = `[MEDIA_GRID:${items.map(m => `${m.mediaId}_P_${m.type}_P_${m.lqPreview || ''}_P_${m.totalSize || 0}`).join('_I_')}]`;
@@ -932,25 +941,31 @@ socket.on('send_media_relay', async (data) => {
                 contentToSave = `[MEDIA_${m.type}:${m.mediaId}_P_${param1}_P_${m.totalSize || 0}]`;
             }
 
-            // Guardar en la base de datos
+            // C. GUARDAR EN DB (Usando safeInt para el parent_id)
             const result = await pool.query(
                 `INSERT INTO messagesapp (sender_id, receiver_id, group_id, content, room_name, parent_message_id) 
                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-                [sender_id, finalReceiverId, finalGroupId, contentToSave, roomName, parent_message_id || null]
+                [sender_id, finalReceiverId, finalGroupId, contentToSave, roomName, safeInt(parent_message_id)]
             );
             
-            let savedMsgInDB = result.rows[0];
-            savedMsgInDB.username = senderInfo.username;
-            savedMsgInDB.profile_pic_url = senderInfo.profile_pic_url;
+            const savedMsgInDB = result.rows[0];
+            finalDbMessageId = savedMsgInDB.message_id; // Actualizamos el ID real
 
-            // Confirmar al emisor (Quita el "pending")
-            socket.emit('media_confirmed', { tempId, realMessage: savedMsgInDB });
+            // D. CONFIRMAR AL EMISOR (Quita el "pending")
+            socket.emit('media_confirmed', { 
+                tempId, 
+                realMessage: { 
+                    ...savedMsgInDB, 
+                    username: senderInfo.username, 
+                    profile_pic_url: senderInfo.profile_pic_url 
+                } 
+            });
+
             // ============================================================
             // 🛡️ LÓGICA DE NOTIFICACIONES (SÓLO PARA CHATS PRIVADOS)
             // ============================================================
             if (!isGroup && receiver_id) {
                 try {
-                    // Notificación en la campana (DB)
                     const updateResult = await pool.query(`
                         UPDATE notificationsapp 
                         SET message_count = message_count + 1, content = $3, created_at = CURRENT_TIMESTAMP 
@@ -969,13 +984,12 @@ socket.on('send_media_relay', async (data) => {
                         finalNotif = updateResult.rows[0];
                     }
 
-                    const notificationPayload = {
+                    // Notificación por Socket
+                    io.to(`user-${receiver_id}`).emit('new_notification', {
                         ...finalNotif,
-                        sender_username: savedMsg.username,
-                        sender_profile_pic_url: savedMsg.profile_pic_url
-                    };
-
-                    io.to(`user-${receiver_id}`).emit('new_notification', notificationPayload);
+                        sender_username: senderInfo.username,
+                        sender_profile_pic_url: senderInfo.profile_pic_url
+                    });
 
                     // PUSH FIREBASE
                     const recipientRes = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
@@ -983,38 +997,36 @@ socket.on('send_media_relay', async (data) => {
                         const message = {
                             token: recipientRes.rows[0].fcm_token,
                             data: {
-                                title: savedMsg.username,
+                                title: senderInfo.username,
                                 body: getPushPlainText(contentToSave),
                                 channelId: 'chat_messages_channel',
                                 groupId: String(sender_id),
                                 openUrl: `chat.html?userId=${sender_id}&groupId=${sender_id}`,
-                                imageUrl: savedMsg.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + savedMsg.profile_pic_url).trim() : ""
+                                imageUrl: senderInfo.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + senderInfo.profile_pic_url).trim() : ""
                             },
                             android: { priority: 'high' }
                         };
-                        admin.messaging().send(message).catch(e => console.error("Push Media Error:", e.message));
+                        admin.messaging().send(message).catch(e => console.error("Push Error:", e.message));
                     }
                 } catch (notifErr) {
-                    console.error("❌ Error en sistema de notificaciones media:", notifErr);
+                    console.error("❌ Error notificaciones media:", notifErr);
                 }
             }
         }
-        let savedMsgInDB = result.rows[0];
 
-        // 3. 🚀 RETRANSMITIR BINARIOS (Usamos socket.to para evitar DUPLICADOS)
-        // Se envía a todos en la sala menos al que lo mandó
+        // 3. 🚀 RETRANSMITIR A LA SALA (socket.to evita el duplicado en el emisor)
         items.forEach(item => {
             socket.to(roomName).emit('receive_media_relay', {
                 ...item,
                 sender_id,
-                message_id: savedMsgInDB.message_id, 
+                message_id: finalDbMessageId, // ID real de DB o ID enviado por cliente
                 username: senderInfo.username,
                 profile_pic_url: senderInfo.profile_pic_url,
                 parent_message_id: parent_message_id,
                 parent_username: data.parent_username,
                 parent_content: data.parent_content,
                 isGrid: isGrid || false,
-                isNew: isNew // Importante para que el receptor sepa si debe crear una burbuja
+                isNew: isNew 
             });
         });
 
