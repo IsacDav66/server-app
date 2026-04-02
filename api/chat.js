@@ -1,6 +1,13 @@
 // Archivo: server/api/chat.js
 const express = require('express');
 const { protect } = require('../middleware/auth');
+const multer = require('multer'); // 🚀 Importa multer directamente
+// Configura un "upload" local para esta ruta
+const storage = multer.memoryStorage();
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 5 * 1024 * 1024 } // 5MB
+});
 
 module.exports = (pool, JWT_SECRET, io) => {
     const router = express.Router();
@@ -218,7 +225,7 @@ module.exports = (pool, JWT_SECRET, io) => {
             res.json({ success: true, group: resGroup.rows[0] });
         } catch (e) { res.status(500).json({ success: false }); }
     });
-    
+
 
     return router;
 };
