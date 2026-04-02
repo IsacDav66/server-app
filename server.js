@@ -667,41 +667,71 @@ io.on('connection', (socket) => {
 
         try {
             if (group_id) {
-                // 🚀 CASO GRUPO: Actualizar el "marcador" del miembro
+                // ============================================================
+                // 👥 LÓGICA PARA GRUPOS (Tripulaciones)
+                // ============================================================
+                
+                // 1. Actualizar el "marcador de posición" del miembro en la base de datos
                 await pool.query(
                     'UPDATE group_members SET last_read_message_id = $1 WHERE group_id = $2 AND user_id = $3',
                     [messageId, group_id, readerId]
                 );
 
-                // Obtener dónde están parados todos los miembros ahora mismo
+                // 2. Obtener la ubicación de lectura de TODOS los miembros activos
+                // Esto es necesario para que el cliente pueda dibujar la "pila de avatares" correctamente
                 const result = await pool.query(`
                     SELECT gm.user_id as "readerId", u.profile_pic_url as "readerAvatar", gm.last_read_message_id as "lastReadId"
                     FROM group_members gm
                     JOIN usersapp u ON gm.user_id = u.id
-                    WHERE gm.group_id = $1
+                    WHERE gm.group_id = $1 AND gm.last_read_message_id > 0
                 `, [group_id]);
 
-                // Avisar a todo el grupo (incluyéndote para sincronizar otros dispositivos)
+                // 3. Notificar a TODA la sala del grupo (roomName)
+                // Esto hace que las fotos de los demás miembros bajen en tiempo real en la pantalla de chat
                 io.to(roomName).emit('group_read_update', {
-                    reads: result.rows // Envía la lista de quién leyó qué
+                    group_id: group_id,
+                    reads: result.rows 
+                });
+
+                // 4. Notificar específicamente a la sala personal del usuario que leyó (readerId)
+                // Esto sirve para que si tiene la lista de chats abierta, el contador de "no leídos" se limpie
+                io.to(`user-${readerId}`).emit('group_read_confirmed_locally', {
+                    group_id: group_id,
+                    lastReadId: messageId
                 });
 
             } else {
-                // CASO PRIVADO (Tu lógica original mejorada)
+                // ============================================================
+                // 🔒 LÓGICA PARA CHATS PRIVADOS (DMs)
+                // ============================================================
+                
+                // 1. Marcar mensaje como leído en la tabla principal
                 await pool.query(
                     'UPDATE messagesapp SET is_read = TRUE WHERE message_id = $1 AND receiver_id = $2',
                     [messageId, readerId]
                 );
                 
+                // 2. Obtener el avatar del que leyó el mensaje
                 const userRes = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [readerId]);
+                const readerAvatar = userRes.rows[0] ? userRes.rows[0].profile_pic_url : null;
                 
-                io.to(roomName).emit('messages_read_update', {
+                // 3. Avisar a la sala del chat privado
+                // Esto mueve la foto pequeña del "visto" al mensaje correspondiente
+                const updatePayload = {
                     lastReadId: messageId,
-                    readerAvatar: userRes.rows[0].profile_pic_url,
+                    readerAvatar: readerAvatar,
                     readerId: readerId
-                });
+                };
+
+                io.to(roomName).emit('messages_read_update', updatePayload);
+
+                // 4. Avisar a la sala personal del lector
+                // (Para sincronizar el estado de lectura en la lista de chats o múltiples pestañas)
+                io.to(`user-${readerId}`).emit('messages_read_update', updatePayload);
             }
-        } catch (err) { console.error(err); }
+        } catch (err) {
+            console.error("❌ Error crítico en mark_message_read:", err);
+        }
     });
 
     socket.on('join_room', (roomName) => {
