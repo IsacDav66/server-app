@@ -727,7 +727,10 @@ io.on('connection', (socket) => {
 
                 // 4. Avisar a la sala personal del lector
                 // (Para sincronizar el estado de lectura en la lista de chats o múltiples pestañas)
-                io.to(`user-${readerId}`).emit('messages_read_update', updatePayload);
+                 io.to(`user-${readerId}`).emit('group_read_confirmed_locally', {
+                    group_id: group_id,
+                    lastReadId: messageId
+                });
             }
         } catch (err) {
             console.error("❌ Error crítico en mark_message_read:", err);

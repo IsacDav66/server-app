@@ -54,12 +54,20 @@ module.exports = (pool, JWT_SECRET, io) => {
                     -- CONTADOR DE NO LEÍDOS DINÁMICO
                     CASE 
                         WHEN cm.group_id IS NULL THEN (
+                            -- Contador para Privados (Usa el flag is_read)
                             SELECT COUNT(*)::int FROM messagesapp 
                             WHERE receiver_id = $1 AND sender_id = u.id AND is_read = FALSE AND group_id IS NULL
                         )
                         ELSE (
-                            SELECT COUNT(*)::int FROM messagesapp 
-                            WHERE group_id = cm.group_id AND sender_id != $1 AND is_read = FALSE
+                            -- 🚀 CONTADOR PARA GRUPOS (Compara IDs contra tu marca en group_members)
+                            SELECT COUNT(*)::int FROM messagesapp m2
+                            WHERE m2.group_id = cm.group_id 
+                            AND m2.sender_id != $1 
+                            AND m2.message_id > (
+                                SELECT COALESCE(last_read_message_id, 0) 
+                                FROM group_members 
+                                WHERE group_id = cm.group_id AND user_id = $1
+                            )
                         )
                     END AS unread_count
                 FROM CombinedMessages cm
