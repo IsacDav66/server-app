@@ -789,7 +789,8 @@ io.on('connection', (socket) => {
             }
 
             // 🚀 6. TRANSMISIÓN EN TIEMPO REAL (A la sala del grupo o privada)
-            io.to(roomName).emit('receive_message', savedMessage);
+            socket.to(roomName).emit('receive_message', savedMessage);
+
 
             // 🚀 7. CONFIRMACIÓN AL EMISOR (Quitar reloj de arena)
             socket.emit('message_confirmed', {
