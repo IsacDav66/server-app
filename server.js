@@ -52,7 +52,10 @@ const chatTempDir = path.join(__dirname, 'uploads/chat_temp');
 if (!fs.existsSync(chatTempDir)) {
     fs.mkdirSync(chatTempDir, { recursive: true });
 }
-
+const safeInt = (id) => {
+    const n = parseInt(id);
+    return isNaN(n) ? null : n;
+};
 // --- CONFIGURACIÓN DE SOCKET.IO ---
 const io = new Server(server, {
     cors: {
@@ -754,7 +757,7 @@ io.on('connection', (socket) => {
                 finalGroupId,
                 content, 
                 roomName, 
-                parent_message_id || null, 
+                safeInt(parent_message_id), 
                 sticker_pack ? JSON.stringify(sticker_pack) : null,
                 emoji_pack ? JSON.stringify(emoji_pack) : null
             ]);
@@ -1003,7 +1006,8 @@ socket.on('send_media_relay', async (data) => {
             socket.to(roomName).emit('receive_media_relay', {
                 ...item,
                 sender_id,
-                username: senderInfo.username, // 👈 Ahora siempre está definido
+                message_id: savedMsgInDB.message_id, 
+                username: senderInfo.username,
                 profile_pic_url: senderInfo.profile_pic_url,
                 parent_message_id: parent_message_id,
                 parent_username: data.parent_username,
