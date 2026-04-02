@@ -631,16 +631,24 @@ io.on('connection', (socket) => {
             notifyFriendsOfStatusChange(socket.userId, true, finalAppData);
         }
     });
-    socket.on('typing_status', (data) => {
-        // 🚀 Extraemos receiverId para avisar a su sala personal
+    socket.on('typing_status', async (data) => {
         const { roomName, userId, receiverId, isTyping } = data;
         
-        // A. Avisar a la sala del chat (para el que tiene el chat abierto)
-        socket.to(roomName).emit('user_typing_update', { userId, isTyping });
+        let profilePic = null;
+        if (isTyping) {
+            // Buscamos la foto del usuario que escribe
+            const userRes = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [userId]);
+            profilePic = userRes.rows[0]?.profile_pic_url;
+        }
 
-        // 🚀 B. Avisar a la sala personal del receptor (para su lista de chats)
+        const payload = { userId, isTyping, profile_pic_url: profilePic };
+
+        // A. Avisar a la sala del chat (Grupal o Privado)
+        socket.to(roomName).emit('user_typing_update', payload);
+
+        // B. Avisar al receptor privado (para su lista de chats)
         if (receiverId) {
-            io.to(`user-${receiverId}`).emit('user_typing_update', { userId, isTyping });
+            io.to(`user-${receiverId}`).emit('user_typing_update', payload);
         }
     });
 
