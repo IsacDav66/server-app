@@ -883,7 +883,7 @@ io.on('connection', (socket) => {
     // === LÓGICA DE RELAY BINARIO (FOTOS/VIDEOS SIN DISCO) ===
     // ==========================================================
 socket.on('send_media_relay', async (data) => {
-    // 1. Extraer datos (Añadimos group_id)
+    // 1. Extraer datos básicos
     const { roomName, sender_id, receiver_id, group_id, isNew, isGrid, tempId, parent_message_id } = data;
     
     // 🛡️ DETECCIÓN ROBUSTA DE GRUPO
@@ -891,8 +891,8 @@ socket.on('send_media_relay', async (data) => {
     const finalReceiverId = isGroup ? null : receiver_id;
     const finalGroupId = isGroup ? (group_id || roomName.split('_')[1]) : null;
 
-    let items = data.items;
-    if (!items && data.file) {
+    let items = data.items || [];
+    if (items.length === 0 && data.file) {
         items = [{
             file: data.file,
             type: data.type,
@@ -903,54 +903,45 @@ socket.on('send_media_relay', async (data) => {
         }];
     }
 
-    if (!items || items.length === 0) return;
-
-    // Persistencia temporal en disco del servidor (7 días)
-    if (isNew) {
-        items.forEach(item => {
-            if (item.file) {
-                const ext = item.type === 'VIDEO' ? '.mp4' : (item.type === 'AUDIO' ? '.wav' : '.jpg');
-                const filePath = path.join(chatTempDir, `${item.mediaId}${ext}`);
-                fs.writeFile(filePath, item.file, (err) => {
-                    if (err) console.error("❌ Error guardando caché en server:", err);
-                });
-            }
-        });
-    }
-
-    // Formatear contenido para la base de datos
-    let contentToSave = "";
-    if (isGrid || items.length > 1) {
-        contentToSave = `[MEDIA_GRID:${items.map(m => 
-            `${m.mediaId}_P_${m.type}_P_${m.lqPreview || ''}_P_${m.totalSize || 0}`
-        ).join('_I_')}]`;
-    } else {
-        const m = items[0];
-        const param1 = (m.type === 'AUDIO') ? (m.duration || '') : (m.lqPreview || '');
-        contentToSave = `[MEDIA_${m.type}:${m.mediaId}_P_${param1}_P_${m.totalSize || 0}]`;
-    }
-
     try {
+        // 🚀 PASO CLAVE: Obtener info del emisor ANTES de los IFs
+        // Así estará disponible para el envío final de los binarios
+        const senderRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+        const senderInfo = senderRes.rows[0] || { username: 'Usuario', profile_pic_url: null };
+
         if (isNew) {
-            // 2. Guardar el mensaje en la DB (Añadimos group_id y permitimos receiver_id null)
+            // Guardar archivos en caché del servidor
+            items.forEach(item => {
+                if (item.file) {
+                    const ext = item.type === 'VIDEO' ? '.mp4' : (item.type === 'AUDIO' ? '.wav' : '.jpg');
+                    const filePath = path.join(chatTempDir, `${item.mediaId}${ext}`);
+                    fs.writeFile(filePath, item.file, (err) => { if (err) console.error(err); });
+                }
+            });
+
+            // Formatear contenido para DB
+            let contentToSave = "";
+            if (isGrid || items.length > 1) {
+                contentToSave = `[MEDIA_GRID:${items.map(m => `${m.mediaId}_P_${m.type}_P_${m.lqPreview || ''}_P_${m.totalSize || 0}`).join('_I_')}]`;
+            } else {
+                const m = items[0];
+                const param1 = (m.type === 'AUDIO') ? (m.duration || '') : (m.lqPreview || '');
+                contentToSave = `[MEDIA_${m.type}:${m.mediaId}_P_${param1}_P_${m.totalSize || 0}]`;
+            }
+
+            // Guardar en la base de datos
             const result = await pool.query(
                 `INSERT INTO messagesapp (sender_id, receiver_id, group_id, content, room_name, parent_message_id) 
                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
                 [sender_id, finalReceiverId, finalGroupId, contentToSave, roomName, parent_message_id || null]
             );
             
-            let savedMsg = result.rows[0];
+            let savedMsgInDB = result.rows[0];
+            savedMsgInDB.username = senderInfo.username;
+            savedMsgInDB.profile_pic_url = senderInfo.profile_pic_url;
 
-            // Adjuntar datos del emisor para el tiempo real
-            const senderDataRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
-            if (senderDataRes.rows.length > 0) {
-                savedMsg.username = senderDataRes.rows[0].username;
-                savedMsg.profile_pic_url = senderDataRes.rows[0].profile_pic_url;
-            }
-
-            // 🚀 Confirmar al emisor (Quita el estado "pending")
-            socket.emit('media_confirmed', { tempId, realMessage: savedMsg });
-
+            // Confirmar al emisor (Quita el "pending")
+            socket.emit('media_confirmed', { tempId, realMessage: savedMsgInDB });
             // ============================================================
             // 🛡️ LÓGICA DE NOTIFICACIONES (SÓLO PARA CHATS PRIVADOS)
             // ============================================================
@@ -1012,8 +1003,8 @@ socket.on('send_media_relay', async (data) => {
             socket.to(roomName).emit('receive_media_relay', {
                 ...item,
                 sender_id,
-                username: savedMsg ? savedMsg.username : null, 
-                profile_pic_url: savedMsg ? savedMsg.profile_pic_url : null,
+                username: senderInfo.username, // 👈 Ahora siempre está definido
+                profile_pic_url: senderInfo.profile_pic_url,
                 isGrid: isGrid || false,
                 isNew: isNew // Importante para que el receptor sepa si debe crear una burbuja
             });
