@@ -285,70 +285,72 @@ const qs = require('querystring');
 
 
 
-// --- NUEVA RUTA: Obtener éxitos mundiales (Trending) ---
+// --- 🚀 NUEVA RUTA: Obtener éxitos mundiales (Motor iTunes) ---
 router.get('/music/trending', async (req, res) => {
     try {
-        console.log(`🔍 Cargando música tendencia desde Deezer...`);
-        // El ID 0 en la playlist suele ser el Top Global
-        const response = await axios.get(`https://api.deezer.com/chart/0/tracks&limit=20`);
+        console.log(`🔍 Cargando tendencias desde iTunes API...`);
+        
+        // Buscamos "Top Hits" para simular una lista de tendencias
+        const response = await axios.get(`https://itunes.apple.com/search?term=hits&limit=25&media=music`, {
+            timeout: 10000
+        });
 
-        const results = response.data.data.map(v => ({
-            id: v.id,
-            title: v.title,
-            author: v.artist.name,
-            thumb: v.album.cover_medium,
-            preview_url: v.preview,
+        const results = response.data.results.map(v => ({
+            id: v.trackId,
+            title: v.trackName,
+            author: v.artistName,
+            thumb: v.artworkUrl100.replace('100x100bb', '400x400bb'), // Portada en alta resolución
+            preview_url: v.previewUrl, // Link de audio MP3 (30 seg)
             duration: "0:30"
         }));
 
         res.json({ success: true, results });
     } catch (error) {
-        console.error("❌ ERROR TRENDING:", error.message);
-        res.status(500).json({ success: false });
+        console.error("❌ ERROR ITUNES TRENDING:", error.message);
+        res.status(502).json({ success: false });
     }
 });
 
-// --- NUEVA RUTA: Obtener link fresco de una canción específica ---
-router.get('/music/refresh/:trackId', async (req, res) => {
-    try {
-        const { trackId } = req.params;
-        const response = await axios.get(`https://api.deezer.com/track/${trackId}`);
-        
-        if (response.data && response.data.preview) {
-            res.json({ success: true, preview_url: response.data.preview });
-        } else {
-            res.status(404).json({ success: false });
-        }
-    } catch (error) {
-        res.status(500).json({ success: false });
-    }
-});
-
+// --- 🚀 NUEVA RUTA: Buscador de música (Motor iTunes) ---
 router.get('/music/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).json({ success: false });
 
-    console.log(`🔍 Buscando en Deezer: ${query}`);
+    console.log(`🔍 Buscando en iTunes: ${query}`);
 
     try {
-        // Deezer no necesita Token, es una API pública muy rápida
-        const response = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=20`);
+        const response = await axios.get(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&limit=25&media=music`, {
+            timeout: 10000
+        });
 
-        // Mapeamos los resultados al formato que ya usas
-        const results = response.data.data.map(v => ({
-            id: v.id,
-            title: v.title,
-            author: v.artist.name,
-            thumb: v.album.cover_medium, // Imagen de buena calidad
-            preview_url: v.preview,       // EL LINK MP3 (Deezer siempre tiene)
+        const results = response.data.results.map(v => ({
+            id: v.trackId,
+            title: v.trackName,
+            author: v.artistName,
+            thumb: v.artworkUrl100.replace('100x100bb', '400x400bb'),
+            preview_url: v.previewUrl,
             duration: "0:30"
         }));
 
-        console.log(`✅ Deezer envió ${results.length} resultados.`);
         res.json({ success: true, results });
-
     } catch (error) {
-        console.error("❌ ERROR DEEZER:", error.message);
+        console.error("❌ ERROR ITUNES SEARCH:", error.message);
+        res.status(500).json({ success: false });
+    }
+});
+
+// --- RUTA REFRESH (Para compatibilidad con tu chat) ---
+router.get('/music/refresh/:trackId', async (req, res) => {
+    try {
+        const { trackId } = req.params;
+        const response = await axios.get(`https://itunes.apple.com/lookup?id=${trackId}`);
+        
+        if (response.data.results && response.data.results[0]) {
+            res.json({ success: true, preview_url: response.data.results[0].previewUrl });
+        } else {
+            res.status(404).json({ success: false });
+        }
+    } catch (error) {
         res.status(500).json({ success: false });
     }
 });
