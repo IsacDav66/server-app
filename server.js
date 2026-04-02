@@ -999,6 +999,7 @@ socket.on('send_media_relay', async (data) => {
                 }
             }
         }
+        let savedMsgInDB = result.rows[0];
 
         // 3. 🚀 RETRANSMITIR BINARIOS (Usamos socket.to para evitar DUPLICADOS)
         // Se envía a todos en la sala menos al que lo mandó
