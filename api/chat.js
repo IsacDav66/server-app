@@ -21,8 +21,8 @@ module.exports = (pool, JWT_SECRET, io) => {
                             CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END AS other_user_id
                         FROM messagesapp m
                         WHERE (m.sender_id = $1 OR m.receiver_id = $1) 
-                          AND m.group_id IS NULL
-                          AND (m.room_name IS NULL OR m.room_name NOT LIKE 'match_%')
+                        AND m.group_id IS NULL
+                        AND (m.room_name IS NULL OR m.room_name NOT LIKE 'match_%')
                         ORDER BY other_user_id, m.created_at DESC
                     )
                     UNION ALL
@@ -50,6 +50,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                     u.profile_pic_url,
                     g.name AS group_name,
                     g.photo_url AS group_photo,
+                    su.username AS last_msg_username, -- 🚀 NUEVO: Nombre de quien envió el último mensaje
                     -- CONTADOR DE NO LEÍDOS DINÁMICO
                     CASE 
                         WHEN cm.group_id IS NULL THEN (
@@ -64,6 +65,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 FROM CombinedMessages cm
                 LEFT JOIN usersapp u ON cm.other_user_id = u.id
                 LEFT JOIN groupsapp g ON cm.group_id = g.id
+                LEFT JOIN usersapp su ON cm.sender_id = su.id -- 🚀 Join para traer el nombre del emisor del último mensaje
                 ORDER BY cm.created_at DESC;
             `;
 
