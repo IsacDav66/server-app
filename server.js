@@ -1005,6 +1005,9 @@ socket.on('send_media_relay', async (data) => {
                 sender_id,
                 username: senderInfo.username, // 👈 Ahora siempre está definido
                 profile_pic_url: senderInfo.profile_pic_url,
+                parent_message_id: parent_message_id,
+                parent_username: data.parent_username,
+                parent_content: data.parent_content,
                 isGrid: isGrid || false,
                 isNew: isNew // Importante para que el receptor sepa si debe crear una burbuja
             });
