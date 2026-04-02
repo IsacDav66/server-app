@@ -729,24 +729,29 @@ io.on('connection', (socket) => {
     });
 
     socket.on('send_message', async (data) => {
-        // 🚀 Agregamos group_id a la desestructuración
         const { sender_id, receiver_id, group_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
 
-        const isGroup = !!group_id;
-        const logTarget = isGroup ? `grupo ${group_id}` : `usuario ${receiver_id}`;
+        // 🛡️ 1. DETECCIÓN ULTRA-ROBUSTA DE TIPO DE CHAT
+        // Es un grupo si viene el ID o si el nombre de la sala empieza por "group_"
+        const isGroup = !!group_id || (roomName && roomName.startsWith('group_'));
+        
+        // Normalizamos los IDs para la base de datos
+        const finalReceiverId = isGroup ? null : receiver_id;
+        const finalGroupId = isGroup ? (group_id || roomName.split('_')[1]) : null;
+
+        const logTarget = isGroup ? `grupo ${finalGroupId}` : `usuario ${receiver_id}`;
         console.log(`📨 [SERVER] Recibido mensaje de ${sender_id} para ${logTarget}. Pack: ${sticker_pack ? sticker_pack.name : 'Ninguno'}`);
 
         try {
-            // 1. Guardar el nuevo mensaje en la base de datos (Añadimos group_id al INSERT)
-            // Si es grupo, el receiver_id se guarda como NULL
+            // 2. Guardar el nuevo mensaje en la base de datos (8 columnas manejadas)
             const insertQuery = `
                 INSERT INTO messagesapp (sender_id, receiver_id, group_id, content, room_name, parent_message_id, sticker_pack, emoji_pack) 
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`;
                 
             const insertResult = await pool.query(insertQuery, [
                 sender_id, 
-                isGroup ? null : receiver_id, 
-                isGroup ? group_id : null,
+                finalReceiverId, 
+                finalGroupId,
                 content, 
                 roomName, 
                 parent_message_id || null, 
@@ -756,60 +761,19 @@ io.on('connection', (socket) => {
             
             let savedMessage = insertResult.rows[0];
 
-            // ============================================================
-            // 🚀 LÓGICA DE NOTIFICACIÓN EN APP (Solo para Chats Privados)
-            // ============================================================
-            // En grupos no insertamos en notificationsapp para evitar saturar la tabla, 
-            // el tiempo real se encarga el socket directamente.
-            if (!isGroup) {
-                try {
-                    // 1. Intentamos actualizar una notificación de mensaje existente que NO haya sido leída
-                    const updateResult = await pool.query(`
-                        UPDATE notificationsapp 
-                        SET message_count = message_count + 1, 
-                            content = $3, 
-                            created_at = CURRENT_TIMESTAMP 
-                        WHERE recipient_id = $1 AND sender_id = $2 AND type = 'new_message' AND is_read = FALSE
-                        RETURNING *;
-                    `, [receiver_id, sender_id, content]);
-
-                    let finalNotif;
-
-                    if (updateResult.rowCount === 0) {
-                        // 2. Si no existía una previa sin leer, creamos una nueva con count 1
-                        const insertResult = await pool.query(`
-                            INSERT INTO notificationsapp (recipient_id, sender_id, type, content, message_count)
-                            VALUES ($1, $2, 'new_message', $3, 1)
-                            RETURNING *;
-                        `, [receiver_id, sender_id, content]);
-                        finalNotif = insertResult.rows[0];
-                    } else {
-                        finalNotif = updateResult.rows[0];
-                    }
-
-                    // 3. Obtener datos del emisor para el socket
-                    const senderDataRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
-                    const senderData = senderDataRes.rows[0];
-                    
-                    const notificationPayload = {
-                        ...finalNotif,
-                        sender_username: senderData.username,
-                        sender_profile_pic_url: senderData.profile_pic_url
-                    };
-
-                    // 4. Avisar al receptor por socket
-                    io.to(`user-${receiver_id}`).emit('new_notification', notificationPayload);
-
-                } catch (notifErr) {
-                    console.error("❌ Error en notificación agrupada:", notifErr);
-                }
+            // 3. Adjuntar datos del emisor (Nombre y Foto) 
+            // Necesario para que en los grupos aparezca quién escribió sobre la burbuja
+            const senderInfo = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
+            if (senderInfo.rows.length > 0) {
+                savedMessage.username = senderInfo.rows[0].username;
+                savedMessage.profile_pic_url = senderInfo.rows[0].profile_pic_url;
             }
 
-            // Re-adjuntar los objetos de packs procesados para el broadcast
+            // 4. Re-adjuntar objetos de packs (si existen) para el socket
             if (sticker_pack) savedMessage.sticker_pack = sticker_pack;
             if (emoji_pack) savedMessage.emoji_pack = emoji_pack;
 
-            // 🚀 LÓGICA DE MENSAJE CITADO (Parent Message)
+            // 5. Lógica de Mensaje Citado (Parent Message)
             if (savedMessage.parent_message_id) {
                 const parentQuery = `
                     SELECT p.content as parent_content, pu.username as parent_username
@@ -824,48 +788,74 @@ io.on('connection', (socket) => {
                 }
             }
 
-            // 🚀 TRANSMISIÓN EN TIEMPO REAL
-            // io.to(roomName) envía a todos en la sala (funciona para "ID-ID" y para "group_ID")
+            // 🚀 6. TRANSMISIÓN EN TIEMPO REAL (A la sala del grupo o privada)
             io.to(roomName).emit('receive_message', savedMessage);
 
-            // Confirmar al emisor para que su burbuja deje de estar en estado "pending"
+            // 🚀 7. CONFIRMACIÓN AL EMISOR (Quitar reloj de arena)
             socket.emit('message_confirmed', {
                 tempId: tempId,
                 realMessage: savedMessage
             });
 
-            // ==========================================================
-            // 🚀 LÓGICA PUSH FIREBASE (Solo para Chats Privados)
-            // ==========================================================
-            if (!isGroup) {
+            // ============================================================
+            // 🛡️ 8. LÓGICA DE NOTIFICACIONES (SÓLO PARA CHATS PRIVADOS)
+            // Esto evita el error de "recipient_id null" en grupos
+            // ============================================================
+            if (!isGroup && receiver_id) {
                 try {
-                    const recipientResult = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
-                    const senderResult = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [sender_id]);
-                    const recipient = recipientResult.rows[0];
-                    const sender = senderResult.rows[0];
+                    // Notificación en la campana (DB)
+                    const updateResult = await pool.query(`
+                        UPDATE notificationsapp 
+                        SET message_count = message_count + 1, 
+                            content = $3, 
+                            created_at = CURRENT_TIMESTAMP 
+                        WHERE recipient_id = $1 AND sender_id = $2 AND type = 'new_message' AND is_read = FALSE
+                        RETURNING *;
+                    `, [receiver_id, sender_id, content]);
+
+                    let finalNotif;
+                    if (updateResult.rowCount === 0) {
+                        const insertResult = await pool.query(`
+                            INSERT INTO notificationsapp (recipient_id, sender_id, type, content, message_count)
+                            VALUES ($1, $2, 'new_message', $3, 1)
+                            RETURNING *;
+                        `, [receiver_id, sender_id, content]);
+                        finalNotif = insertResult.rows[0];
+                    } else {
+                        finalNotif = updateResult.rows[0];
+                    }
+
+                    const notificationPayload = {
+                        ...finalNotif,
+                        sender_username: savedMessage.username,
+                        sender_profile_pic_url: savedMessage.profile_pic_url
+                    };
+
+                    io.to(`user-${receiver_id}`).emit('new_notification', notificationPayload);
+
+                    // 📱 ENVÍO PUSH FIREBASE (Solo privados)
+                    const recipientRes = await pool.query('SELECT fcm_token FROM usersapp WHERE id = $1', [receiver_id]);
+                    const recipient = recipientRes.rows[0];
 
                     if (recipient && recipient.fcm_token) {
                         const message = {
                             token: recipient.fcm_token,
                             data: {
-                                title: sender.username,
+                                title: savedMessage.username,
                                 body: getPushPlainText(content), 
                                 channelId: 'chat_messages_channel',
                                 groupId: String(sender_id),
                                 senderId: String(sender_id),
                                 openUrl: `chat.html?userId=${sender_id}&groupId=${sender_id}`,
-                                imageUrl: sender.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + sender.profile_pic_url).trim() : ""
+                                imageUrl: savedMessage.profile_pic_url ? (process.env.PUBLIC_SERVER_URL + savedMessage.profile_pic_url).trim() : ""
                             },
-                            android: {
-                                priority: 'high'
-                            }
+                            android: { priority: 'high' }
                         };
-
                         await admin.messaging().send(message);
-                        console.log(`✅ [PUSH CHAT] Notificación enviada a: ${receiver_id}`);
+                        console.log(`✅ [PUSH CHAT] Enviada notificación privada a: ${receiver_id}`);
                     }
-                } catch (pushErr) {
-                    console.error("❌ Error en Push Chat:", pushErr.message);
+                } catch (notifErr) {
+                    console.error("❌ Error en sistema de notificaciones:", notifErr);
                 }
             }
 
