@@ -632,22 +632,32 @@ io.on('connection', (socket) => {
         }
     });
     socket.on('typing_status', async (data) => {
-        const { roomName, userId, receiverId, isTyping } = data;
+        const { roomName, userId, receiverId, isTyping, group_id } = data;
         
-        let profilePic = null;
+        let userInfo = { username: 'Usuario', profile_pic_url: null };
         if (isTyping) {
-            // Buscamos la foto del usuario que escribe
-            const userRes = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [userId]);
-            profilePic = userRes.rows[0]?.profile_pic_url;
+            const userRes = await pool.query('SELECT username, profile_pic_url FROM usersapp WHERE id = $1', [userId]);
+            if (userRes.rows.length > 0) userInfo = userRes.rows[0];
         }
 
-        const payload = { userId, isTyping, profile_pic_url: profilePic };
+        const payload = { 
+            userId, 
+            username: userInfo.username, 
+            profile_pic_url: userInfo.profile_pic_url, 
+            isTyping,
+            group_id: group_id || null // 🚀 Crucial para la lista de chats
+        };
 
-        // A. Avisar a la sala del chat (Grupal o Privado)
+        // A. Avisar a la sala del chat (para el que tiene el chat abierto)
         socket.to(roomName).emit('user_typing_update', payload);
 
-        // B. Avisar al receptor privado (para su lista de chats)
-        if (receiverId) {
+        // B. Avisar a las salas personales (para actualizar la lista de chats)
+        if (group_id) {
+            // En grupos, emitimos a la sala del grupo. 
+            // Como todos los miembros están unidos a group_X en el authenticate, les llegará.
+            socket.to(`group_${group_id}`).emit('user_typing_update', payload);
+        } else if (receiverId) {
+            // En privados, enviamos al destinatario
             io.to(`user-${receiverId}`).emit('user_typing_update', payload);
         }
     });
