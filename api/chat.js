@@ -194,7 +194,7 @@ module.exports = (pool, JWT_SECRET, io) => {
             await client.query('BEGIN');
              const photoPath = req.file 
                 ? `/uploads/group_photos/${req.file.filename}` 
-                : '/assets/img/default-group.png';
+                : 'default-group'; // 🚀 Marcador simple
 
             // 1. Insertar Grupo
             const groupRes = await client.query(
