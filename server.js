@@ -1081,6 +1081,7 @@ socket.on('send_media_relay', async (data) => {
                 message_id: finalDbMessageId,
                 username: senderInfo.username,
                 profile_pic_url: senderInfo.profile_pic_url,
+                group_id: finalGroupId,
                 parent_message_id: parent_message_id,
                 parent_username: data.parent_username,
                 parent_content: data.parent_content,
