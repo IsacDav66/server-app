@@ -210,31 +210,30 @@ module.exports = (pool, JWT_SECRET, io) => {
 
 
 
-    router.post('/groups/create', 
-    (req, res, next) => protect(req, res, next, JWT_SECRET), 
-    uploadGroupPhoto,          // 👈 Usar directamente
-    processImage('group'),     // 👈 Procesar con Sharp
-    async (req, res) => {
-        const { name, description, members } = req.body; // members es un string JSON "[1,2,3]"
+    router.post('/groups/create', (req, res, next) => protect(req, res, next, JWT_SECRET), uploadGroupPhoto, processImage('group'), async (req, res) => {
+        const { name, description, members } = req.body;
         const creatorId = req.user.userId;
         const memberIds = JSON.parse(members);
 
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
-             const photoPath = req.file 
-                ? `/uploads/group_photos/${req.file.filename}` 
-                : 'default-group'; // 🚀 Marcador simple
 
-            // 1. Insertar Grupo
+            // 1. Obtener nombre del creador para el mensaje automático
+            const creatorRes = await client.query('SELECT username FROM usersapp WHERE id = $1', [creatorId]);
+            const creatorName = creatorRes.rows[0].username;
+
+            // 2. Insertar el Grupo
+            const photoPath = req.file ? `/uploads/group_photos/${req.file.filename}` : 'default-group';
             const groupRes = await client.query(
                 `INSERT INTO groupsapp (name, description, creator_id, photo_url) 
-                 VALUES ($1, $2, $3, $4) RETURNING id`,
+                VALUES ($1, $2, $3, $4) RETURNING id`,
                 [name, description, creatorId, photoPath]
             );
             const groupId = groupRes.rows[0].id;
+            const roomName = `group_${groupId}`;
 
-            // 2. Insertar Miembros (incluyendo al creador)
+            // 3. Insertar Miembros
             const allMembers = [...new Set([creatorId, ...memberIds])];
             for (const uId of allMembers) {
                 await client.query(
@@ -243,10 +242,38 @@ module.exports = (pool, JWT_SECRET, io) => {
                 );
             }
 
+            // 🚀 4. MENSAJE AUTOMÁTICO DE CREACIÓN
+            // Insertamos el mensaje como si lo enviara el creador o el sistema
+            const systemMsg = `🚀 ¡Tripulación creada! Bienvenidos a ${name}.`;
+            const msgResult = await client.query(
+                `INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
+                VALUES ($1, $2, $3, $4) RETURNING *`,
+                [creatorId, groupId, systemMsg, roomName]
+            );
+
             await client.query('COMMIT');
+
+            // 📡 5. NOTIFICAR POR SOCKET EN TIEMPO REAL
+            // Esto hace que el grupo aparezca en la lista de los que están online
+            const io = req.app.get('socketio');
+            const savedMessage = msgResult.rows[0];
+            savedMessage.username = creatorName; // Adjuntar nombre para la lista de chats
+
+            // Forzar a que el creador se una a la sala de inmediato si no lo estaba
+            const userSockets = await io.fetchSockets();
+            allMembers.forEach(mId => {
+                const memberSocket = userSockets.find(s => String(s.userId) === String(mId));
+                if (memberSocket) memberSocket.join(roomName);
+            });
+
+            // Emitir a la sala del grupo
+            io.to(roomName).emit('receive_message', savedMessage);
+
             res.json({ success: true, groupId });
+
         } catch (e) {
             await client.query('ROLLBACK');
+            console.error("Error al crear grupo:", e);
             res.status(500).json({ success: false, message: e.message });
         } finally {
             client.release();
