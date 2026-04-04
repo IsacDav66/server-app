@@ -160,20 +160,36 @@ module.exports = (pool, JWT_SECRET, io) => {
     router.delete('/messages/:messageId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const loggedInUserId = req.user.userId;
         const messageId = parseInt(req.params.messageId);
+
         try {
-            const ownership = await pool.query('SELECT sender_id, receiver_id FROM messagesapp WHERE message_id = $1', [messageId]);
-            if (ownership.rows.length === 0) return res.status(404).json({ success: false });
+            // 1. Buscamos el mensaje para saber quién lo envió y a qué sala pertenece
+            const result = await pool.query(
+                'SELECT sender_id, room_name FROM messagesapp WHERE message_id = $1', 
+                [messageId]
+            );
 
-            const msg = ownership.rows[0];
-            if (msg.sender_id !== loggedInUserId) return res.status(403).json({ success: false });
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: 'Mensaje no encontrado' });
+            }
 
+            const msg = result.rows[0];
+
+            // 2. Seguridad: Solo el dueño del mensaje puede borrarlo
+            if (msg.sender_id !== loggedInUserId) {
+                return res.status(403).json({ success: false, message: 'No tienes permiso' });
+            }
+
+            // 3. Borrar de la base de datos
             await pool.query('DELETE FROM messagesapp WHERE message_id = $1', [messageId]);
 
-            const roomName = [msg.sender_id, msg.receiver_id].sort().join('-');
-            io.to(roomName).emit('message_deleted', { messageId });
+            // 🚀 4. LA CLAVE: Usamos el room_name guardado en la DB
+            // Esto emitirá el evento 'message_deleted' tanto a salas 'ID-ID' como a 'group_ID'
+            io.to(msg.room_name).emit('message_deleted', { messageId });
             
             res.status(200).json({ success: true });
+
         } catch (error) {
+            console.error('Error al eliminar mensaje:', error);
             res.status(500).json({ success: false });
         }
     });
