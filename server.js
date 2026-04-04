@@ -702,7 +702,7 @@ io.on('connection', (socket) => {
 
             } else {
                 // ============================================================
-                // 🔒 LÓGICA PARA CHATS PRIVADOS (DMs)
+                // 🔒 LÓGICA PARA CHATS PRIVADOS (DMs) - CORREGIDA
                 // ============================================================
                 
                 // 1. Marcar mensaje como leído en la tabla principal
@@ -711,26 +711,35 @@ io.on('connection', (socket) => {
                     [messageId, readerId]
                 );
                 
-                // 2. Obtener el avatar del que leyó el mensaje
-                const userRes = await pool.query('SELECT profile_pic_url FROM usersapp WHERE id = $1', [readerId]);
-                const readerAvatar = userRes.rows[0] ? userRes.rows[0].profile_pic_url : null;
-                
-                // 3. Avisar a la sala del chat privado
-                // Esto mueve la foto pequeña del "visto" al mensaje correspondiente
-                const updatePayload = {
-                    lastReadId: messageId,
-                    readerAvatar: readerAvatar,
-                    readerId: readerId
-                };
+                // 2. Obtener datos del lector y del EMISOR del mensaje
+                // Necesitamos el sender_id para saber a qué lista de chats avisar
+                const msgInfoRes = await pool.query(`
+                    SELECT m.sender_id, u.profile_pic_url as "readerAvatar"
+                    FROM messagesapp m
+                    JOIN usersapp u ON u.id = $2
+                    WHERE m.message_id = $1
+                `, [messageId, readerId]);
 
-                io.to(roomName).emit('messages_read_update', updatePayload);
+                if (msgInfoRes.rows.length > 0) {
+                    const { sender_id, readerAvatar } = msgInfoRes.rows[0];
 
-                // 4. Avisar a la sala personal del lector
-                // (Para sincronizar el estado de lectura en la lista de chats o múltiples pestañas)
-                 io.to(`user-${readerId}`).emit('group_read_confirmed_locally', {
-                    group_id: group_id,
-                    lastReadId: messageId
-                });
+                    const updatePayload = {
+                        lastReadId: messageId,
+                        readerAvatar: readerAvatar,
+                        readerId: readerId
+                    };
+
+                    // 3. Avisar a la sala del chat (por si el emisor tiene el chat abierto)
+                    io.to(roomName).emit('messages_read_update', updatePayload);
+
+                    // 4. 🚀 LA CLAVE: Avisar a la sala personal del EMISOR
+                    // Esto actualiza la LISTA DE CHATS del que envió el mensaje
+                    io.to(`user-${sender_id}`).emit('messages_read_update', updatePayload);
+
+                    // 5. Avisar a la sala personal del LECTOR 
+                    // (Para limpiar su propio contador de no leídos en la lista)
+                    io.to(`user-${readerId}`).emit('messages_read_update', updatePayload);
+                }
             }
         } catch (err) {
             console.error("❌ Error crítico en mark_message_read:", err);
