@@ -700,6 +700,17 @@ io.on('connection', (socket) => {
                     lastReadId: messageId
                 });
 
+                // 🚀 NOTIFICAR A TODOS LOS MIEMBROS EN SU SALA PERSONAL
+                // Esto garantiza que sus LISTAS DE CHATS se actualicen en vivo
+                result.rows.forEach(member => {
+                    io.to(`user-${member.readerId}`).emit('group_read_update', {
+                        group_id: group_id,
+                        reads: result.rows
+                    });
+                });
+
+
+
             } else {
                 // ============================================================
                 // 🔒 LÓGICA PARA CHATS PRIVADOS (DMs) - CORREGIDA

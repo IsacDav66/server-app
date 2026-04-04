@@ -52,7 +52,21 @@ module.exports = (pool, JWT_SECRET, io) => {
                     g.photo_url AS group_photo,
                     su.username AS last_msg_username, -- 🚀 NUEVO: Nombre de quien envió el último mensaje
                     -- CONTADOR DE NO LEÍDOS DINÁMICO
+                    -- 🚀 NUEVA SUB-CONSULTA: Obtener hasta 5 lectores del último mensaje
+                    (SELECT json_agg(json_build_object('id', r_u.id, 'avatar', r_u.profile_pic_url))
+                    FROM (
+                        SELECT gm.user_id
+                        FROM group_members gm
+                        WHERE gm.group_id = cm.group_id 
+                        AND gm.last_read_message_id >= cm.message_id
+                        AND gm.user_id != $1 -- No incluirme a mí mismo
+                        LIMIT 5
+                    ) r_ids
+                    JOIN usersapp r_u ON r_u.id = r_ids.user_id
+                    ) as group_readers,
+
                     CASE 
+
                         WHEN cm.group_id IS NULL THEN (
                             -- Contador para Privados (Usa el flag is_read)
                             SELECT COUNT(*)::int FROM messagesapp 
