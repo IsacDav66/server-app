@@ -280,7 +280,40 @@ module.exports = (pool, JWT_SECRET, io) => {
         }
     });
 
+    // OBTENER DETALLES COMPLETOS DE UN GRUPO
+    router.get('/groups/details/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const groupId = req.params.groupId;
+        const myId = req.user.userId;
 
+        try {
+            // 1. Info del Grupo
+            const groupInfo = await pool.query('SELECT * FROM groupsapp WHERE id = $1', [groupId]);
+            
+            // 2. Miembros con su rol y foto
+            const members = await pool.query(`
+                SELECT u.id, u.username, u.profile_pic_url, gm.role, u.is_online
+                FROM group_members gm
+                JOIN usersapp u ON gm.user_id = u.id
+                WHERE gm.group_id = $1
+                ORDER BY (CASE WHEN gm.role = 'admin' THEN 1 ELSE 2 END) ASC
+            `, [groupId]);
+
+            // 3. Media compartida (Buscamos mensajes que tengan el tag [MEDIA_)
+            const media = await pool.query(`
+                SELECT content FROM messagesapp 
+                WHERE group_id = $1 AND content LIKE '%[MEDIA_%' 
+                ORDER BY created_at DESC LIMIT 8
+            `, [groupId]);
+
+            res.json({
+                success: true,
+                group: groupInfo.rows[0],
+                members: members.rows,
+                media: media.rows,
+                isAdmin: members.rows.find(m => m.id === myId)?.role === 'admin'
+            });
+        } catch (e) { res.status(500).json({ success: false }); }
+    });
 
     // NUEVO: OBTENER HISTORIAL DE GRUPO
     router.get('/history/group/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
