@@ -331,7 +331,7 @@ module.exports = (pool, JWT_SECRET, io) => {
             res.status(500).json({ success: false, message: "Error interno del servidor." });
         }
     });
-    
+
     // OBTENER DETALLES COMPLETOS DE UN GRUPO (VERSIÓN CORREGIDA)
     router.get('/groups/details/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const groupId = req.params.groupId;
@@ -439,6 +439,45 @@ module.exports = (pool, JWT_SECRET, io) => {
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
+
+
+
+    // --- RUTAS DE ROLES DE GRUPO ---
+
+    // 1. Obtener roles del grupo
+    router.get('/groups/:groupId/roles', protect, async (req, res) => {
+        try {
+            const result = await pool.query('SELECT * FROM group_roles WHERE group_id = $1 ORDER BY id ASC', [req.params.groupId]);
+            res.json({ success: true, roles: result.rows });
+        } catch (e) { res.status(500).json({ success: false }); }
+    });
+
+    // 2. Crear o Editar Rol
+    router.post('/groups/:groupId/roles', protect, async (req, res) => {
+        const { name, permissions, roleId } = req.body;
+        const { groupId } = req.params;
+
+        try {
+            if (roleId) {
+                // Editar
+                await pool.query('UPDATE group_roles SET name = $1, permissions = $2 WHERE id = $3', [name, permissions, roleId]);
+            } else {
+                // Crear
+                await pool.query('INSERT INTO group_roles (group_id, name, permissions) VALUES ($1, $2, $3)', [groupId, name, permissions]);
+            }
+            res.json({ success: true });
+        } catch (e) { res.status(500).json({ success: false }); }
+    });
+
+    // 3. Asignar rol a un miembro
+    router.post('/groups/:groupId/assign-role', protect, async (req, res) => {
+        const { userId, roleId } = req.body;
+        try {
+            await pool.query('UPDATE group_members SET role_id = $1 WHERE group_id = $2 AND user_id = $3', 
+            [roleId, req.params.groupId, userId]);
+            res.json({ success: true });
+        } catch (e) { res.status(500).json({ success: false }); }
+    });
 
     return router;
 };
