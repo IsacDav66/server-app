@@ -486,8 +486,12 @@ module.exports = (pool, JWT_SECRET, io) => {
     // Obtener mis permisos en un grupo específico
     router.get('/groups/:groupId/my-permissions', protect, async (req, res) => {
         try {
-            const { groupId } = req.params;
+            const groupId = parseInt(req.params.groupId); // 👈 IMPORTANTE: Forzar a número
             const userId = req.user.userId;
+
+            if (isNaN(groupId)) {
+                return res.status(400).json({ success: false, message: "ID de grupo inválido" });
+            }
 
             const query = `
                 SELECT gm.role, r.permissions, g.creator_id
@@ -496,9 +500,12 @@ module.exports = (pool, JWT_SECRET, io) => {
                 LEFT JOIN group_roles r ON gm.role_id = r.id
                 WHERE gm.group_id = $1 AND gm.user_id = $2
             `;
+            
             const result = await pool.query(query, [groupId, userId]);
             
-            if (result.rows.length === 0) return res.status(403).json({ success: false });
+            if (result.rows.length === 0) {
+                return res.status(404).json({ success: false, message: "No eres miembro de este grupo" });
+            }
 
             const data = result.rows[0];
 
@@ -513,18 +520,20 @@ module.exports = (pool, JWT_SECRET, io) => {
                 });
             }
 
-            // Si no tiene rol asignado pero es miembro común
+            // Si no tiene rol asignado, permisos por defecto
             const defaultPerms = {
                 can_send_messages: true, can_use_emojis: true, can_use_stickers: true, can_use_music: true
             };
 
-            // Devolvemos los permisos del rol, o los por defecto si el rol no tiene permisos definidos
             res.json({ 
                 success: true, 
                 permissions: data.permissions || defaultPerms 
             });
+
         } catch (e) { 
-            res.status(500).json({ success: false }); 
+            // 🔥 ESTE LOG APARECERÁ EN TU TERMINAL (DONDE CORRES EL NODE)
+            console.error("❌ ERROR CRÍTICO EN DB (my-permissions):", e.message); 
+            res.status(500).json({ success: false, error: e.message }); 
         }
     });
     return router;
