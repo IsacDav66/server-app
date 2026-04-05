@@ -866,6 +866,25 @@ io.on('connection', (socket) => {
             // A. Enviamos a la sala del chat (para el que tiene la pantalla abierta)
             socket.to(roomName).emit('receive_message', savedMessage);
 
+
+            if (data.group_id) {
+                const permCheck = await pool.query(`
+                    SELECT r.permissions, gm.role
+                    FROM group_members gm
+                    LEFT JOIN group_roles r ON gm.role_id = r.id
+                    WHERE gm.group_id = $1 AND gm.user_id = $2
+                `, [data.group_id, socket.userId]);
+
+                const member = permCheck.rows[0];
+                const perms = member?.permissions;
+
+                // Si no es admin y el permiso de enviar mensajes es false, abortamos
+                if (member.role !== 'admin' && perms && perms.can_send_messages === false) {
+                    console.log(`🚫 Bloqueado envío de mensaje por falta de permisos: Usuario ${socket.userId}`);
+                    return; // Detiene el envío del mensaje
+                }
+            }
+
             // B. 📢 ACTUALIZACIÓN DE LISTA DE CHATS (Solo para privados)
             // Enviamos el mensaje a las salas personales del emisor y receptor.
             // Esto hace que la lista de chats se mueva arriba y actualice el texto al instante.
