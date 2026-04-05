@@ -486,36 +486,46 @@ module.exports = (pool, JWT_SECRET, io) => {
     // Obtener mis permisos en un grupo específico
     router.get('/groups/:groupId/my-permissions', protect, async (req, res) => {
         try {
+            const { groupId } = req.params;
+            const userId = req.user.userId;
+
             const query = `
-                SELECT gm.role, r.permissions 
+                SELECT gm.role, r.permissions, g.creator_id
                 FROM group_members gm
+                JOIN groupsapp g ON g.id = gm.group_id
                 LEFT JOIN group_roles r ON gm.role_id = r.id
                 WHERE gm.group_id = $1 AND gm.user_id = $2
             `;
-            const result = await pool.query(query, [req.params.groupId, req.user.userId]);
+            const result = await pool.query(query, [groupId, userId]);
             
             if (result.rows.length === 0) return res.status(403).json({ success: false });
 
-            const member = result.rows[0];
-            // Si es el creador o tiene el flag is_admin, tiene todos los permisos
-            if (member.role === 'admin' || (member.permissions && member.permissions.is_admin)) {
+            const data = result.rows[0];
+
+            // 🛡️ REGLA MAESTRA: Si es el Creador o Admin de tabla, permiso total
+            if (String(data.creator_id) === String(userId) || data.role === 'admin') {
                 return res.json({
                     success: true,
                     permissions: {
-                        can_add_members: true, can_invite: true, can_mute: true,
                         can_send_messages: true, can_use_emojis: true,
                         can_use_stickers: true, can_use_music: true, is_admin: true
                     }
                 });
             }
 
-            // Si no tiene rol asignado, permisos por defecto (solo leer/escribir)
+            // Si no tiene rol asignado pero es miembro común
             const defaultPerms = {
                 can_send_messages: true, can_use_emojis: true, can_use_stickers: true, can_use_music: true
             };
 
-            res.json({ success: true, permissions: member.permissions || defaultPerms });
-        } catch (e) { res.status(500).json({ success: false }); }
+            // Devolvemos los permisos del rol, o los por defecto si el rol no tiene permisos definidos
+            res.json({ 
+                success: true, 
+                permissions: data.permissions || defaultPerms 
+            });
+        } catch (e) { 
+            res.status(500).json({ success: false }); 
+        }
     });
     return router;
 };
