@@ -484,14 +484,11 @@ module.exports = (pool, JWT_SECRET, io) => {
 
 
     // Obtener mis permisos en un grupo específico
-    router.get('/groups/:groupId/my-permissions', protect, async (req, res) => {
+    // SUSTITUYE LA LÍNEA DE INICIO DE LA RUTA POR ESTA:
+    router.get('/groups/:groupId/my-permissions', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         try {
-            const groupId = parseInt(req.params.groupId); // 👈 IMPORTANTE: Forzar a número
-            const userId = req.user.userId;
-
-            if (isNaN(groupId)) {
-                return res.status(400).json({ success: false, message: "ID de grupo inválido" });
-            }
+            const groupId = parseInt(req.params.groupId);
+            const userId = req.user.userId; // Ahora sí existirá userId ✅
 
             const query = `
                 SELECT gm.role, r.permissions, g.creator_id
@@ -504,12 +501,12 @@ module.exports = (pool, JWT_SECRET, io) => {
             const result = await pool.query(query, [groupId, userId]);
             
             if (result.rows.length === 0) {
-                return res.status(404).json({ success: false, message: "No eres miembro de este grupo" });
+                return res.status(404).json({ success: false, message: "No eres miembro" });
             }
 
             const data = result.rows[0];
 
-            // 🛡️ REGLA MAESTRA: Si es el Creador o Admin de tabla, permiso total
+            // REGLA: Creador o Admin real = Poder total
             if (String(data.creator_id) === String(userId) || data.role === 'admin') {
                 return res.json({
                     success: true,
@@ -520,7 +517,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 });
             }
 
-            // Si no tiene rol asignado, permisos por defecto
+            // Si no tiene rol asignado (es miembro común)
             const defaultPerms = {
                 can_send_messages: true, can_use_emojis: true, can_use_stickers: true, can_use_music: true
             };
@@ -530,10 +527,9 @@ module.exports = (pool, JWT_SECRET, io) => {
                 permissions: data.permissions || defaultPerms 
             });
 
-        } catch (e) { 
-            // 🔥 ESTE LOG APARECERÁ EN TU TERMINAL (DONDE CORRES EL NODE)
-            console.error("❌ ERROR CRÍTICO EN DB (my-permissions):", e.message); 
-            res.status(500).json({ success: false, error: e.message }); 
+        } catch (e) {
+            console.error("❌ ERROR REAL:", e.message);
+            res.status(500).json({ success: false, error: e.message });
         }
     });
     return router;
