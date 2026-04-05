@@ -311,17 +311,33 @@ module.exports = (pool, JWT_SECRET, io) => {
             }));
 
             // 3. Media compartida
+            // 1. Buscamos los mensajes que contienen media en este grupo
             const mediaRes = await pool.query(`
-                SELECT content FROM messagesapp 
+                SELECT content 
+                FROM messagesapp 
                 WHERE group_id = $1 AND content LIKE '%[MEDIA_%' 
-                ORDER BY created_at DESC LIMIT 8
+                ORDER BY created_at DESC LIMIT 12
             `, [groupId]);
 
+            // 2. Procesamos el texto del mensaje para extraer ID y Tipo (IMAGE/VIDEO)
+            const processedMedia = mediaRes.rows.map(m => {
+                // Regex para capturar el Tipo (IMAGE/VIDEO/GIF) y el ID único
+                const match = m.content.match(/\[MEDIA_(.*?):(.*?)(?:_P_)/);
+                if (match) {
+                    return {
+                        type: match[1], // Ej: 'IMAGE'
+                        id: match[2]    // Ej: 'media-1775146945'
+                    };
+                }
+                return null;
+            }).filter(m => m !== null); // Limpiamos los que no coincidan
+
+            // 3. Enviamos los objetos limpios al frontend
             res.json({
                 success: true,
                 group: groupRes.rows[0],
                 members: membersWithStatus,
-                media: mediaRes.rows,
+                media: processedMedia, // 👈 Ahora enviamos [{type, id}, ...]
                 isAdmin: membersRes.rows.find(m => m.id === myId)?.role === 'admin'
             });
         } catch (error) {
