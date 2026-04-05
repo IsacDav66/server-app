@@ -816,7 +816,7 @@ io.on('connection', (socket) => {
     console.log(`📨 [SERVER] Recibido mensaje de ${sender_id} para ${logTarget}. Pack: ${sticker_pack ? sticker_pack.name : 'Ninguno'}`);
 
     // ==========================================================
-    // 🚔 POLICÍA DE ROLES: Bloqueo de seguridad nivel Servidor
+    // 🚔 POLICÍA DE ROLES: Bloqueo de seguridad inteligente
     // ==========================================================
     if (finalGroupId) {
         try {
@@ -831,14 +831,47 @@ io.on('connection', (socket) => {
             const member = check.rows[0];
 
             if (member) {
-                // El Creador del grupo o los que tengan role 'admin' en la tabla members son "Dioses"
                 const isGod = (member.role === 'admin' || String(member.creator_id) === String(socket.userId));
                 const perms = member.permissions;
 
-                // Si no es un "Dios" y el rol tiene el permiso de mensajes en false
-                if (!isGod && perms && perms.can_send_messages === false) {
-                    console.log(`🚫 [SEGURIDAD] Usuario ${socket.userId} intentó enviar mensaje al grupo ${finalGroupId} pero su ROL se lo prohíbe.`);
-                    return; // 🛑 SALIMOS: No se ejecuta el código de abajo (no se guarda en DB ni se emite)
+                // Si no es el creador o admin de tabla, revisamos los permisos del ROL
+                if (!isGod && perms) {
+                    
+                    // 🕵️ DETECTAR QUÉ ESTÁ INTENTANDO ENVIAR EL USUARIO
+                    const isMusic = content.includes('[MUSIC_V1]');
+                    const isSticker = content.includes('/uploads/stickers') || 
+                                      content.includes('giphy.com') || 
+                                      content.includes('/uploads/stickers_temp');
+                    const isEmoji = content.includes('[E:');
+                    
+                    // Es texto si no es ninguna de las anteriores
+                    const isText = !isMusic && !isSticker && !isEmoji;
+
+                    // 🚔 VALIDACIÓN INDEPENDIENTE POR TIPO
+                    
+                    // 1. Validar Texto
+                    if (isText && perms.can_send_messages === false) {
+                        console.log(`🚫 [SEGURIDAD] Texto bloqueado para usuario ${socket.userId}`);
+                        return; 
+                    }
+
+                    // 2. Validar Stickers
+                    if (isSticker && perms.can_use_stickers === false) {
+                        console.log(`🚫 [SEGURIDAD] Sticker bloqueado para usuario ${socket.userId}`);
+                        return;
+                    }
+
+                    // 3. Validar Música
+                    if (isMusic && perms.can_use_music === false) {
+                        console.log(`🚫 [SEGURIDAD] Música bloqueada para usuario ${socket.userId}`);
+                        return;
+                    }
+
+                    // 4. Validar Emojis personalizados
+                    if (isEmoji && perms.can_use_emojis === false) {
+                        console.log(`🚫 [SEGURIDAD] Emoji bloqueado para usuario ${socket.userId}`);
+                        return;
+                    }
                 }
             }
         } catch (err) {
@@ -1009,7 +1042,37 @@ socket.on('send_media_relay', async (data) => {
     const isGroup = !!group_id || (roomName && roomName.startsWith('group_'));
     const finalReceiverId = isGroup ? null : receiver_id;
     const finalGroupId = isGroup ? (group_id || roomName.split('_')[1]) : null;
+     // ==========================================================
+    // 🚔 POLICÍA DE ROLES: Bloqueo de Fotos y Notas de Voz
+    // ==========================================================
+    if (finalGroupId) {
+        try {
+            const check = await pool.query(`
+                SELECT gm.role, r.permissions, g.creator_id
+                FROM group_members gm
+                JOIN groupsapp g ON g.id = gm.group_id
+                LEFT JOIN group_roles r ON gm.role_id = r.id
+                WHERE gm.group_id = $1 AND gm.user_id = $2
+            `, [finalGroupId, socket.userId]);
 
+            const member = check.rows[0];
+
+            if (member) {
+                const isGod = (member.role === 'admin' || String(member.creator_id) === String(socket.userId));
+                const perms = member.permissions;
+
+                // Para archivos (fotos/audio), usamos la regla de "can_send_messages"
+                // Si no puede enviar mensajes, por lógica no puede enviar archivos pesados.
+                if (!isGod && perms && perms.can_send_messages === false) {
+                    console.log(`🚫 [SEGURIDAD] Intento de Media Relay bloqueado para usuario ${socket.userId}`);
+                    return; // 🛑 SALIMOS: El archivo no se guarda ni se retransmite
+                }
+            }
+        } catch (err) {
+            console.error("Error validando permisos en media relay:", err);
+        }
+    }
+    // ==========================================================
     // 🚀 VARIABLE DE CONTROL DE ID (Evita el ReferenceError)
     let finalDbMessageId = message_id; 
 
