@@ -836,16 +836,15 @@ io.on('connection', (socket) => {
 
                 // Si no es el creador o admin de tabla, revisamos los permisos del ROL
                 if (!isGod && perms) {
-                    
-                    // 🕵️ DETECTAR QUÉ ESTÁ INTENTANDO ENVIAR EL USUARIO
                     const isMusic = content.includes('[MUSIC_V1]');
-                    const isSticker = content.includes('/uploads/stickers') || 
-                                      content.includes('giphy.com') || 
-                                      content.includes('/uploads/stickers_temp');
+                    const isSticker = content.includes('/uploads/stickers') || content.includes('giphy.com');
                     const isEmoji = content.includes('[E:');
-                    
-                    // Es texto si no es ninguna de las anteriores
                     const isText = !isMusic && !isSticker && !isEmoji;
+
+                    if (isText && perms.can_send_messages === false) {
+                        console.log("🚫 Bloqueado: Solo texto");
+                        return; 
+                    }
 
                     // 🚔 VALIDACIÓN INDEPENDIENTE POR TIPO
                     
@@ -1057,15 +1056,12 @@ socket.on('send_media_relay', async (data) => {
 
             const member = check.rows[0];
 
-            if (member) {
-                const isGod = (member.role === 'admin' || String(member.creator_id) === String(socket.userId));
+            if (member && !isGod) {
                 const perms = member.permissions;
-
-                // Para archivos (fotos/audio), usamos la regla de "can_send_messages"
-                // Si no puede enviar mensajes, por lógica no puede enviar archivos pesados.
-                if (!isGod && perms && perms.can_send_messages === false) {
-                    console.log(`🚫 [SEGURIDAD] Intento de Media Relay bloqueado para usuario ${socket.userId}`);
-                    return; // 🛑 SALIMOS: El archivo no se guarda ni se retransmite
+                // 🚔 Solo bloqueamos si el permiso específico de MEDIA es false
+                if (perms && perms.can_send_media === false) {
+                    console.log(`🚫 [SEGURIDAD] Usuario ${socket.userId} intentó enviar FOTO/AUDIO sin permiso.`);
+                    return; 
                 }
             }
         } catch (err) {
