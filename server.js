@@ -1041,31 +1041,56 @@ socket.on('send_media_relay', async (data) => {
     const isGroup = !!group_id || (roomName && roomName.startsWith('group_'));
     const finalReceiverId = isGroup ? null : receiver_id;
     const finalGroupId = isGroup ? (group_id || roomName.split('_')[1]) : null;
-     // ==========================================================
-    // 🚔 POLICÍA DE ROLES: Bloqueo de Fotos y Notas de Voz
+    // ==========================================================
+    // 🚔 POLICÍA DE ROLES: Validación para Fotos y Notas de Voz (Múltiples Roles)
     // ==========================================================
     if (finalGroupId) {
         try {
+            // Buscamos el rango base y todos los permisos de los múltiples roles que tenga el usuario
             const check = await pool.query(`
-                SELECT gm.role, r.permissions, g.creator_id
+                SELECT gm.role as base_rank, g.creator_id,
+                       json_agg(r.permissions) as all_role_perms
                 FROM group_members gm
                 JOIN groupsapp g ON g.id = gm.group_id
-                LEFT JOIN group_roles r ON gm.role_id = r.id
+                LEFT JOIN member_roles_link mrl ON mrl.user_id = gm.user_id AND mrl.group_id = gm.group_id
+                LEFT JOIN group_roles r ON mrl.role_id = r.id
                 WHERE gm.group_id = $1 AND gm.user_id = $2
+                GROUP BY gm.role, g.creator_id
             `, [finalGroupId, socket.userId]);
 
-            const member = check.rows[0];
+            const memberData = check.rows[0];
 
-            if (member && !isGod) {
-                const perms = member.permissions;
-                // 🚔 Solo bloqueamos si el permiso específico de MEDIA es false
-                if (perms && perms.can_send_media === false) {
-                    console.log(`🚫 [SEGURIDAD] Usuario ${socket.userId} intentó enviar FOTO/AUDIO sin permiso.`);
-                    return; 
+            if (memberData) {
+                // 1. ¿Es un "Dios"? (Creador o Admin de tabla)
+                const isGod = (memberData.base_rank === 'admin' || String(memberData.creator_id) === String(socket.userId));
+                
+                if (!isGod) {
+                    const roles = memberData.all_role_perms[0] === null ? [] : memberData.all_role_perms;
+                    
+                    // 2. Aplicamos el peso del "NO" (Discord Style)
+                    // Si un solo rol tiene "can_send_media: false", se bloquea.
+                    let canSendMedia = true; 
+                    
+                    roles.forEach(perm => {
+                        if (perm && perm.can_send_media === false) {
+                            canSendMedia = false;
+                        }
+                        // También bloqueamos si el rol es "Administrador total" pero está marcado como false (poco común pero posible)
+                        if (perm && perm.is_admin === true) {
+                            canSendMedia = true; // El permiso de admin dentro de un rol revive los permisos
+                        }
+                    });
+
+                    if (canSendMedia === false) {
+                        console.log(`🚫 [SEGURIDAD] Usuario ${socket.userId} bloqueado: No tiene permiso de Media en sus roles.`);
+                        return; // 🛑 CORTAR: El archivo no se procesa
+                    }
                 }
             }
         } catch (err) {
-            console.error("Error validando permisos en media relay:", err);
+            console.error("❌ Error validando permisos en media relay:", err.message);
+            // En caso de error de base de datos, por seguridad, mejor no dejar pasar el archivo pesado
+            return;
         }
     }
     // ==========================================================
