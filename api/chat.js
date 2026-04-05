@@ -346,11 +346,14 @@ module.exports = (pool, JWT_SECRET, io) => {
 
             // 2. Miembros (Quitamos u.is_online de la query porque no existe en la tabla)
             const membersRes = await pool.query(`
-                SELECT u.id, u.username, u.profile_pic_url, gm.role, r.name as role_name
+                SELECT u.id, u.username, u.profile_pic_url, gm.role,
+                    COALESCE(json_agg(json_build_object('id', r.id, 'name', r.name)) FILTER (WHERE r.id IS NOT NULL), '[]') as roles
                 FROM group_members gm
                 JOIN usersapp u ON gm.user_id = u.id
-                LEFT JOIN group_roles r ON gm.role_id = r.id
+                LEFT JOIN member_roles_link mrl ON mrl.user_id = u.id AND mrl.group_id = gm.group_id
+                LEFT JOIN group_roles r ON mrl.role_id = r.id
                 WHERE gm.group_id = $1
+                GROUP BY u.id, gm.role
                 ORDER BY (CASE WHEN gm.role = 'admin' THEN 1 ELSE 2 END) ASC
             `, [groupId]);
             
@@ -488,49 +491,85 @@ module.exports = (pool, JWT_SECRET, io) => {
     router.get('/groups/:groupId/my-permissions', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         try {
             const groupId = parseInt(req.params.groupId);
-            const userId = req.user.userId; // Ahora sí existirá userId ✅
+            const userId = req.user.userId;
 
+            // 1. Obtener todos los roles asignados al usuario y el rango básico de miembro
             const query = `
-                SELECT gm.role, r.permissions, g.creator_id
+                SELECT gm.role as base_rank, g.creator_id,
+                    json_agg(r.permissions) as all_role_perms
                 FROM group_members gm
                 JOIN groupsapp g ON g.id = gm.group_id
-                LEFT JOIN group_roles r ON gm.role_id = r.id
+                LEFT JOIN member_roles_link mrl ON mrl.user_id = gm.user_id AND mrl.group_id = gm.group_id
+                LEFT JOIN group_roles r ON mrl.role_id = r.id
                 WHERE gm.group_id = $1 AND gm.user_id = $2
+                GROUP BY gm.role, g.creator_id
             `;
-            
             const result = await pool.query(query, [groupId, userId]);
-            
-            if (result.rows.length === 0) {
-                return res.status(404).json({ success: false, message: "No eres miembro" });
-            }
+            if (result.rows.length === 0) return res.status(403).json({ success: false });
 
             const data = result.rows[0];
+            const roles = data.all_role_perms[0] === null ? [] : data.all_role_perms;
 
-            // REGLA: Creador o Admin real = Poder total
-            if (String(data.creator_id) === String(userId) || data.role === 'admin') {
+            // --- LÓGICA DE AGREGACIÓN ESTILO DISCORD (Restrictiva) ---
+            
+            // 1. ¿Es Dios? (Creador o tiene un rol con is_admin: true o rango 'admin' en tabla)
+            const isGod = (String(data.creator_id) === String(userId) || 
+                        data.base_rank === 'admin' || 
+                        roles.some(r => r.is_admin === true));
+
+            if (isGod) {
                 return res.json({
                     success: true,
                     permissions: {
                         can_send_messages: true, can_use_emojis: true,
-                        can_use_stickers: true, can_use_music: true, is_admin: true
+                        can_use_stickers: true, can_use_music: true, can_send_media: true, is_admin: true
                     }
                 });
             }
 
-            // Si no tiene rol asignado (es miembro común)
-            const defaultPerms = {
-                can_send_messages: true, can_use_emojis: true, can_use_stickers: true, can_use_music: true
+            // 2. Si no es admin, aplicamos la jerarquía restrictiva:
+            // Empezamos permitiendo todo, pero si un solo rol tiene 'false', se bloquea (Peso del NO).
+            const finalPerms = {
+                can_send_messages: true,
+                can_send_media: true,
+                can_use_emojis: true,
+                can_use_stickers: true,
+                can_use_music: true
             };
 
-            res.json({ 
-                success: true, 
-                permissions: data.permissions || defaultPerms 
-            });
+            if (roles.length > 0) {
+                roles.forEach(role => {
+                    if (role.can_send_messages === false) finalPerms.can_send_messages = false;
+                    if (role.can_send_media === false) finalPerms.can_send_media = false;
+                    if (role.can_use_emojis === false) finalPerms.can_use_emojis = false;
+                    if (role.can_use_stickers === false) finalPerms.can_use_stickers = false;
+                    if (role.can_use_music === false) finalPerms.can_use_music = false;
+                });
+            }
 
+            res.json({ success: true, permissions: finalPerms });
         } catch (e) {
-            console.error("❌ ERROR REAL:", e.message);
-            res.status(500).json({ success: false, error: e.message });
+            res.status(500).json({ success: false });
         }
     });
+
+    router.post('/groups/:groupId/toggle-role', protect, async (req, res) => {
+        const { userId, roleId } = req.body;
+        const { groupId } = req.params;
+
+        try {
+            // ¿Ya tiene este rol?
+            const check = await pool.query('SELECT 1 FROM member_roles_link WHERE user_id = $1 AND role_id = $2', [userId, roleId]);
+
+            if (check.rowCount > 0) {
+                await pool.query('DELETE FROM member_roles_link WHERE user_id = $1 AND role_id = $2', [userId, roleId]);
+                res.json({ success: true, action: 'removed' });
+            } else {
+                await pool.query('INSERT INTO member_roles_link (group_id, user_id, role_id) VALUES ($1, $2, $3)', [groupId, userId, roleId]);
+                res.json({ success: true, action: 'added' });
+            }
+        } catch (e) { res.status(500).json({ success: false }); }
+    });
+    
     return router;
 };
