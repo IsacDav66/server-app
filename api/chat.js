@@ -346,12 +346,15 @@ module.exports = (pool, JWT_SECRET, io) => {
 
             // 2. Miembros (Quitamos u.is_online de la query porque no existe en la tabla)
             const membersRes = await pool.query(`
-                SELECT u.id, u.username, u.profile_pic_url, gm.role
+                SELECT u.id, u.username, u.profile_pic_url, gm.role, r.name as role_name
                 FROM group_members gm
                 JOIN usersapp u ON gm.user_id = u.id
+                LEFT JOIN group_roles r ON gm.role_id = r.id
                 WHERE gm.group_id = $1
                 ORDER BY (CASE WHEN gm.role = 'admin' THEN 1 ELSE 2 END) ASC
             `, [groupId]);
+            
+            console.log(`[DEBUG-DB] Miembros del grupo ${groupId}:`, membersRes.rows);
 
             // 🚀 LÓGICA LIVE: Cruzamos los miembros con los usuarios conectados en memoria
             const onlineUsers = req.app.get('onlineUsers'); 
