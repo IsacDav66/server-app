@@ -279,7 +279,59 @@ module.exports = (pool, JWT_SECRET, io) => {
             client.release();
         }
     });
+    // 🚀 RUTA PARA AÑADIR MIEMBROS A UN GRUPO EXISTENTE
+    router.post('/groups/add-members', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const { groupId, memberIds } = req.body; // memberIds es un Array [id1, id2]
+        const myId = req.user.userId;
 
+        try {
+            // 1. Verificar Seguridad: ¿Quien pide esto es el ADMIN del grupo?
+            const checkAdmin = await pool.query(
+                'SELECT role FROM group_members WHERE group_id = $1 AND user_id = $2',
+                [groupId, myId]
+            );
+
+            if (checkAdmin.rows.length === 0 || checkAdmin.rows[0].role !== 'admin') {
+                return res.status(403).json({ success: false, message: "Solo el administrador puede reclutar miembros." });
+            }
+
+            // 2. Insertar a los nuevos integrantes (usamos ON CONFLICT para no duplicar si ya estaban)
+            for (const uId of memberIds) {
+                await pool.query(
+                    'INSERT INTO group_members (group_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+                    [groupId, uId, 'member']
+                );
+            }
+
+            // 📡 3. LÓGICA DE SOCKETS: Forzar a los nuevos miembros a unirse a la sala
+            // Esto es vital para que empiecen a recibir mensajes en tiempo real sin reiniciar la App
+            const io = req.app.get('socketio');
+            const roomName = `group_${groupId}`;
+            
+            // Obtenemos todos los sockets conectados actualmente
+            const allSockets = await io.fetchSockets();
+            
+            memberIds.forEach(mId => {
+                // Buscamos si el usuario nuevo está online
+                const memberSockets = allSockets.filter(s => String(s.userId) === String(mId));
+                memberSockets.forEach(s => {
+                    s.join(roomName); // Lo metemos en la "habitación" del grupo
+                    console.log(`🔌 Forzando al usuario ${mId} a unirse a la sala ${roomName}`);
+                });
+            });
+
+            // 4. Opcional: Enviar un mensaje de sistema avisando de los nuevos miembros
+            // await pool.query('INSERT INTO messagesapp (sender_id, group_id, content, room_name) VALUES ($1, $2, $3, $4)', 
+            // [myId, groupId, 'Nuevos miembros se han unido a la tripulación.', roomName]);
+
+            res.json({ success: true, message: "Miembros reclutados con éxito." });
+
+        } catch (error) {
+            console.error("❌ Error al añadir miembros:", error);
+            res.status(500).json({ success: false, message: "Error interno del servidor." });
+        }
+    });
+    
     // OBTENER DETALLES COMPLETOS DE UN GRUPO (VERSIÓN CORREGIDA)
     router.get('/groups/details/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const groupId = req.params.groupId;
