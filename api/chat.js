@@ -479,5 +479,40 @@ module.exports = (pool, JWT_SECRET, io) => {
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
+
+    // Obtener mis permisos en un grupo específico
+    router.get('/groups/:groupId/my-permissions', protect, async (req, res) => {
+        try {
+            const query = `
+                SELECT gm.role, r.permissions 
+                FROM group_members gm
+                LEFT JOIN group_roles r ON gm.role_id = r.id
+                WHERE gm.group_id = $1 AND gm.user_id = $2
+            `;
+            const result = await pool.query(query, [req.params.groupId, req.user.userId]);
+            
+            if (result.rows.length === 0) return res.status(403).json({ success: false });
+
+            const member = result.rows[0];
+            // Si es el creador o tiene el flag is_admin, tiene todos los permisos
+            if (member.role === 'admin' || (member.permissions && member.permissions.is_admin)) {
+                return res.json({
+                    success: true,
+                    permissions: {
+                        can_add_members: true, can_invite: true, can_mute: true,
+                        can_send_messages: true, can_use_emojis: true,
+                        can_use_stickers: true, can_use_music: true, is_admin: true
+                    }
+                });
+            }
+
+            // Si no tiene rol asignado, permisos por defecto (solo leer/escribir)
+            const defaultPerms = {
+                can_send_messages: true, can_use_emojis: true, can_use_stickers: true, can_use_music: true
+            };
+
+            res.json({ success: true, permissions: member.permissions || defaultPerms });
+        } catch (e) { res.status(500).json({ success: false }); }
+    });
     return router;
 };
