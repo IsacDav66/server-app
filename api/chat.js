@@ -280,26 +280,38 @@ module.exports = (pool, JWT_SECRET, io) => {
         }
     });
 
-    // OBTENER DETALLES COMPLETOS DE UN GRUPO
+    // OBTENER DETALLES COMPLETOS DE UN GRUPO (VERSIÓN CORREGIDA)
     router.get('/groups/details/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const groupId = req.params.groupId;
         const myId = req.user.userId;
 
         try {
             // 1. Info del Grupo
-            const groupInfo = await pool.query('SELECT * FROM groupsapp WHERE id = $1', [groupId]);
-            
-            // 2. Miembros con su rol y foto
-            const members = await pool.query(`
-                SELECT u.id, u.username, u.profile_pic_url, gm.role, u.is_online
+            const groupRes = await pool.query('SELECT * FROM groupsapp WHERE id = $1', [groupId]);
+            if (groupRes.rows.length === 0) {
+                return res.status(404).json({ success: false, message: "Grupo no encontrado" });
+            }
+
+            // 2. Miembros (Quitamos u.is_online de la query porque no existe en la tabla)
+            const membersRes = await pool.query(`
+                SELECT u.id, u.username, u.profile_pic_url, gm.role
                 FROM group_members gm
                 JOIN usersapp u ON gm.user_id = u.id
                 WHERE gm.group_id = $1
                 ORDER BY (CASE WHEN gm.role = 'admin' THEN 1 ELSE 2 END) ASC
             `, [groupId]);
 
-            // 3. Media compartida (Buscamos mensajes que tengan el tag [MEDIA_)
-            const media = await pool.query(`
+            // 🚀 LÓGICA LIVE: Cruzamos los miembros con los usuarios conectados en memoria
+            const onlineUsers = req.app.get('onlineUsers'); 
+            const onlineIds = new Set(Array.from(onlineUsers.values()).map(u => u.userId));
+
+            const membersWithStatus = membersRes.rows.map(m => ({
+                ...m,
+                is_online: onlineIds.has(m.id)
+            }));
+
+            // 3. Media compartida
+            const mediaRes = await pool.query(`
                 SELECT content FROM messagesapp 
                 WHERE group_id = $1 AND content LIKE '%[MEDIA_%' 
                 ORDER BY created_at DESC LIMIT 8
@@ -307,12 +319,15 @@ module.exports = (pool, JWT_SECRET, io) => {
 
             res.json({
                 success: true,
-                group: groupInfo.rows[0],
-                members: members.rows,
-                media: media.rows,
-                isAdmin: members.rows.find(m => m.id === myId)?.role === 'admin'
+                group: groupRes.rows[0],
+                members: membersWithStatus,
+                media: mediaRes.rows,
+                isAdmin: membersRes.rows.find(m => m.id === myId)?.role === 'admin'
             });
-        } catch (e) { res.status(500).json({ success: false }); }
+        } catch (error) {
+            console.error("❌ ERROR EN DETAILS GRUPO:", error);
+            res.status(500).json({ success: false, error: error.message });
+        }
     });
 
     // NUEVO: OBTENER HISTORIAL DE GRUPO
