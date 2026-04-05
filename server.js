@@ -803,19 +803,49 @@ io.on('connection', (socket) => {
     });
 
     socket.on('send_message', async (data) => {
-        const { sender_id, receiver_id, group_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
+    const { sender_id, receiver_id, group_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
 
-        // 🛡️ 1. DETECCIÓN ULTRA-ROBUSTA DE TIPO DE CHAT
-        // Es un grupo si viene el ID o si el nombre de la sala empieza por "group_"
-        const isGroup = !!group_id || (roomName && roomName.startsWith('group_'));
-        
-        // Normalizamos los IDs para la base de datos
-        const finalReceiverId = isGroup ? null : receiver_id;
-        const finalGroupId = isGroup ? (group_id || roomName.split('_')[1]) : null;
+    // 🛡️ 1. DETECCIÓN ULTRA-ROBUSTA DE TIPO DE CHAT
+    const isGroup = !!group_id || (roomName && roomName.startsWith('group_'));
+    
+    // Normalizamos los IDs para la base de datos
+    const finalReceiverId = isGroup ? null : receiver_id;
+    const finalGroupId = isGroup ? (group_id || roomName.split('_')[1]) : null;
 
-        const logTarget = isGroup ? `grupo ${finalGroupId}` : `usuario ${receiver_id}`;
-        console.log(`📨 [SERVER] Recibido mensaje de ${sender_id} para ${logTarget}. Pack: ${sticker_pack ? sticker_pack.name : 'Ninguno'}`);
+    const logTarget = isGroup ? `grupo ${finalGroupId}` : `usuario ${receiver_id}`;
+    console.log(`📨 [SERVER] Recibido mensaje de ${sender_id} para ${logTarget}. Pack: ${sticker_pack ? sticker_pack.name : 'Ninguno'}`);
 
+    // ==========================================================
+    // 🚔 POLICÍA DE ROLES: Bloqueo de seguridad nivel Servidor
+    // ==========================================================
+    if (finalGroupId) {
+        try {
+            const check = await pool.query(`
+                SELECT gm.role, r.permissions, g.creator_id
+                FROM group_members gm
+                JOIN groupsapp g ON g.id = gm.group_id
+                LEFT JOIN group_roles r ON gm.role_id = r.id
+                WHERE gm.group_id = $1 AND gm.user_id = $2
+            `, [finalGroupId, socket.userId]);
+
+            const member = check.rows[0];
+
+            if (member) {
+                // El Creador del grupo o los que tengan role 'admin' en la tabla members son "Dioses"
+                const isGod = (member.role === 'admin' || String(member.creator_id) === String(socket.userId));
+                const perms = member.permissions;
+
+                // Si no es un "Dios" y el rol tiene el permiso de mensajes en false
+                if (!isGod && perms && perms.can_send_messages === false) {
+                    console.log(`🚫 [SEGURIDAD] Usuario ${socket.userId} intentó enviar mensaje al grupo ${finalGroupId} pero su ROL se lo prohíbe.`);
+                    return; // 🛑 SALIMOS: No se ejecuta el código de abajo (no se guarda en DB ni se emite)
+                }
+            }
+        } catch (err) {
+            console.error("Error validando permisos en socket:", err);
+        }
+    }
+    // ==========================================================
         try {
             // 2. Guardar el nuevo mensaje en la base de datos (8 columnas manejadas)
             const insertQuery = `
@@ -865,25 +895,6 @@ io.on('connection', (socket) => {
             // 🚀 6. TRANSMISIÓN EN TIEMPO REAL
             // A. Enviamos a la sala del chat (para el que tiene la pantalla abierta)
             socket.to(roomName).emit('receive_message', savedMessage);
-
-
-            if (data.group_id) {
-                const permCheck = await pool.query(`
-                    SELECT r.permissions, gm.role
-                    FROM group_members gm
-                    LEFT JOIN group_roles r ON gm.role_id = r.id
-                    WHERE gm.group_id = $1 AND gm.user_id = $2
-                `, [data.group_id, socket.userId]);
-
-                const member = permCheck.rows[0];
-                const perms = member?.permissions;
-
-                // Si no es admin y el permiso de enviar mensajes es false, abortamos
-                if (member.role !== 'admin' && perms && perms.can_send_messages === false) {
-                    console.log(`🚫 Bloqueado envío de mensaje por falta de permisos: Usuario ${socket.userId}`);
-                    return; // Detiene el envío del mensaje
-                }
-            }
 
             // B. 📢 ACTUALIZACIÓN DE LISTA DE CHATS (Solo para privados)
             // Enviamos el mensaje a las salas personales del emisor y receptor.
