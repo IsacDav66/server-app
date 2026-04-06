@@ -570,6 +570,6 @@ module.exports = (pool, JWT_SECRET, io) => {
             }
         } catch (e) { res.status(500).json({ success: false }); }
     });
-    
+
     return router;
 };

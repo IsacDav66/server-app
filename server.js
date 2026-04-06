@@ -1044,9 +1044,11 @@ socket.on('send_media_relay', async (data) => {
     // ==========================================================
     // 🚔 POLICÍA DE ROLES: Validación para Fotos y Notas de Voz (Múltiples Roles)
     // ==========================================================
+    // ==========================================================
+    // 🚔 POLICÍA DE ROLES: Bloqueo de seguridad (Múltiples Roles)
+    // ==========================================================
     if (finalGroupId) {
         try {
-            // Buscamos el rango base y todos los permisos de los múltiples roles que tenga el usuario
             const check = await pool.query(`
                 SELECT gm.role as base_rank, g.creator_id,
                        json_agg(r.permissions) as all_role_perms
@@ -1067,32 +1069,59 @@ socket.on('send_media_relay', async (data) => {
                 if (!isGod) {
                     const roles = memberData.all_role_perms[0] === null ? [] : memberData.all_role_perms;
                     
-                    // 2. Aplicamos el peso del "NO" (Discord Style)
-                    // Si un solo rol tiene "can_send_media: false", se bloquea.
-                    let canSendMedia = true; 
-                    
-                    roles.forEach(perm => {
-                        if (perm && perm.can_send_media === false) {
-                            canSendMedia = false;
-                        }
-                        // También bloqueamos si el rol es "Administrador total" pero está marcado como false (poco común pero posible)
-                        if (perm && perm.is_admin === true) {
-                            canSendMedia = true; // El permiso de admin dentro de un rol revive los permisos
+                    // 2. DETECTAR QUÉ TIPO DE CONTENIDO ESTÁ ENVIANDO
+                    const isMusic = content.includes('[MUSIC_V1]');
+                    const isSticker = content.includes('/uploads/stickers') || 
+                                      content.includes('giphy.com') || 
+                                      content.includes('/uploads/stickers_temp');
+                    const isEmoji = content.includes('[E:');
+                    const isText = !isMusic && !isSticker && !isEmoji;
+
+                    // 3. AGREGAR PERMISOS (Discord Style: Un solo FALSE bloquea todo)
+                    let canText = true;
+                    let canEmoji = true;
+                    let canSticker = true;
+                    let canMusic = true;
+
+                    roles.forEach(p => {
+                        if (!p) return;
+                        // Si un solo rol dice false, se queda en false
+                        if (p.can_send_messages === false) canText = false;
+                        if (p.can_use_emojis === false) canEmoji = false;
+                        if (p.can_use_stickers === false) canSticker = false;
+                        if (p.can_use_music === false) canMusic = false;
+
+                        // Si el rol tiene el flag 'is_admin' interno, revive los permisos
+                        if (p.is_admin === true) {
+                            canText = canEmoji = canSticker = canMusic = true;
                         }
                     });
 
-                    if (canSendMedia === false) {
-                        console.log(`🚫 [SEGURIDAD] Usuario ${socket.userId} bloqueado: No tiene permiso de Media en sus roles.`);
-                        return; // 🛑 CORTAR: El archivo no se procesa
+                    // 4. EJECUTAR BLOQUEO SEGÚN EL TIPO
+                    if (isText && !canText) {
+                        console.log(`🚫 [SEGURIDAD] Texto bloqueado: Usuario ${socket.userId}`);
+                        return;
+                    }
+                    if (isEmoji && !canEmoji) {
+                        console.log(`🚫 [SEGURIDAD] Emoji bloqueado: Usuario ${socket.userId}`);
+                        return;
+                    }
+                    if (isSticker && !canSticker) {
+                        console.log(`🚫 [SEGURIDAD] Sticker bloqueado: Usuario ${socket.userId}`);
+                        return;
+                    }
+                    if (isMusic && !canMusic) {
+                        console.log(`🚫 [SEGURIDAD] Música bloqueada: Usuario ${socket.userId}`);
+                        return;
                     }
                 }
             }
         } catch (err) {
-            console.error("❌ Error validando permisos en media relay:", err.message);
-            // En caso de error de base de datos, por seguridad, mejor no dejar pasar el archivo pesado
-            return;
+            console.error("❌ Error en validación de roles (send_message):", err.message);
+            return; // Bloqueo preventivo ante error
         }
     }
+    // ==========================================================
     // ==========================================================
     // 🚀 VARIABLE DE CONTROL DE ID (Evita el ReferenceError)
     let finalDbMessageId = message_id; 
