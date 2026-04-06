@@ -571,5 +571,31 @@ module.exports = (pool, JWT_SECRET, io) => {
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
+
+
+    // 1. Editar un rol existente
+    router.put('/groups/:groupId/roles/:roleId', protect, async (req, res) => {
+        const { name, permissions } = req.body;
+        try {
+            await pool.query(
+                'UPDATE group_roles SET name = $1, permissions = $2 WHERE id = $3 AND group_id = $4',
+                [name, permissions, req.params.roleId, req.params.groupId]
+            );
+            res.json({ success: true });
+        } catch (e) { res.status(500).json({ success: false }); }
+    });
+
+    // 2. Eliminar un rol
+    router.delete('/groups/:groupId/roles/:roleId', protect, async (req, res) => {
+        try {
+            // Al eliminar el rol, la tabla 'member_roles_link' se limpia sola por el ON DELETE CASCADE
+            await pool.query(
+                'DELETE FROM group_roles WHERE id = $1 AND group_id = $2',
+                [req.params.roleId, req.params.groupId]
+            );
+            res.json({ success: true });
+        } catch (e) { res.status(500).json({ success: false }); }
+    });
+
     return router;
 };
