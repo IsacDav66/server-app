@@ -1082,15 +1082,21 @@ socket.on('send_media_relay', async (data) => {
 
                     roles.forEach(p => {
                         if (!p) return;
-                        if (p.can_send_media === false) canMedia = false;
                         
-                        // Si un rol es de administrador, revive el permiso
-                        if (p.is_admin === true) canMedia = true;
+                        // 🕵️ DETECTAR TIPO DE MEDIA QUE LLEGA AL SOCKET
+                        // 'AUDIO' para notas de voz, 'IMAGE' o 'VIDEO' para el resto
+                        const isIncomingVoice = data.items && data.items.some(i => i.type === 'AUDIO');
+                        const isIncomingPhoto = data.items && data.items.some(i => i.type === 'IMAGE' || i.type === 'VIDEO');
+
+                        if (isIncomingVoice && p.can_send_voice === false) canMedia = false;
+                        if (isIncomingPhoto && p.can_send_photos === false) canMedia = false;
+
+                        if (p.is_admin === true) canMedia = true; // Admin revive todo
                     });
 
                     if (canMedia === false) {
-                        console.log(`🚫 [SEGURIDAD] Usuario ${socket.userId} bloqueado: No puede enviar Fotos/Audios.`);
-                        return; // 🛑 CORTAR: El archivo no se procesa
+                        console.log(`🚫 [BLOQUEO] Usuario ${socket.userId} intentó enviar un tipo de media prohibido.`);
+                        return;
                     }
                 }
             }

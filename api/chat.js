@@ -540,7 +540,8 @@ module.exports = (pool, JWT_SECRET, io) => {
             if (roles.length > 0) {
                 roles.forEach(role => {
                     if (role.can_send_messages === false) finalPerms.can_send_messages = false;
-                    if (role.can_send_media === false) finalPerms.can_send_media = false;
+                    if (role.can_send_photos === false) finalPerms.can_send_photos = false; // 👈 Nuevo
+                    if (role.can_send_voice === false) finalPerms.can_send_voice = false;   // 👈 Nuevo
                     if (role.can_use_emojis === false) finalPerms.can_use_emojis = false;
                     if (role.can_use_stickers === false) finalPerms.can_use_stickers = false;
                     if (role.can_use_music === false) finalPerms.can_use_music = false;
