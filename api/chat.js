@@ -347,7 +347,11 @@ module.exports = (pool, JWT_SECRET, io) => {
             // 2. Miembros (Quitamos u.is_online de la query porque no existe en la tabla)
             const membersRes = await pool.query(`
                 SELECT u.id, u.username, u.profile_pic_url, gm.role,
-                    COALESCE(json_agg(json_build_object('id', r.id, 'name', r.name)) FILTER (WHERE r.id IS NOT NULL), '[]') as roles
+                    COALESCE(json_agg(json_build_object(
+                        'id', r.id, 
+                        'name', r.name, 
+                        'permissions', r.permissions -- 👈 VITAL: Traer los permisos para calcular el peso
+                    )) FILTER (WHERE r.id IS NOT NULL), '[]') as roles
                 FROM group_members gm
                 JOIN usersapp u ON gm.user_id = u.id
                 LEFT JOIN member_roles_link mrl ON mrl.user_id = u.id AND mrl.group_id = gm.group_id
