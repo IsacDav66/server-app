@@ -803,80 +803,99 @@ io.on('connection', (socket) => {
     });
 
     socket.on('send_message', async (data) => {
-    const { sender_id, receiver_id, group_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
+        // 1. Extraer todos los datos al inicio para evitar errores de "not defined"
+        const { sender_id, receiver_id, group_id, content, roomName, parent_message_id, message_id: tempId, sticker_pack, emoji_pack } = data;
 
-    // 🛡️ 1. DETECCIÓN ULTRA-ROBUSTA DE TIPO DE CHAT
-    const isGroup = !!group_id || (roomName && roomName.startsWith('group_'));
-    
-    // Normalizamos los IDs para la base de datos
-    const finalReceiverId = isGroup ? null : receiver_id;
-    const finalGroupId = isGroup ? (group_id || roomName.split('_')[1]) : null;
+        // 🛡️ 1. DETECCIÓN ULTRA-ROBUSTA DE TIPO DE CHAT
+        // Es un grupo si viene el ID o si el nombre de la sala empieza por "group_"
+        const isGroup = !!group_id || (roomName && roomName.startsWith('group_'));
+        
+        // Normalizamos los IDs para la base de datos
+        const finalReceiverId = isGroup ? null : receiver_id;
+        const finalGroupId = isGroup ? (group_id || roomName.split('_')[1]) : null;
 
-    const logTarget = isGroup ? `grupo ${finalGroupId}` : `usuario ${receiver_id}`;
-    console.log(`📨 [SERVER] Recibido mensaje de ${sender_id} para ${logTarget}. Pack: ${sticker_pack ? sticker_pack.name : 'Ninguno'}`);
+        const logTarget = isGroup ? `grupo ${finalGroupId}` : `usuario ${receiver_id}`;
+        console.log(`📨 [SERVER] Recibido mensaje de ${sender_id} para ${logTarget}. Pack: ${sticker_pack ? sticker_pack.name : 'Ninguno'}`);
 
-    // ==========================================================
-    // 🚔 POLICÍA DE ROLES: Bloqueo de seguridad inteligente
-    // ==========================================================
-    if (finalGroupId) {
-        try {
-            const check = await pool.query(`
-                SELECT gm.role, r.permissions, g.creator_id
-                FROM group_members gm
-                JOIN groupsapp g ON g.id = gm.group_id
-                LEFT JOIN group_roles r ON gm.role_id = r.id
-                WHERE gm.group_id = $1 AND gm.user_id = $2
-            `, [finalGroupId, socket.userId]);
+        // ==========================================================
+        // 🚔 POLICÍA DE ROLES: Bloqueo de seguridad inteligente (Múltiples Roles)
+        // ==========================================================
+        if (finalGroupId) {
+            try {
+                // Consultamos el rango base y todos los permisos de los múltiples roles que tenga el usuario
+                const check = await pool.query(`
+                    SELECT gm.role as base_rank, g.creator_id,
+                           json_agg(r.permissions) as all_role_perms
+                    FROM group_members gm
+                    JOIN groupsapp g ON g.id = gm.group_id
+                    LEFT JOIN member_roles_link mrl ON mrl.user_id = gm.user_id AND mrl.group_id = gm.group_id
+                    LEFT JOIN group_roles r ON mrl.role_id = r.id
+                    WHERE gm.group_id = $1 AND gm.user_id = $2
+                    GROUP BY gm.role, g.creator_id
+                `, [finalGroupId, socket.userId]);
 
-            const member = check.rows[0];
+                const memberData = check.rows[0];
 
-            if (member) {
-                const isGod = (member.role === 'admin' || String(member.creator_id) === String(socket.userId));
-                const perms = member.permissions;
-
-                // Si no es el creador o admin de tabla, revisamos los permisos del ROL
-                if (!isGod && perms) {
-                    const isMusic = content.includes('[MUSIC_V1]');
-                    const isSticker = content.includes('/uploads/stickers') || content.includes('giphy.com');
-                    const isEmoji = content.includes('[E:');
-                    const isText = !isMusic && !isSticker && !isEmoji;
-
-                    if (isText && perms.can_send_messages === false) {
-                        console.log("🚫 Bloqueado: Solo texto");
-                        return; 
-                    }
-
-                    // 🚔 VALIDACIÓN INDEPENDIENTE POR TIPO
+                if (memberData) {
+                    // El Creador del grupo o los que tengan role 'admin' en la tabla base son "Dioses"
+                    const isGod = (memberData.base_rank === 'admin' || String(memberData.creator_id) === String(socket.userId));
                     
-                    // 1. Validar Texto
-                    if (isText && perms.can_send_messages === false) {
-                        console.log(`🚫 [SEGURIDAD] Texto bloqueado para usuario ${socket.userId}`);
-                        return; 
-                    }
+                    if (!isGod) {
+                        const roles = memberData.all_role_perms[0] === null ? [] : memberData.all_role_perms;
 
-                    // 2. Validar Stickers
-                    if (isSticker && perms.can_use_stickers === false) {
-                        console.log(`🚫 [SEGURIDAD] Sticker bloqueado para usuario ${socket.userId}`);
-                        return;
-                    }
+                        // 🕵️ DETECTAR QUÉ TIPO DE CONTENIDO ESTÁ ENVIANDO EL USUARIO
+                        const isMusic = content && content.includes('[MUSIC_V1]');
+                        const isSticker = content && (content.includes('/uploads/stickers') || 
+                                          content.includes('giphy.com') || 
+                                          content.includes('/uploads/stickers_temp'));
+                        const isEmoji = content && content.includes('[E:');
+                        const isText = !isMusic && !isSticker && !isEmoji;
 
-                    // 3. Validar Música
-                    if (isMusic && perms.can_use_music === false) {
-                        console.log(`🚫 [SEGURIDAD] Música bloqueada para usuario ${socket.userId}`);
-                        return;
-                    }
+                        // 📋 AGREGAR PERMISOS (Lógica restrictiva: Un solo FALSE bloquea el permiso)
+                        let canText = true;
+                        let canEmoji = true;
+                        let canSticker = true;
+                        let canMusic = true;
 
-                    // 4. Validar Emojis personalizados
-                    if (isEmoji && perms.can_use_emojis === false) {
-                        console.log(`🚫 [SEGURIDAD] Emoji bloqueado para usuario ${socket.userId}`);
-                        return;
+                        roles.forEach(p => {
+                            if (!p) return;
+                            
+                            // Si un solo rol tiene el permiso en false, el resultado final es false
+                            if (p.can_send_messages === false) canText = false;
+                            if (p.can_use_emojis === false) canEmoji = false;
+                            if (p.can_use_stickers === false) canSticker = false;
+                            if (p.can_use_music === false) canMusic = false;
+
+                            // REGLA DE ORO: Si el rol tiene marcado "is_admin", revive todos los permisos
+                            if (p.is_admin === true) {
+                                canText = true; canEmoji = true; canSticker = true; canMusic = true;
+                            }
+                        });
+
+                        // 🚔 EJECUTAR BLOQUEOS SEGÚN EL CONTENIDO DETECTADO
+                        if (isText && !canText) {
+                            console.log(`🚫 [SEGURIDAD] Texto bloqueado para usuario ${socket.userId} en grupo ${finalGroupId}`);
+                            return; // Se detiene aquí, no se guarda ni se emite
+                        }
+                        if (isEmoji && !canEmoji) {
+                            console.log(`🚫 [SEGURIDAD] Emoji bloqueado para usuario ${socket.userId} en grupo ${finalGroupId}`);
+                            return;
+                        }
+                        if (isSticker && !canSticker) {
+                            console.log(`🚫 [SEGURIDAD] Sticker bloqueado para usuario ${socket.userId} en grupo ${finalGroupId}`);
+                            return;
+                        }
+                        if (isMusic && !canMusic) {
+                            console.log(`🚫 [SEGURIDAD] Música bloqueada para usuario ${socket.userId} en grupo ${finalGroupId}`);
+                            return;
+                        }
                     }
                 }
+            } catch (err) {
+                console.error("❌ Error crítico en validación de roles:", err.message);
+                return; // Bloqueo preventivo en caso de error de DB
             }
-        } catch (err) {
-            console.error("Error validando permisos en socket:", err);
         }
-    }
     // ==========================================================
         try {
             // 2. Guardar el nuevo mensaje en la base de datos (8 columnas manejadas)
