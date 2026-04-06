@@ -675,5 +675,26 @@ module.exports = (pool, JWT_SECRET, io) => {
         }
     });
 
+
+    // Obtener solo los colores de los miembros del grupo
+router.get('/groups/:groupId/member-colors', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    try {
+        const query = `
+            SELECT u.id, 
+                   (SELECT r.color FROM member_roles_link mrl
+                    JOIN group_roles r ON mrl.role_id = r.id
+                    WHERE mrl.user_id = u.id AND mrl.group_id = $1
+                    ORDER BY (r.permissions->>'is_admin')::boolean DESC, 
+                             (r.permissions->>'can_mute')::boolean DESC
+                    LIMIT 1) as name_color
+            FROM group_members gm
+            JOIN usersapp u ON u.id = gm.user_id
+            WHERE gm.group_id = $1
+        `;
+        const result = await pool.query(query, [req.params.groupId]);
+        res.json({ success: true, colors: result.rows });
+    } catch (e) { res.status(500).json({ success: false }); }
+});
+
     return router;
 };
