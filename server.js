@@ -935,6 +935,25 @@ io.on('connection', (socket) => {
                 }
             }
 
+
+            // 🌈 OBTENER EL COLOR DEL ROL PARA EL CHAT EN TIEMPO REAL
+            if (isGroup) {
+                const colorRes = await pool.query(`
+                    SELECT r.color FROM member_roles_link mrl
+                    JOIN group_roles r ON mrl.role_id = r.id
+                    WHERE mrl.user_id = $1 AND mrl.group_id = $2
+                    ORDER BY 
+                        (r.permissions->>'is_admin')::boolean DESC,
+                        (r.permissions->>'can_mute')::boolean DESC,
+                        (r.permissions->>'can_add_members')::boolean DESC,
+                        r.id ASC
+                    LIMIT 1
+                `, [sender_id, finalGroupId]);
+                
+                // Agregamos la propiedad al objeto antes de que salga hacia los clientes
+                savedMessage.author_color = colorRes.rows[0]?.color || null;
+            }
+
             // 🚀 6. TRANSMISIÓN EN TIEMPO REAL
             // A. Enviamos a la sala del chat (para el que tiene la pantalla abierta)
             socket.to(roomName).emit('receive_message', savedMessage);

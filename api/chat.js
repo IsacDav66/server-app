@@ -347,11 +347,17 @@ module.exports = (pool, JWT_SECRET, io) => {
             // 2. Miembros (Quitamos u.is_online de la query porque no existe en la tabla)
             const membersRes = await pool.query(`
                 SELECT u.id, u.username, u.profile_pic_url, gm.role,
-                    COALESCE(json_agg(json_build_object(
-                        'id', r.id, 
-                        'name', r.name, 
-                        'permissions', r.permissions -- 👈 VITAL: Traer los permisos para calcular el peso
-                    )) FILTER (WHERE r.id IS NOT NULL), '[]') as roles
+                    -- Obtener el color del rol con más peso
+                    (SELECT r2.color 
+                        FROM member_roles_link mrl2
+                        JOIN group_roles r2 ON mrl2.role_id = r2.id
+                        WHERE mrl2.user_id = u.id AND mrl2.group_id = $1
+                        ORDER BY 
+                            (r2.permissions->>'is_admin')::boolean DESC,
+                            (r2.permissions->>'can_mute')::boolean DESC,
+                            (r2.permissions->>'can_add_members')::boolean DESC
+                        LIMIT 1) as name_color,
+                    COALESCE(json_agg(json_build_object('id', r.id, 'name', r.name, 'permissions', r.permissions, 'color', r.color)) FILTER (WHERE r.id IS NOT NULL), '[]') as roles
                 FROM group_members gm
                 JOIN usersapp u ON gm.user_id = u.id
                 LEFT JOIN member_roles_link mrl ON mrl.user_id = u.id AND mrl.group_id = gm.group_id
@@ -421,7 +427,18 @@ module.exports = (pool, JWT_SECRET, io) => {
                     m.parent_message_id, m.sticker_pack, m.emoji_pack,
                     u.username, u.profile_pic_url,
                     p.content as parent_content,
-                    pu.username as parent_username
+                    pu.username as parent_username,
+                    -- 🚀 NUEVA SUB-CONSULTA: OBTENER EL COLOR DEL ROL MÁS IMPORTANTE
+                    (SELECT r.color 
+                     FROM member_roles_link mrl
+                     JOIN group_roles r ON mrl.role_id = r.id
+                     WHERE mrl.user_id = m.sender_id AND mrl.group_id = m.group_id
+                     ORDER BY 
+                        (r.permissions->>'is_admin')::boolean DESC,
+                        (r.permissions->>'can_mute')::boolean DESC,
+                        (r.permissions->>'can_add_members')::boolean DESC,
+                        r.id ASC
+                     LIMIT 1) as author_color
                 FROM messagesapp m
                 JOIN usersapp u ON m.sender_id = u.id
                 LEFT JOIN messagesapp p ON m.parent_message_id = p.message_id
@@ -430,13 +447,16 @@ module.exports = (pool, JWT_SECRET, io) => {
                 ORDER BY m.created_at DESC
                 LIMIT $2 OFFSET $3;
             `;
+            
             const result = await pool.query(query, [groupId, limit, offset]);
+            
             res.json({ 
                 success: true, 
                 messages: result.rows.reverse(), 
                 hasMore: result.rows.length === limit 
             });
         } catch (error) {
+            console.error("❌ Error cargando historial de grupo:", error.message);
             res.status(500).json({ success: false });
         }
     });
@@ -464,19 +484,21 @@ module.exports = (pool, JWT_SECRET, io) => {
 
     // 2. Crear o Editar Rol
     router.post('/groups/:groupId/roles', protect, async (req, res) => {
-        const { name, permissions, roleId } = req.body;
+        // 1. Recibimos el color desde el body
+        const { name, permissions, color } = req.body;
         const { groupId } = req.params;
 
         try {
-            if (roleId) {
-                // Editar
-                await pool.query('UPDATE group_roles SET name = $1, permissions = $2 WHERE id = $3', [name, permissions, roleId]);
-            } else {
-                // Crear
-                await pool.query('INSERT INTO group_roles (group_id, name, permissions) VALUES ($1, $2, $3)', [groupId, name, permissions]);
-            }
+            // 2. Añadimos 'color' a la inserción ($4)
+            await pool.query(
+                'INSERT INTO group_roles (group_id, name, permissions, color) VALUES ($1, $2, $3, $4)', 
+                [groupId, name, permissions, color || '#ffffff']
+            );
             res.json({ success: true });
-        } catch (e) { res.status(500).json({ success: false }); }
+        } catch (e) { 
+            console.error("Error creando rol:", e);
+            res.status(500).json({ success: false }); 
+        }
     });
 
     // 3. Asignar rol a un miembro
@@ -603,22 +625,23 @@ module.exports = (pool, JWT_SECRET, io) => {
 
     // 1. Editar un rol existente
     router.put('/groups/:groupId/roles/:roleId', protect, async (req, res) => {
-        const { name, permissions } = req.body;
+        // 1. Recibimos el color desde el body
+        const { name, permissions, color } = req.body;
         const { groupId, roleId } = req.params;
 
         try {
+            // 2. Añadimos el campo color al SET y el parámetro $3
             await pool.query(
-                'UPDATE group_roles SET name = $1, permissions = $2 WHERE id = $3 AND group_id = $4',
-                [name, permissions, roleId, groupId]
+                'UPDATE group_roles SET name = $1, permissions = $2, color = $3 WHERE id = $4 AND group_id = $5',
+                [name, permissions, color, roleId, groupId]
             );
 
             // 📡 AVISO GLOBAL AL GRUPO
             const io = req.app.get('socketio');
             if (io) {
-                // Enviamos 'global: true' porque no sabemos a cuánta gente afecta este cambio.
-                // Esto hará que TODOS los que estén en el chat refresquen sus permisos.
+                // Enviamos global: true para que todos refresquen (incluyendo los colores de los nombres)
                 io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
-                console.log(`📡 [SOCKET] Rol ${name} editado. Sincronizando grupo ${groupId}`);
+                console.log(`📡 [SOCKET] Rol ${name} (Color: ${color}) editado. Sincronizando grupo ${groupId}`);
             }
 
             res.json({ success: true });
