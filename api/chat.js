@@ -558,17 +558,40 @@ module.exports = (pool, JWT_SECRET, io) => {
         const { groupId } = req.params;
 
         try {
-            // ¿Ya tiene este rol?
+            // 1. Verificamos si ya tiene el rol
             const check = await pool.query('SELECT 1 FROM member_roles_link WHERE user_id = $1 AND role_id = $2', [userId, roleId]);
+            let actionName = "";
 
             if (check.rowCount > 0) {
+                // Si lo tiene, lo quitamos
                 await pool.query('DELETE FROM member_roles_link WHERE user_id = $1 AND role_id = $2', [userId, roleId]);
-                res.json({ success: true, action: 'removed' });
+                actionName = 'removed';
             } else {
+                // Si no lo tiene, lo ponemos
                 await pool.query('INSERT INTO member_roles_link (group_id, user_id, role_id) VALUES ($1, $2, $3)', [groupId, userId, roleId]);
-                res.json({ success: true, action: 'added' });
+                actionName = 'added';
             }
-        } catch (e) { res.status(500).json({ success: false }); }
+
+            // ==========================================================
+            // 📡 NOTIFICACIÓN POR SOCKET (TIEMPO REAL)
+            // ==========================================================
+            const io = req.app.get('socketio');
+            if (io) {
+                // Enviamos el aviso a la sala del grupo
+                // El cliente del usuario recibirá esto y refrescará sus permisos
+                io.to(`group_${groupId}`).emit('permissions_updated', { 
+                    userId: userId,
+                    action: actionName 
+                });
+                console.log(`📡 [SOCKET] Cambio de rol enviado a grupo_${groupId} para usuario ${userId}`);
+            }
+            // ==========================================================
+
+            res.json({ success: true, action: actionName });
+        } catch (e) { 
+            console.error("Error en toggle-role:", e);
+            res.status(500).json({ success: false }); 
+        }
     });
 
 
@@ -576,25 +599,52 @@ module.exports = (pool, JWT_SECRET, io) => {
     // 1. Editar un rol existente
     router.put('/groups/:groupId/roles/:roleId', protect, async (req, res) => {
         const { name, permissions } = req.body;
+        const { groupId, roleId } = req.params;
+
         try {
             await pool.query(
                 'UPDATE group_roles SET name = $1, permissions = $2 WHERE id = $3 AND group_id = $4',
-                [name, permissions, req.params.roleId, req.params.groupId]
+                [name, permissions, roleId, groupId]
             );
+
+            // 📡 AVISO GLOBAL AL GRUPO
+            const io = req.app.get('socketio');
+            if (io) {
+                // Enviamos 'global: true' porque no sabemos a cuánta gente afecta este cambio.
+                // Esto hará que TODOS los que estén en el chat refresquen sus permisos.
+                io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
+                console.log(`📡 [SOCKET] Rol ${name} editado. Sincronizando grupo ${groupId}`);
+            }
+
             res.json({ success: true });
-        } catch (e) { res.status(500).json({ success: false }); }
+        } catch (e) { 
+            console.error("Error editando rol:", e);
+            res.status(500).json({ success: false }); 
+        }
     });
 
     // 2. Eliminar un rol
     router.delete('/groups/:groupId/roles/:roleId', protect, async (req, res) => {
+        const { groupId, roleId } = req.params;
         try {
-            // Al eliminar el rol, la tabla 'member_roles_link' se limpia sola por el ON DELETE CASCADE
             await pool.query(
                 'DELETE FROM group_roles WHERE id = $1 AND group_id = $2',
-                [req.params.roleId, req.params.groupId]
+                [roleId, groupId]
             );
+
+            // 📡 AVISO GLOBAL AL GRUPO
+            const io = req.app.get('socketio');
+            if (io) {
+                // Al borrar un rol, todos deben re-calcular sus permisos.
+                io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
+                console.log(`📡 [SOCKET] Rol eliminado en grupo ${groupId}. Sincronizando...`);
+            }
+
             res.json({ success: true });
-        } catch (e) { res.status(500).json({ success: false }); }
+        } catch (e) { 
+            console.error("Error eliminando rol:", e);
+            res.status(500).json({ success: false }); 
+        }
     });
 
     return router;
