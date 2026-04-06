@@ -815,62 +815,78 @@ io.on('connection', (socket) => {
         // 🚔 POLICÍA DE ROLES: Versión Discord (Múltiples Roles)
         // ==========================================================
         if (finalGroupId) {
-            try {
-                // Nueva consulta que busca en la tabla puente 'member_roles_link'
-                const check = await pool.query(`
-                    SELECT gm.role as base_rank, g.creator_id,
-                           json_agg(r.permissions) as all_role_perms
-                    FROM group_members gm
-                    JOIN groupsapp g ON g.id = gm.group_id
-                    LEFT JOIN member_roles_link mrl ON mrl.user_id = gm.user_id AND mrl.group_id = gm.group_id
-                    LEFT JOIN group_roles r ON mrl.role_id = r.id
-                    WHERE gm.group_id = $1 AND gm.user_id = $2
-                    GROUP BY gm.role, g.creator_id
-                `, [finalGroupId, socket.userId]);
+        try {
+            const check = await pool.query(`
+                SELECT gm.role as base_rank, g.creator_id,
+                       json_agg(r.permissions) as all_role_perms
+                FROM group_members gm
+                JOIN groupsapp g ON g.id = gm.group_id
+                LEFT JOIN member_roles_link mrl ON mrl.user_id = gm.user_id AND mrl.group_id = gm.group_id
+                LEFT JOIN group_roles r ON mrl.role_id = r.id
+                WHERE gm.group_id = $1 AND gm.user_id = $2
+                GROUP BY gm.role, g.creator_id
+            `, [finalGroupId, socket.userId]);
 
-                const memberData = check.rows[0];
+            const memberData = check.rows[0];
 
-                if (memberData) {
-                    // Creador o Rango 'admin' en la tabla son inmunes
-                    const isGod = (memberData.base_rank === 'admin' || String(memberData.creator_id) === String(socket.userId));
+            if (memberData) {
+                const isGod = (memberData.base_rank === 'admin' || String(memberData.creator_id) === String(socket.userId));
+                
+                if (!isGod) {
+                    const roles = memberData.all_role_perms[0] === null ? [] : memberData.all_role_perms;
                     
-                    if (!isGod) {
-                        const roles = memberData.all_role_perms[0] === null ? [] : memberData.all_role_perms;
+                    // 📋 1. AGREGAR PERMISOS (Peso del NO)
+                    let canText = true, canEmoji = true, canSticker = true, canMusic = true;
+                    roles.forEach(p => {
+                        if (!p) return;
+                        if (p.can_send_messages === false) canText = false;
+                        if (p.can_use_emojis === false) canEmoji = false;
+                        if (p.can_use_stickers === false) canSticker = false;
+                        if (p.can_use_music === false) canMusic = false;
+                        if (p.is_admin === true) { canText = canEmoji = canSticker = canMusic = true; }
+                    });
 
-                        // 🕵️ DETECTAR CONTENIDO
-                        const isMusic = content.includes('[MUSIC_V1]');
-                        const isSticker = content.includes('/uploads/stickers') || content.includes('giphy.com') || content.includes('/uploads/stickers_temp');
-                        const isEmoji = content.includes('[E:');
-                        const isText = !isMusic && !isSticker && !isEmoji && content.trim() !== "";
+                    // 🕵️ 2. ANÁLISIS DE CONTENIDO AVANZADO
+                    const isMusic = content.includes('[MUSIC_V1]');
+                    const isSticker = content.includes('/uploads/stickers') || content.includes('giphy.com');
+                    
+                    // 🚀 REGEX MAESTRA PARA EMOJIS DE TECLADO (UNICODE)
+                    const unicodeEmojiRegex = /(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])/g;
+                    const customEmojiRegex = /\[E:[^\]]+\]/g;
 
-                        // 📋 AGREGAR PERMISOS (Peso del NO: Un solo false bloquea)
-                        let canText = true, canEmoji = true, canSticker = true, canMusic = true;
+                    // Si el usuario tiene prohibido el texto pero PERMITIDO los emojis:
+                    if (!canText && canEmoji) {
+                        // Limpiamos TODO el mensaje excepto los emojis (personalizados y normales)
+                        // También quitamos espacios, saltos de línea y tabulaciones
+                        const onlyEmojis = content.match(customEmojiRegex) || [];
+                        const onlyUnicode = content.match(unicodeEmojiRegex) || [];
+                        
+                        // Reconstruimos el mensaje solo con lo permitido
+                        const cleanedContent = [...onlyEmojis, ...onlyUnicode].join('');
 
-                        roles.forEach(p => {
-                            if (!p) return;
-                            if (p.can_send_messages === false) canText = false;
-                            if (p.can_use_emojis === false) canEmoji = false;
-                            if (p.can_use_stickers === false) canSticker = false;
-                            if (p.can_use_music === false) canMusic = false;
-
-                            // Si un rol tiene poder de ADMIN, revive los permisos
-                            if (p.is_admin === true) {
-                                canText = canEmoji = canSticker = canMusic = true;
-                            }
-                        });
-
-                        // 🚫 EJECUTAR BLOQUEOS
-                        if (isText && !canText) return console.log("Bloqueado: Texto");
-                        if (isEmoji && !canEmoji) return console.log("Bloqueado: Emoji");
-                        if (isSticker && !canSticker) return console.log("Bloqueado: Sticker");
-                        if (isMusic && !canMusic) return console.log("Bloqueado: Música");
+                        if (cleanedContent.length > 0) {
+                            // 💡 MAGIA: Sobrescribimos el contenido original por la versión "Limpia"
+                            data.content = cleanedContent; 
+                            console.log(`✨ Mensaje de ${socket.userId} limpiado. Solo quedaron emojis.`);
+                        } else {
+                            // Si no hay ni un solo emoji y el texto está prohibido
+                            console.log(`🚫 Bloqueo total: No hay emojis en el mensaje de ${socket.userId}`);
+                            return;
+                        }
+                    } else if (!canText && !canEmoji) {
+                        // Si tiene ambos prohibidos y no es multimedia/sticker/música
+                        if (!isMusic && !isSticker) return;
                     }
+
+                    // 3. VALIDACIONES FINALES (Stickers y Música)
+                    if (isSticker && !canSticker) return;
+                    if (isMusic && !canMusic) return;
                 }
-            } catch (err) {
-                console.error("❌ Error en Policía de Roles:", err.message);
-                return; // Bloqueo preventivo
             }
+        } catch (err) {
+            console.error("Error validando roles:", err);
         }
+    }
         // ==========================================================
     // ==========================================================
         try {
