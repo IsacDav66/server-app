@@ -508,24 +508,45 @@ module.exports = (pool, JWT_SECRET, io) => {
     });
 
     // 2. Crear o Editar Rol
-    router.post('/groups/:groupId/roles', protect, async (req, res) => {
-        // 1. Recibimos el color desde el body
-        const { name, permissions, color } = req.body;
+    // --- 1. RUTA: CREAR ROL (POST) ---
+router.post('/groups/:groupId/roles', 
+    (req, res, next) => protect(req, res, next, JWT_SECRET), 
+    uploadRoleIcon,         // 👈 Multer abre el paquete de datos
+    processImage('group'),  // 👈 Sharp procesa el icono
+    async (req, res) => {
         const { groupId } = req.params;
 
         try {
-            // 2. Añadimos 'color' a la inserción ($4)
-            await pool.query(
-                'INSERT INTO group_roles (group_id, name, permissions, color) VALUES ($1, $2, $3, $4)', 
-                [groupId, name, permissions, color || '#ffffff']
-            );
-            res.json({ success: true });
-        } catch (e) { 
-            console.error("Error creando rol:", e);
-            res.status(500).json({ success: false }); 
-        }
-    });
+            if (!req.body || !req.body.name) {
+                return res.status(400).json({ success: false, message: "No se recibió el nombre del rol" });
+            }
 
+            let { name, color, iconTag, permissions } = req.body;
+
+            // Convertir permisos de String a Objeto JSON
+            if (typeof permissions === 'string') {
+                try { permissions = JSON.parse(permissions); } catch(e) { permissions = {}; }
+            }
+
+            // Determinar la URL del icono (Archivo > Emoji Tag > null)
+            let finalIconUrl = iconTag || null;
+            if (req.file) {
+                finalIconUrl = `/uploads/group_photos/${req.file.filename}`;
+            }
+
+            const query = `
+                INSERT INTO group_roles (group_id, name, permissions, color, icon_url, display_order) 
+                VALUES ($1, $2, $3, $4, $5, 999) RETURNING *
+            `;
+            const result = await pool.query(query, [groupId, name, permissions, color, finalIconUrl]);
+
+            res.json({ success: true, role: result.rows[0] });
+        } catch (e) {
+            console.error("❌ Error en POST roles:", e.message);
+            res.status(500).json({ success: false });
+        }
+    }
+);
     // 3. Asignar rol a un miembro
     router.post('/groups/:groupId/assign-role', protect, async (req, res) => {
         const { userId, roleId } = req.body;
@@ -645,52 +666,6 @@ module.exports = (pool, JWT_SECRET, io) => {
             res.status(500).json({ success: false }); 
         }
     });
-
-
-    // --- 🚀 RUTA: CREAR ROL (ACTUALIZADA PARA MULTIPART/FORM-DATA) ---
-    router.post('/groups/:groupId/roles', 
-        (req, res, next) => protect(req, res, next, JWT_SECRET), 
-        uploadRoleIcon, // Middleware que creamos (upload.single('roleIcon'))
-        processImage('group'), 
-        async (req, res) => {
-            // 🧪 LOG DE DEPURACIÓN: Si esto sale como {} o undefined, el problema es el Paso 1
-            console.log("📦 Body recibido:", req.body);
-            console.log("📂 Archivo recibido:", req.file);
-
-            try {
-                // Protección contra undefined
-                if (!req.body) {
-                    return res.status(400).json({ success: false, message: "Cuerpo de petición vacío" });
-                }
-
-                const { name, color, iconTag } = req.body;
-                let { permissions } = req.body;
-
-                if (!name) {
-                    return res.status(400).json({ success: false, message: "El nombre es obligatorio" });
-                }
-
-                if (typeof permissions === 'string') permissions = JSON.parse(permissions);
-
-                // Determinar la URL final del icono
-                let finalIconUrl = iconTag || null;
-                if (req.file) {
-                    finalIconUrl = `/uploads/group_photos/${req.file.filename}`;
-                }
-
-                const query = `
-                    INSERT INTO group_roles (group_id, name, permissions, color, icon_url, display_order) 
-                    VALUES ($1, $2, $3, $4, $5, 999) RETURNING *
-                `;
-                const result = await pool.query(query, [groupId, name, permissions, color, finalIconUrl]);
-
-                res.json({ success: true, role: result.rows[0] });
-            } catch (e) {
-                console.error("❌ Error en POST roles:", e.message);
-                res.status(500).json({ success: false });
-            }
-        }
-    );
 
     // 1. Editar un rol existente
     router.put('/groups/:groupId/roles/:roleId', 
