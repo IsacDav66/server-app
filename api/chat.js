@@ -355,7 +355,8 @@ module.exports = (pool, JWT_SECRET, io) => {
                             r2.display_order ASC, 
                             (r2.permissions->>'is_admin')::boolean DESC,
                             (r2.permissions->>'can_mute')::boolean DESC,
-                            r2.id DESC
+                            (r2.permissions->>'can_add_members')::boolean DESC,
+                            r2.id DESC   -- 👈 EL ÚLTIMO QUE SE PUSO GANA
                         LIMIT 1) as name_color,
 
                     -- 🛡️ 2. ICONO DEL ROL (Usa la misma jerarquía exacta para que coincidan)
@@ -377,7 +378,8 @@ module.exports = (pool, JWT_SECRET, io) => {
                             'name', r3.name, 
                             'color', r3.color, 
                             'icon', r3.icon_url, -- 👈 Añadir esto
-                            'permissions', r3.permissions
+                            'permissions', r3.permissions,
+                            'display_order', r3.display_order -- 👈 IMPORTANTE: Mandar el orden al Front
                         ) ORDER BY r3.display_order ASC)
                         FROM member_roles_link mrl3
                         JOIN group_roles r3 ON mrl3.role_id = r3.id
