@@ -334,8 +334,9 @@ module.exports = (pool, JWT_SECRET, io) => {
 
     // OBTENER DETALLES COMPLETOS DE UN GRUPO (VERSIÓN CORREGIDA)
     // OBTENER DETALLES COMPLETOS DE UN GRUPO (VERSIÓN DISCORD-PRO)
+    // OBTENER DETALLES COMPLETOS DE UN GRUPO
     router.get('/groups/details/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const groupId = req.params.groupId;
+        const groupId = parseInt(req.params.groupId);
         const myId = req.user.userId;
 
         try {
@@ -344,7 +345,7 @@ module.exports = (pool, JWT_SECRET, io) => {
 
             const membersRes = await pool.query(`
                 SELECT u.id, u.username, u.profile_pic_url, gm.role,
-                    -- 🌈 COLOR DEL NOMBRE: Calculado por peso y LUEGO por orden de asignación
+                    -- 1. SUB-CONSULTA PARA EL COLOR (Alias r2)
                     (SELECT r2.color 
                         FROM member_roles_link mrl2
                         JOIN group_roles r2 ON mrl2.role_id = r2.id
@@ -353,21 +354,20 @@ module.exports = (pool, JWT_SECRET, io) => {
                             (r2.permissions->>'is_admin')::boolean DESC,
                             (r2.permissions->>'can_mute')::boolean DESC,
                             (r2.permissions->>'can_add_members')::boolean DESC,
-                            r.id ASC -- 👈 Los roles más antiguos (ID bajo) tienen prioridad
+                            r2.id ASC -- 👈 Prioridad al rol más antiguo
                         LIMIT 1) as name_color,
                     
-                    -- 🎭 ARRAY DE ROLES: Incluimos 'permissions' para que el Frontend calcule pesos
+                    -- 2. SUB-CONSULTA PARA EL ARRAY DE ROLES (Alias r3)
                     COALESCE(
                         (SELECT json_agg(json_build_object(
-                            'id', r.id, 
-                            'name', r.name, 
-                            'color', r.color, 
-                            'permissions', r.permissions, 
-                            'assigned_at', mrl.assigned_at
-                        ) ORDER BY mrl.assigned_at ASC) -- Los mandamos en orden de tiempo
-                        FROM member_roles_link mrl
-                        JOIN group_roles r ON mrl.role_id = r.id
-                        WHERE mrl.user_id = u.id AND mrl.group_id = $1),
+                            'id', r3.id, 
+                            'name', r3.name, 
+                            'color', r3.color, 
+                            'permissions', r3.permissions
+                        ) ORDER BY r3.id ASC)
+                        FROM member_roles_link mrl3
+                        JOIN group_roles r3 ON mrl3.role_id = r3.id
+                        WHERE mrl3.user_id = u.id AND mrl3.group_id = $1),
                         '[]'::json
                     ) as roles
 
@@ -377,7 +377,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 GROUP BY u.id, gm.role
                 ORDER BY (CASE WHEN gm.role = 'admin' THEN 1 ELSE 2 END) ASC, u.username ASC
             `, [groupId]);
-            
+
             // Lógica Live (Socket status)
             const onlineUsers = req.app.get('onlineUsers'); 
             const onlineIds = new Set(Array.from(onlineUsers.values()).map(u => u.userId));
@@ -387,7 +387,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 is_online: onlineIds.has(m.id)
             }));
 
-            // Media compartida
+            // 3. Media compartida (Corregido con el parámetro $1)
             const mediaRes = await pool.query(`
                 SELECT content FROM messagesapp 
                 WHERE group_id = $1 AND content LIKE '%[MEDIA_%' 
@@ -406,8 +406,9 @@ module.exports = (pool, JWT_SECRET, io) => {
                 media: processedMedia,
                 isAdmin: membersRes.rows.find(m => m.id === myId)?.role === 'admin'
             });
+
         } catch (error) {
-            console.error("❌ ERROR EN DETAILS GRUPO:", error);
+            console.error("❌ ERROR EN DETAILS GRUPO:", error.message);
             res.status(500).json({ success: false, error: error.message });
         }
     });
