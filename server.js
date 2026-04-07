@@ -937,22 +937,41 @@ io.on('connection', (socket) => {
 
 
             // 🌈 OBTENER EL COLOR DEL ROL PARA EL CHAT EN TIEMPO REAL
+            // 🌈 OBTENER IDENTIDAD VISUAL (COLOR E ICONO) PARA EL CHAT EN TIEMPO REAL
             if (isGroup) {
-                const colorRes = await pool.query(`
-                    SELECT r.color FROM member_roles_link mrl
+                // 1. Obtener color e icono del autor del mensaje actual
+                const identityRes = await pool.query(`
+                    SELECT r.color, r.icon_url FROM member_roles_link mrl
                     JOIN group_roles r ON mrl.role_id = r.id
                     WHERE mrl.user_id = $1 AND mrl.group_id = $2
                     ORDER BY 
                         r.display_order ASC,
                         (r.permissions->>'is_admin')::boolean DESC,
-                        (r.permissions->>'can_mute')::boolean DESC,
-                        (r.permissions->>'can_add_members')::boolean DESC,
-                        r.id DESC -- 👈 AÑADE ESTA LÍNEA AQUÍ
+                        r.id DESC
                     LIMIT 1
                 `, [sender_id, finalGroupId]);
                 
-                // Agregamos la propiedad al objeto antes de que salga hacia los clientes
-                savedMessage.author_color = colorRes.rows[0]?.color || null;
+                if (identityRes.rows.length > 0) {
+                    savedMessage.author_color = identityRes.rows[0].color;
+                    savedMessage.author_icon = identityRes.rows[0].icon_url;
+                }
+
+                // 2. Si es una respuesta, obtener también el color e icono del autor citado (padre)
+                if (parent_message_id) {
+                    const parentIdentityRes = await pool.query(`
+                        SELECT r.color, r.icon_url FROM member_roles_link mrl
+                        JOIN group_roles r ON mrl.role_id = r.id
+                        WHERE mrl.user_id = (SELECT sender_id FROM messagesapp WHERE message_id = $1)
+                        AND mrl.group_id = $2
+                        ORDER BY r.display_order ASC, r.id DESC
+                        LIMIT 1
+                    `, [parent_message_id, finalGroupId]);
+
+                    if (parentIdentityRes.rows.length > 0) {
+                        savedMessage.parent_author_color = parentIdentityRes.rows[0].color;
+                        savedMessage.parent_author_icon = parentIdentityRes.rows[0].icon_url;
+                    }
+                }
             }
 
             // 🚀 6. TRANSMISIÓN EN TIEMPO REAL
