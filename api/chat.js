@@ -392,7 +392,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 SELECT content FROM messagesapp 
                 WHERE group_id = $1 AND content LIKE '%[MEDIA_%' 
                 ORDER BY created_at DESC LIMIT 12
-            `);
+            `, [groupId]);
 
             const processedMedia = mediaRes.rows.map(m => {
                 const match = m.content.match(/\[MEDIA_(.*?):(.*?)(?:_P_)/);
