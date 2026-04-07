@@ -649,15 +649,27 @@ module.exports = (pool, JWT_SECRET, io) => {
 
     // --- 🚀 RUTA: CREAR ROL (ACTUALIZADA PARA MULTIPART/FORM-DATA) ---
     router.post('/groups/:groupId/roles', 
-        (req, res, next) => protect(req, res, next, JWT_SECRET), // Autenticación
-        uploadRoleIcon,         // 👈 VITAL: Extrae los datos del FormData y el archivo
-        processImage('group'),  // Procesa con Sharp
+        (req, res, next) => protect(req, res, next, JWT_SECRET), 
+        uploadRoleIcon, // Middleware que creamos (upload.single('roleIcon'))
+        processImage('group'), 
         async (req, res) => {
-            try {
-                const { groupId } = req.params;
-                let { name, permissions, color, iconTag } = req.body;
+            // 🧪 LOG DE DEPURACIÓN: Si esto sale como {} o undefined, el problema es el Paso 1
+            console.log("📦 Body recibido:", req.body);
+            console.log("📂 Archivo recibido:", req.file);
 
-                // 🛑 IMPORTANTE: FormData envía objetos como texto, hay que parsearlos
+            try {
+                // Protección contra undefined
+                if (!req.body) {
+                    return res.status(400).json({ success: false, message: "Cuerpo de petición vacío" });
+                }
+
+                const { name, color, iconTag } = req.body;
+                let { permissions } = req.body;
+
+                if (!name) {
+                    return res.status(400).json({ success: false, message: "El nombre es obligatorio" });
+                }
+
                 if (typeof permissions === 'string') permissions = JSON.parse(permissions);
 
                 // Determinar la URL final del icono
