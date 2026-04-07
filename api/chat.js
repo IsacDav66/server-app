@@ -691,25 +691,38 @@ module.exports = (pool, JWT_SECRET, io) => {
     // Obtener solo los colores de los miembros del grupo
 router.get('/groups/:groupId/member-colors', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
     try {
+        const groupId = parseInt(req.params.groupId);
+
+        if (isNaN(groupId)) {
+            return res.status(400).json({ success: false, message: "ID de grupo inválido" });
+        }
+
         const query = `
             SELECT u.id, 
-                   (SELECT r.color FROM member_roles_link mrl
-                    JOIN group_roles r ON mrl.role_id = r.id
-                    WHERE mrl.user_id = u.id AND mrl.group_id = $1
+                   -- 🚀 SUB-CONSULTA PARA EL COLOR (Alias r_sub para evitar conflictos)
+                   (SELECT r_sub.color 
+                    FROM member_roles_link mrl_sub
+                    JOIN group_roles r_sub ON mrl_sub.role_id = r_sub.id
+                    WHERE mrl_sub.user_id = u.id AND mrl_sub.group_id = $1
                     ORDER BY 
-                        r.display_order ASC,
-                        (r.permissions->>'is_admin')::boolean DESC, 
-                        (r.permissions->>'can_mute')::boolean DESC,
-                        (r.permissions->>'can_add_members')::boolean DESC,
-                        r2.id DESC   -- 👈 EL ÚLTIMO QUE SE PUSO GANA
+                        r_sub.display_order ASC,                         -- 1. Orden manual
+                        (r_sub.permissions->>'is_admin')::boolean DESC,  -- 2. Admin
+                        (r_sub.permissions->>'can_mute')::boolean DESC,   -- 3. Mute
+                        r_sub.id DESC                                    -- 4. El más nuevo
                     LIMIT 1) as name_color
             FROM group_members gm
             JOIN usersapp u ON u.id = gm.user_id
             WHERE gm.group_id = $1
         `;
-        const result = await pool.query(query, [req.params.groupId]);
+
+        const result = await pool.query(query, [groupId]);
         res.json({ success: true, colors: result.rows });
-    } catch (e) { res.status(500).json({ success: false }); }
+
+    } catch (e) { 
+        // 🔥 Este log te dirá el error exacto en la terminal si algo falla
+        console.error("❌ ERROR EN MEMBER-COLORS:", e.message);
+        res.status(500).json({ success: false, error: e.message }); 
+    }
 });
 
 
