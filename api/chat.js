@@ -344,28 +344,39 @@ module.exports = (pool, JWT_SECRET, io) => {
 
             const membersRes = await pool.query(`
                 SELECT u.id, u.username, u.profile_pic_url, gm.role,
-                    -- 🌈 COLOR DEL NOMBRE: Calculado por peso y LUEGO por orden de asignación
+                    -- 🌈 1. COLOR DEL NOMBRE (Mantiene tu jerarquía actual)
                     (SELECT r2.color 
                         FROM member_roles_link mrl2
                         JOIN group_roles r2 ON mrl2.role_id = r2.id
                         WHERE mrl2.user_id = u.id AND mrl2.group_id = $1
                         ORDER BY 
-                            r2.display_order ASC,  -- 👈 1. Prioridad absoluta al orden manual
+                            r2.display_order ASC, 
                             (r2.permissions->>'is_admin')::boolean DESC,
                             (r2.permissions->>'can_mute')::boolean DESC,
-                            (r2.permissions->>'can_add_members')::boolean DESC,
-                            r2.id DESC   -- 👈 EL ÚLTIMO QUE SE PUSO GANA
+                            r2.id DESC
                         LIMIT 1) as name_color,
-                    
-                    -- 🎭 ARRAY DE ROLES: Incluimos 'permissions' para que el Frontend calcule pesos
+
+                    -- 🛡️ 2. ICONO DEL ROL (Usa la misma jerarquía exacta para que coincidan)
+                    (SELECT r2.icon_url 
+                        FROM member_roles_link mrl2
+                        JOIN group_roles r2 ON mrl2.role_id = r2.id
+                        WHERE mrl2.user_id = u.id AND mrl2.group_id = $1
+                        ORDER BY 
+                            r2.display_order ASC, 
+                            (r2.permissions->>'is_admin')::boolean DESC,
+                            (r2.permissions->>'can_mute')::boolean DESC,
+                            r2.id DESC
+                        LIMIT 1) as role_icon,
+
+                    -- 🎭 3. ARRAY DE ROLES (Añadimos el icono al objeto JSON de cada rol)
                     COALESCE(
                         (SELECT json_agg(json_build_object(
                             'id', r3.id, 
                             'name', r3.name, 
                             'color', r3.color, 
-                            'permissions', r3.permissions,
-                            'display_order', r3.display_order -- 👈 IMPORTANTE: Mandar el orden al Front
-                        ) ORDER BY r3.display_order ASC) -- 👈 Ordenar el array también
+                            'icon', r3.icon_url, -- 👈 Añadir esto
+                            'permissions', r3.permissions
+                        ) ORDER BY r3.display_order ASC)
                         FROM member_roles_link mrl3
                         JOIN group_roles r3 ON mrl3.role_id = r3.id
                         WHERE mrl3.user_id = u.id AND mrl3.group_id = $1),
@@ -689,7 +700,8 @@ module.exports = (pool, JWT_SECRET, io) => {
 
 
     // Obtener solo los colores de los miembros del grupo
-router.get('/groups/:groupId/member-colors', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+// Obtener identidad visual (Color + Icono) de los miembros en tiempo real
+router.get('/groups/:groupId/member-identity', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
     try {
         const groupId = parseInt(req.params.groupId);
 
@@ -699,28 +711,48 @@ router.get('/groups/:groupId/member-colors', (req, res, next) => protect(req, re
 
         const query = `
             SELECT u.id, 
-                   -- 🚀 SUB-CONSULTA PARA EL COLOR (Alias r_sub para evitar conflictos)
+                   -- 🌈 1. SUB-CONSULTA PARA EL COLOR
                    (SELECT r_sub.color 
                     FROM member_roles_link mrl_sub
                     JOIN group_roles r_sub ON mrl_sub.role_id = r_sub.id
                     WHERE mrl_sub.user_id = u.id AND mrl_sub.group_id = $1
                     ORDER BY 
-                        r_sub.display_order ASC,                         -- 1. Orden manual
-                        (r_sub.permissions->>'is_admin')::boolean DESC,  -- 2. Admin
-                        (r_sub.permissions->>'can_mute')::boolean DESC,   -- 3. Mute
-                        r_sub.id DESC                                    -- 4. El más nuevo
-                    LIMIT 1) as name_color
+                        r_sub.display_order ASC, 
+                        (r_sub.permissions->>'is_admin')::boolean DESC, 
+                        r_sub.id DESC
+                    LIMIT 1) as name_color,
+
+                   -- 🛡️ 2. SUB-CONSULTA PARA EL ICONO (Misma jerarquía)
+                   (SELECT r_sub.icon_url 
+                    FROM member_roles_link mrl_sub
+                    JOIN group_roles r_sub ON mrl_sub.role_id = r_sub.id
+                    WHERE mrl_sub.user_id = u.id AND mrl_sub.group_id = $1
+                    ORDER BY 
+                        r_sub.display_order ASC, 
+                        (r_sub.permissions->>'is_admin')::boolean DESC, 
+                        r_sub.id DESC
+                    LIMIT 1) as role_icon
+
             FROM group_members gm
             JOIN usersapp u ON u.id = gm.user_id
             WHERE gm.group_id = $1
         `;
 
         const result = await pool.query(query, [groupId]);
-        res.json({ success: true, colors: result.rows });
+
+        // 🚀 Convertimos a un mapa para que el Frontend lo procese al instante
+        const identityMap = {};
+        result.rows.forEach(row => {
+            identityMap[row.id] = { 
+                color: row.name_color || '#ffffff', 
+                icon: row.role_icon || null 
+            };
+        });
+
+        res.json({ success: true, identities: identityMap });
 
     } catch (e) { 
-        // 🔥 Este log te dirá el error exacto en la terminal si algo falla
-        console.error("❌ ERROR EN MEMBER-COLORS:", e.message);
+        console.error("❌ ERROR EN MEMBER-IDENTITY:", e.message);
         res.status(500).json({ success: false, error: e.message }); 
     }
 });
