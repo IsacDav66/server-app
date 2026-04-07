@@ -427,17 +427,30 @@ module.exports = (pool, JWT_SECRET, io) => {
                     u.username, u.profile_pic_url,
                     p.content as parent_content,
                     pu.username as parent_username,
-                    -- 🚀 NUEVA SUB-CONSULTA: OBTENER EL COLOR DEL ROL MÁS IMPORTANTE
+                    p.sender_id as parent_author_id, -- 🚀 ID del autor citado (para repintado)
+
+                    -- 🌈 COLOR DEL AUTOR DEL MENSAJE ACTUAL
                     (SELECT r.color 
                      FROM member_roles_link mrl
                      JOIN group_roles r ON mrl.role_id = r.id
                      WHERE mrl.user_id = m.sender_id AND mrl.group_id = m.group_id
                      ORDER BY 
+                        r.display_order ASC, -- 👈 Usar el orden manual que creamos
                         (r.permissions->>'is_admin')::boolean DESC,
-                        (r.permissions->>'can_mute')::boolean DESC,
-                        (r.permissions->>'can_add_members')::boolean DESC,
-                        r.id ASC
-                     LIMIT 1) as author_color
+                        r.id DESC
+                     LIMIT 1) as author_color,
+
+                    -- 🌈 COLOR DEL AUTOR DEL MENSAJE CITADO (EL PADRE)
+                    (SELECT r_p.color 
+                     FROM member_roles_link mrl_p
+                     JOIN group_roles r_p ON mrl_p.role_id = r_p.id
+                     WHERE mrl_p.user_id = p.sender_id AND mrl_p.group_id = m.group_id
+                     ORDER BY 
+                        r_p.display_order ASC,
+                        (r_p.permissions->>'is_admin')::boolean DESC,
+                        r_p.id DESC
+                     LIMIT 1) as parent_author_color
+
                 FROM messagesapp m
                 JOIN usersapp u ON m.sender_id = u.id
                 LEFT JOIN messagesapp p ON m.parent_message_id = p.message_id
