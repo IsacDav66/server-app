@@ -360,15 +360,15 @@ module.exports = (pool, JWT_SECRET, io) => {
                     -- 🎭 ARRAY DE ROLES: Incluimos 'permissions' para que el Frontend calcule pesos
                     COALESCE(
                         (SELECT json_agg(json_build_object(
-                            'id', r.id, 
-                            'name', r.name, 
-                            'color', r.color, 
-                            'permissions', r.permissions, 
-                            'assigned_at', mrl.assigned_at
-                        ) ORDER BY r.display_order ASC) -- Los mandamos en orden de tiempo
-                        FROM member_roles_link mrl
-                        JOIN group_roles r ON mrl.role_id = r.id
-                        WHERE mrl.user_id = u.id AND mrl.group_id = $1),
+                            'id', r3.id, 
+                            'name', r3.name, 
+                            'color', r3.color, 
+                            'permissions', r3.permissions,
+                            'display_order', r3.display_order -- 👈 IMPORTANTE: Mandar el orden al Front
+                        ) ORDER BY r3.display_order ASC) -- 👈 Ordenar el array también
+                        FROM member_roles_link mrl3
+                        JOIN group_roles r3 ON mrl3.role_id = r3.id
+                        WHERE mrl3.user_id = u.id AND mrl3.group_id = $1),
                         '[]'::json
                     ) as roles
 
