@@ -946,7 +946,7 @@ io.on('connection', (socket) => {
                         (r.permissions->>'is_admin')::boolean DESC,
                         (r.permissions->>'can_mute')::boolean DESC,
                         (r.permissions->>'can_add_members')::boolean DESC,
-                        r.id ASC
+                        r.id DESC -- 👈 AÑADE ESTA LÍNEA AQUÍ
                     LIMIT 1
                 `, [sender_id, finalGroupId]);
                 

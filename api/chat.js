@@ -355,7 +355,8 @@ module.exports = (pool, JWT_SECRET, io) => {
                         ORDER BY 
                             (r2.permissions->>'is_admin')::boolean DESC,
                             (r2.permissions->>'can_mute')::boolean DESC,
-                            (r2.permissions->>'can_add_members')::boolean DESC
+                            (r2.permissions->>'can_add_members')::boolean DESC,
+                            r2.id DESC -- 👈 AÑADE ESTA LÍNEA AQUÍ
                         LIMIT 1) as name_color,
                     COALESCE(json_agg(json_build_object('id', r.id, 'name', r.name, 'permissions', r.permissions, 'color', r.color)) FILTER (WHERE r.id IS NOT NULL), '[]') as roles
                 FROM group_members gm
@@ -685,7 +686,9 @@ router.get('/groups/:groupId/member-colors', (req, res, next) => protect(req, re
                     JOIN group_roles r ON mrl.role_id = r.id
                     WHERE mrl.user_id = u.id AND mrl.group_id = $1
                     ORDER BY (r.permissions->>'is_admin')::boolean DESC, 
-                             (r.permissions->>'can_mute')::boolean DESC
+                            (r.permissions->>'can_mute')::boolean DESC,
+                            (r2.permissions->>'can_add_members')::boolean DESC,
+                            r.id DESC -- 👈 AÑADE ESTA LÍNEA AQUÍ
                     LIMIT 1) as name_color
             FROM group_members gm
             JOIN usersapp u ON u.id = gm.user_id
