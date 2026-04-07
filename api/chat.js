@@ -2,6 +2,8 @@
 const express = require('express');
 const { protect } = require('../middleware/auth');
 const uploadGroupPhoto = require('../middleware/uploadGroupPhoto');
+const uploadRoleIcon = require('../middleware/uploadRoleIcon'); // 🚀 NUEVA IMPORTACIÓN
+
 const processImage = require('../middleware/processImage');
 
 module.exports = (pool, JWT_SECRET, io) => {
@@ -646,71 +648,81 @@ module.exports = (pool, JWT_SECRET, io) => {
 
 
     // --- 🚀 RUTA: CREAR ROL (ACTUALIZADA PARA MULTIPART/FORM-DATA) ---
-    router.post('/groups/:groupId/roles', (req, res, next) => protect(req, res, next, JWT_SECRET), uploadGroupPhoto, processImage('group'), async (req, res) => {
-        try {
-            const { groupId } = req.params;
-            // 1. Importante: FormData envía todo como STRING. Debemos parsear permissions.
-            let { name, permissions, color, iconTag } = req.body;
-            if (typeof permissions === 'string') permissions = JSON.parse(permissions);
+    router.post('/groups/:groupId/roles', 
+        (req, res, next) => protect(req, res, next, JWT_SECRET), // Autenticación
+        uploadRoleIcon,         // 👈 VITAL: Extrae los datos del FormData y el archivo
+        processImage('group'),  // Procesa con Sharp
+        async (req, res) => {
+            try {
+                const { groupId } = req.params;
+                let { name, permissions, color, iconTag } = req.body;
 
-            // 2. Determinar la URL del icono
-            // Prioridad: 1. Archivo subido (req.file), 2. Tag de Emoji (iconTag)
-            let finalIconUrl = iconTag || null;
-            if (req.file) {
-                finalIconUrl = `/uploads/group_photos/${req.file.filename}`;
+                // 🛑 IMPORTANTE: FormData envía objetos como texto, hay que parsearlos
+                if (typeof permissions === 'string') permissions = JSON.parse(permissions);
+
+                // Determinar la URL final del icono
+                let finalIconUrl = iconTag || null;
+                if (req.file) {
+                    finalIconUrl = `/uploads/group_photos/${req.file.filename}`;
+                }
+
+                const query = `
+                    INSERT INTO group_roles (group_id, name, permissions, color, icon_url, display_order) 
+                    VALUES ($1, $2, $3, $4, $5, 999) RETURNING *
+                `;
+                const result = await pool.query(query, [groupId, name, permissions, color, finalIconUrl]);
+
+                res.json({ success: true, role: result.rows[0] });
+            } catch (e) {
+                console.error("❌ Error en POST roles:", e.message);
+                res.status(500).json({ success: false });
             }
-
-            const query = `
-                INSERT INTO group_roles (group_id, name, permissions, color, icon_url, display_order) 
-                VALUES ($1, $2, $3, $4, $5, 999) RETURNING *
-            `;
-            const result = await pool.query(query, [groupId, name, permissions, color, finalIconUrl]);
-
-            res.json({ success: true, role: result.rows[0] });
-        } catch (e) {
-            console.error("❌ Error creando rol:", e.message);
-            res.status(500).json({ success: false });
         }
-    });
+    );
 
     // 1. Editar un rol existente
-    router.put('/groups/:groupId/roles/:roleId', (req, res, next) => protect(req, res, next, JWT_SECRET), uploadGroupPhoto, processImage('group'), async (req, res) => {
-        try {
-            const { groupId, roleId } = req.params;
-            let { name, permissions, color, iconTag } = req.body;
-            if (typeof permissions === 'string') permissions = JSON.parse(permissions);
+    router.put('/groups/:groupId/roles/:roleId', 
+        (req, res, next) => protect(req, res, next, JWT_SECRET),
+        uploadRoleIcon, 
+        processImage('group'),
+        async (req, res) => {
+            try {
+                const { groupId, roleId } = req.params;
+                let { name, permissions, color, iconTag } = req.body;
+                if (typeof permissions === 'string') permissions = JSON.parse(permissions);
 
-            // Determinamos el icono:
-            // Si hay archivo nuevo, lo usamos. Si hay un tag de emoji, lo usamos.
-            // Si no hay nada nuevo en req.body, el SQL mantendrá el anterior (usando COALESCE o lógica simple)
-            let iconToUpdate = iconTag || null;
-            if (req.file) {
-                iconToUpdate = `/uploads/group_photos/${req.file.filename}`;
+                let iconToUpdate = iconTag || null;
+                if (req.file) {
+                    iconToUpdate = `/uploads/group_photos/${req.file.filename}`;
+                }
+
+                // Construimos la query: Si no mandamos icono nuevo (es null), mantenemos el que está
+                let query = `UPDATE group_roles SET name = $1, permissions = $2, color = $3`;
+                let params = [name, permissions, color];
+
+                if (iconToUpdate) {
+                    query += `, icon_url = $4 WHERE id = $5 AND group_id = $6`;
+                    params.push(iconToUpdate, roleId, groupId);
+                } else {
+                    query += ` WHERE id = $4 AND group_id = $5`;
+                    params.push(roleId, groupId);
+                }
+
+                await pool.query(query, params);
+
+                // 📡 AVISO AL SOCKET PARA ACTUALIZAR COLORES E ICONOS EN EL CHAT
+                const io = req.app.get('socketio');
+                if (io) {
+                    io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
+                }
+
+                res.json({ success: true });
+            } catch (e) {
+                console.error("❌ Error en PUT roles:", e.message);
+                res.status(500).json({ success: false });
             }
-
-            // Construimos la query dinámicamente para no borrar el icono si no se envía uno nuevo
-            let query = `UPDATE group_roles SET name = $1, permissions = $2, color = $3`;
-            let params = [name, permissions, color];
-
-            if (iconToUpdate) {
-                query += `, icon_url = $4 WHERE id = $5 AND group_id = $6`;
-                params.push(iconToUpdate, roleId, groupId);
-            } else {
-                query += ` WHERE id = $4 AND group_id = $5`;
-                params.push(roleId, groupId);
-            }
-
-            await pool.query(query, params);
-
-            const io = req.app.get('socketio');
-            if (io) io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
-
-            res.json({ success: true });
-        } catch (e) {
-            console.error("❌ Error editando rol:", e.message);
-            res.status(500).json({ success: false });
         }
-    });
+    );
 
     // 2. Eliminar un rol
     router.delete('/groups/:groupId/roles/:roleId', protect, async (req, res) => {
