@@ -943,6 +943,7 @@ io.on('connection', (socket) => {
                     JOIN group_roles r ON mrl.role_id = r.id
                     WHERE mrl.user_id = $1 AND mrl.group_id = $2
                     ORDER BY 
+                        r.display_order ASC,
                         (r.permissions->>'is_admin')::boolean DESC,
                         (r.permissions->>'can_mute')::boolean DESC,
                         (r.permissions->>'can_add_members')::boolean DESC,

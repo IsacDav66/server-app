@@ -350,6 +350,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                         JOIN group_roles r2 ON mrl2.role_id = r2.id
                         WHERE mrl2.user_id = u.id AND mrl2.group_id = $1
                         ORDER BY 
+                            r2.display_order ASC,  -- 👈 1. Prioridad absoluta al orden manual
                             (r2.permissions->>'is_admin')::boolean DESC,
                             (r2.permissions->>'can_mute')::boolean DESC,
                             (r2.permissions->>'can_add_members')::boolean DESC,
@@ -364,7 +365,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                             'color', r.color, 
                             'permissions', r.permissions, 
                             'assigned_at', mrl.assigned_at
-                        ) ORDER BY mrl.assigned_at ASC) -- Los mandamos en orden de tiempo
+                        ) ORDER BY r.display_order ASC) -- Los mandamos en orden de tiempo
                         FROM member_roles_link mrl
                         JOIN group_roles r ON mrl.role_id = r.id
                         WHERE mrl.user_id = u.id AND mrl.group_id = $1),
@@ -683,6 +684,7 @@ router.get('/groups/:groupId/member-colors', (req, res, next) => protect(req, re
                     JOIN group_roles r ON mrl.role_id = r.id
                     WHERE mrl.user_id = u.id AND mrl.group_id = $1
                     ORDER BY 
+                        r.display_order ASC,
                         (r.permissions->>'is_admin')::boolean DESC, 
                         (r.permissions->>'can_mute')::boolean DESC,
                         (r.permissions->>'can_add_members')::boolean DESC,
@@ -695,6 +697,24 @@ router.get('/groups/:groupId/member-colors', (req, res, next) => protect(req, re
         const result = await pool.query(query, [req.params.groupId]);
         res.json({ success: true, colors: result.rows });
     } catch (e) { res.status(500).json({ success: false }); }
+});
+
+
+
+router.post('/groups/:groupId/roles/reorder', protect, async (req, res) => {
+    const { orderedIds } = req.body; // Array de IDs en el nuevo orden
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        for (let i = 0; i < orderedIds.length; i++) {
+            await client.query('UPDATE group_roles SET display_order = $1 WHERE id = $2', [i, orderedIds[i]]);
+        }
+        await client.query('COMMIT');
+        res.json({ success: true });
+    } catch (e) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ success: false });
+    } finally { client.release(); }
 });
 
     return router;
