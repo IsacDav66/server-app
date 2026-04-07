@@ -333,21 +333,18 @@ module.exports = (pool, JWT_SECRET, io) => {
     });
 
     // OBTENER DETALLES COMPLETOS DE UN GRUPO (VERSIÓN CORREGIDA)
+    // OBTENER DETALLES COMPLETOS DE UN GRUPO (VERSIÓN DISCORD-PRO)
     router.get('/groups/details/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const groupId = req.params.groupId;
         const myId = req.user.userId;
 
         try {
-            // 1. Info del Grupo
             const groupRes = await pool.query('SELECT * FROM groupsapp WHERE id = $1', [groupId]);
-            if (groupRes.rows.length === 0) {
-                return res.status(404).json({ success: false, message: "Grupo no encontrado" });
-            }
+            if (groupRes.rows.length === 0) return res.status(404).json({ success: false, message: "Grupo no encontrado" });
 
-            // 2. Miembros (Quitamos u.is_online de la query porque no existe en la tabla)
             const membersRes = await pool.query(`
                 SELECT u.id, u.username, u.profile_pic_url, gm.role,
-                    -- Obtener el color del rol con más peso
+                    -- 🌈 COLOR DEL NOMBRE: Calculado por peso y LUEGO por orden de asignación
                     (SELECT r2.color 
                         FROM member_roles_link mrl2
                         JOIN group_roles r2 ON mrl2.role_id = r2.id
@@ -356,21 +353,32 @@ module.exports = (pool, JWT_SECRET, io) => {
                             (r2.permissions->>'is_admin')::boolean DESC,
                             (r2.permissions->>'can_mute')::boolean DESC,
                             (r2.permissions->>'can_add_members')::boolean DESC,
-                            r2.id DESC -- 👈 AÑADE ESTA LÍNEA AQUÍ
+                            mrl2.assigned_at DESC -- 👈 EL ÚLTIMO QUE SE PUSO GANA
                         LIMIT 1) as name_color,
-                    COALESCE(json_agg(json_build_object('id', r.id, 'name', r.name, 'permissions', r.permissions, 'color', r.color)) FILTER (WHERE r.id IS NOT NULL), '[]') as roles
+                    
+                    -- 🎭 ARRAY DE ROLES: Incluimos 'permissions' para que el Frontend calcule pesos
+                    COALESCE(
+                        (SELECT json_agg(json_build_object(
+                            'id', r.id, 
+                            'name', r.name, 
+                            'color', r.color, 
+                            'permissions', r.permissions, 
+                            'assigned_at', mrl.assigned_at
+                        ) ORDER BY mrl.assigned_at ASC) -- Los mandamos en orden de tiempo
+                        FROM member_roles_link mrl
+                        JOIN group_roles r ON mrl.role_id = r.id
+                        WHERE mrl.user_id = u.id AND mrl.group_id = $1),
+                        '[]'::json
+                    ) as roles
+
                 FROM group_members gm
                 JOIN usersapp u ON gm.user_id = u.id
-                LEFT JOIN member_roles_link mrl ON mrl.user_id = u.id AND mrl.group_id = gm.group_id
-                LEFT JOIN group_roles r ON mrl.role_id = r.id
                 WHERE gm.group_id = $1
                 GROUP BY u.id, gm.role
-                ORDER BY (CASE WHEN gm.role = 'admin' THEN 1 ELSE 2 END) ASC
+                ORDER BY (CASE WHEN gm.role = 'admin' THEN 1 ELSE 2 END) ASC, u.username ASC
             `, [groupId]);
             
-            console.log(`[DEBUG-DB] Miembros del grupo ${groupId}:`, membersRes.rows);
-
-            // 🚀 LÓGICA LIVE: Cruzamos los miembros con los usuarios conectados en memoria
+            // Lógica Live (Socket status)
             const onlineUsers = req.app.get('onlineUsers'); 
             const onlineIds = new Set(Array.from(onlineUsers.values()).map(u => u.userId));
 
@@ -379,34 +387,23 @@ module.exports = (pool, JWT_SECRET, io) => {
                 is_online: onlineIds.has(m.id)
             }));
 
-            // 3. Media compartida
-            // 1. Buscamos los mensajes que contienen media en este grupo
+            // Media compartida
             const mediaRes = await pool.query(`
-                SELECT content 
-                FROM messagesapp 
+                SELECT content FROM messagesapp 
                 WHERE group_id = $1 AND content LIKE '%[MEDIA_%' 
                 ORDER BY created_at DESC LIMIT 12
-            `, [groupId]);
+            `);
 
-            // 2. Procesamos el texto del mensaje para extraer ID y Tipo (IMAGE/VIDEO)
             const processedMedia = mediaRes.rows.map(m => {
-                // Regex para capturar el Tipo (IMAGE/VIDEO/GIF) y el ID único
                 const match = m.content.match(/\[MEDIA_(.*?):(.*?)(?:_P_)/);
-                if (match) {
-                    return {
-                        type: match[1], // Ej: 'IMAGE'
-                        id: match[2]    // Ej: 'media-1775146945'
-                    };
-                }
-                return null;
-            }).filter(m => m !== null); // Limpiamos los que no coincidan
+                return match ? { type: match[1], id: match[2] } : null;
+            }).filter(m => m !== null);
 
-            // 3. Enviamos los objetos limpios al frontend
             res.json({
                 success: true,
                 group: groupRes.rows[0],
                 members: membersWithStatus,
-                media: processedMedia, // 👈 Ahora enviamos [{type, id}, ...]
+                media: processedMedia,
                 isAdmin: membersRes.rows.find(m => m.id === myId)?.role === 'admin'
             });
         } catch (error) {
@@ -685,10 +682,11 @@ router.get('/groups/:groupId/member-colors', (req, res, next) => protect(req, re
                    (SELECT r.color FROM member_roles_link mrl
                     JOIN group_roles r ON mrl.role_id = r.id
                     WHERE mrl.user_id = u.id AND mrl.group_id = $1
-                    ORDER BY (r.permissions->>'is_admin')::boolean DESC, 
-                            (r.permissions->>'can_mute')::boolean DESC,
-                            (r2.permissions->>'can_add_members')::boolean DESC,
-                            r.id DESC -- 👈 AÑADE ESTA LÍNEA AQUÍ
+                    ORDER BY 
+                        (r.permissions->>'is_admin')::boolean DESC, 
+                        (r.permissions->>'can_mute')::boolean DESC,
+                        (r.permissions->>'can_add_members')::boolean DESC,
+                        mrl.assigned_at DESC -- 👈 EL ÚLTIMO QUE SE PUSO GANA
                     LIMIT 1) as name_color
             FROM group_members gm
             JOIN usersapp u ON u.id = gm.user_id
