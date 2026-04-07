@@ -728,17 +728,33 @@ router.get('/groups/:groupId/member-colors', (req, res, next) => protect(req, re
 
 
 router.post('/groups/:groupId/roles/reorder', protect, async (req, res) => {
-    const { orderedIds } = req.body; // Array de IDs en el nuevo orden
+    const { orderedIds } = req.body;
+    const { groupId } = req.params;
     const client = await pool.connect();
+
     try {
         await client.query('BEGIN');
         for (let i = 0; i < orderedIds.length; i++) {
             await client.query('UPDATE group_roles SET display_order = $1 WHERE id = $2', [i, orderedIds[i]]);
         }
         await client.query('COMMIT');
+
+        // ==========================================================
+        // 📡 AVISO GLOBAL AL CHAT (NUEVO)
+        // ==========================================================
+        const io = req.app.get('socketio');
+        if (io) {
+            // Enviamos global: true porque un cambio de orden afecta las 
+            // jerarquías de muchos usuarios a la vez.
+            io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
+            console.log(`📡 [SOCKET] Jerarquía reordenada en grupo ${groupId}. Sincronizando chat...`);
+        }
+        // ==========================================================
+
         res.json({ success: true });
     } catch (e) {
         await client.query('ROLLBACK');
+        console.error(e);
         res.status(500).json({ success: false });
     } finally { client.release(); }
 });
