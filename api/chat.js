@@ -915,6 +915,7 @@ router.put('/groups/:groupId/details', (req, res, next) => protect(req, res, nex
         );
         const io = req.app.get('socketio');
         io.to(`group_${req.params.groupId}`).emit('group_details_updated', {
+            groupId: req.params.groupId,
             name: name,
             description: description
         });
@@ -929,6 +930,7 @@ router.post('/groups/:groupId/update-photo', (req, res, next) => protect(req, re
         await pool.query('UPDATE groupsapp SET photo_url = $1 WHERE id = $2', [photoPath, req.params.groupId]);
         const io = req.app.get('socketio');
         io.to(`group_${req.params.groupId}`).emit('group_details_updated', {
+            groupId: req.params.groupId,
             photoUrl: photoPath
         });
         res.json({ success: true, photoUrl: photoPath });
