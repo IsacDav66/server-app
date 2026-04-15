@@ -233,6 +233,19 @@ module.exports = (pool, JWT_SECRET, io) => {
                 [name, description, creatorId, photoPath]
             );
             const groupId = groupRes.rows[0].id;
+
+            // 🚀 CREAR ROL POR DEFECTO AUTOMÁTICAMENTE
+            const defaultPermissions = {
+                can_send_messages: true, can_send_photos: true, can_send_voice: true,
+                can_use_emojis: true, can_use_stickers: true, can_use_music: true,
+                can_add_members: false, can_invite: false, is_admin: false
+            };
+
+            await client.query(
+                `INSERT INTO group_roles (group_id, name, permissions, color, is_default, display_order) 
+                VALUES ($1, $2, $3, $4, $5, 1000)`,
+                [groupId, 'Miembro', defaultPermissions, '#95a5a6', true]
+            );
             const roomName = `group_${groupId}`;
 
             // 3. Insertar Miembros
@@ -603,7 +616,7 @@ router.post('/groups/:groupId/roles',
             const groupId = parseInt(req.params.groupId);
             const userId = req.user.userId;
 
-            // 1. Obtener todos los roles asignados al usuario y el rango básico de miembro
+            // 1. Obtener rango base, creador y roles asignados
             const query = `
                 SELECT gm.role as base_rank, g.creator_id,
                     json_agg(r.permissions) as all_role_perms
@@ -620,46 +633,64 @@ router.post('/groups/:groupId/roles',
             const data = result.rows[0];
             const roles = data.all_role_perms[0] === null ? [] : data.all_role_perms;
 
-            // --- LÓGICA DE AGREGACIÓN ESTILO DISCORD (Restrictiva) ---
-            
-            // 1. ¿Es Dios? (Creador o tiene un rol con is_admin: true o rango 'admin' en tabla)
+            // --- 🚀 REGLA DE ORO: ADMINISTRADORES Y CREADORES ---
             const isGod = (String(data.creator_id) === String(userId) || 
                         data.base_rank === 'admin' || 
-                        roles.some(r => r.is_admin === true));
+                        roles.some(r => r && r.is_admin === true));
 
             if (isGod) {
                 return res.json({
                     success: true,
                     permissions: {
-                        can_send_messages: true, can_use_emojis: true,
-                        can_use_stickers: true, can_use_music: true, can_send_media: true, is_admin: true
+                        can_send_messages: true, can_send_photos: true, can_send_voice: true,
+                        can_use_emojis: true, can_use_stickers: true, can_use_music: true, is_admin: true
                     }
                 });
             }
 
-            // 2. Si no es admin, aplicamos la jerarquía restrictiva:
-            // Empezamos permitiendo todo, pero si un solo rol tiene 'false', se bloquea (Peso del NO).
-            const finalPerms = {
+            // --- 🛡️ LÓGICA DE MIEMBROS COMUNES ---
+            
+            // Estado inicial: Todo permitido (se usará si no hay roles ni por defecto)
+            let finalPerms = {
                 can_send_messages: true,
-                can_send_media: true,
+                can_send_photos: true,
+                can_send_voice: true,
                 can_use_emojis: true,
                 can_use_stickers: true,
                 can_use_music: true
             };
 
             if (roles.length > 0) {
+                // CASO A: El usuario tiene roles específicos asignados.
+                // Aplicamos el peso del "NO" (Si uno prohíbe, se bloquea).
                 roles.forEach(role => {
-                    if (role.can_send_messages === false) finalPerms.can_send_messages = false;
-                    if (role.can_send_photos === false) finalPerms.can_send_photos = false; // 👈 Nuevo
-                    if (role.can_send_voice === false) finalPerms.can_send_voice = false;   // 👈 Nuevo
-                    if (role.can_use_emojis === false) finalPerms.can_use_emojis = false;
-                    if (role.can_use_stickers === false) finalPerms.can_use_stickers = false;
-                    if (role.can_use_music === false) finalPerms.can_use_music = false;
+                    if (role) {
+                        if (role.can_send_messages === false) finalPerms.can_send_messages = false;
+                        if (role.can_send_photos === false) finalPerms.can_send_photos = false;
+                        if (role.can_send_voice === false) finalPerms.can_send_voice = false;
+                        if (role.can_use_emojis === false) finalPerms.can_use_emojis = false;
+                        if (role.can_use_stickers === false) finalPerms.can_use_stickers = false;
+                        if (role.can_use_music === false) finalPerms.can_use_music = false;
+                    }
                 });
+            } else {
+                // 🚀 CASO B: El usuario NO tiene roles asignados.
+                // Buscamos los permisos del rol "Miembro" (is_default) de este grupo.
+                const defaultRoleRes = await pool.query(
+                    'SELECT permissions FROM group_roles WHERE group_id = $1 AND is_default = TRUE',
+                    [groupId]
+                );
+
+                if (defaultRoleRes.rows.length > 0) {
+                    // Si existe el rol base, heredamos sus permisos directamente
+                    finalPerms = defaultRoleRes.rows[0].permissions;
+                }
             }
 
             res.json({ success: true, permissions: finalPerms });
+
         } catch (e) {
+            console.error("❌ Error en my-permissions:", e.message);
             res.status(500).json({ success: false });
         }
     });
