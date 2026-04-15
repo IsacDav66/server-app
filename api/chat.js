@@ -406,37 +406,43 @@ module.exports = (pool, JWT_SECRET, io) => {
             // Media compartida
             const mediaRes = await pool.query(`
                 SELECT content FROM messagesapp 
-                WHERE group_id = $1 AND content LIKE '%[MEDIA_%' 
-                ORDER BY created_at DESC LIMIT 12
+                WHERE group_id = $1 AND (content LIKE '%[MEDIA_%' OR content LIKE '%[MEDIA_GRID:%') 
+                ORDER BY created_at DESC LIMIT 20
             `, [groupId]);
 
-            const processedMedia = mediaRes.rows.map(m => {
-                try {
-                    const raw = m.content;
-                    // 1. Extraer el tipo (IMAGE/VIDEO)
+            let allMediaItems = [];
+
+            mediaRes.rows.forEach(m => {
+                const raw = m.content;
+                
+                // 🚀 CASO A: ES UN ÁLBUM (GRID)
+                if (raw.includes('[MEDIA_GRID:')) {
+                    const gridContent = raw.match(/\[MEDIA_GRID:(.*?)\]/);
+                    if (gridContent) {
+                        const items = gridContent[1].split('_I_');
+                        items.forEach(itemStr => {
+                            const p = itemStr.split('_P_');
+                            // Formato Grid: id_P_type_P_lq_P_size
+                            allMediaItems.push({ id: p[0], type: p[1], lq: p[2] || "" });
+                        });
+                    }
+                } 
+                // 🚀 CASO B: ES UNA IMAGEN/VIDEO INDIVIDUAL
+                else if (raw.includes('[MEDIA_')) {
                     const typeMatch = raw.match(/\[MEDIA_(.*?):/);
-                    if (!typeMatch) return null;
-                    const type = typeMatch[1];
-
-                    // 2. Extraer todo lo que está entre ":" y "]"
                     const inner = raw.substring(raw.indexOf(':') + 1, raw.lastIndexOf(']'));
-                    const parts = inner.split('_P_');
-
-                    // 3. Ubicar ID y LQ (Base64) según el tipo
-                    let id = parts[0];
-                    let lq = (type === 'VIDEO' || type === 'GIF') ? parts[2] : parts[1];
-
-                    // Limpiar el Base64 (quitar espacios o saltos de línea)
-                    if (lq) lq = lq.trim();
-
-                    // 🔥 LOG PARA DEPURACIÓN (Míralo en tu terminal de Node)
-                    console.log(`[MEDIA-SQL] Extraído: ${id} | LQ: ${lq ? lq.substring(0, 30) + '...' : 'VACÍO'}`);
-
-                    return { type, id, lq };
-                } catch (err) {
-                    return null;
+                    const p = inner.split('_P_');
+                    const type = typeMatch[1];
+                    
+                    // Formato Individual: id_P_lq_P_size o id_P_dur_P_lq_P_size
+                    let id = p[0];
+                    let lq = (type === 'VIDEO' || type === 'GIF') ? p[2] : p[1];
+                    allMediaItems.push({ id, type, lq: lq || "" });
                 }
-            }).filter(m => m !== null && m.id);
+            });
+
+            // 🔥 LOG FORZADO (Este aparecerá sí o sí si hay media)
+            console.log(`📸 [GALERÍA] Se procesaron ${allMediaItems.length} miniaturas.`);
 
             res.json({
                 success: true,
