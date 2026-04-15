@@ -411,18 +411,32 @@ module.exports = (pool, JWT_SECRET, io) => {
             `, [groupId]);
 
             const processedMedia = mediaRes.rows.map(m => {
-                // 🚀 REGEX MEJORADA: Extrae 1.Tipo, 2.ID, 3.Miniatura(LQ)
-                const match = m.content.match(/\[MEDIA_(.*?):(.*?)(?:_P_(.*?))?_P_/);
-                if (match) {
-                    return {
-                        type: match[1],   // 'IMAGE' o 'VIDEO'
-                        id: match[2],     // 'media-xxx'
-                        lq: match[3] || "" // La miniatura Base64 borrosa
-                    };
-                }
-                return null;
-            }).filter(m => m !== null);
+                const raw = m.content;
+                if (!raw.includes('[MEDIA_')) return null;
 
+                // 1. Extraer el Tipo (IMAGE, VIDEO, GIF)
+                const type = raw.split('[MEDIA_')[1].split(':')[0];
+
+                // 2. Extraer lo que hay dentro de los dos puntos y el corchete final
+                // Ejemplo: id_P_duracion_P_lq_P_size
+                const inner = raw.substring(raw.indexOf(':') + 1, raw.lastIndexOf(']'));
+                const parts = inner.split('_P_');
+
+                let id = parts[0];
+                let lq = "";
+
+                // 🚀 LÓGICA DE POSICIÓN:
+                // En las imágenes, la LQ es la parte 1. 
+                // En los videos, la parte 1 es la duración, así que la LQ es la parte 2.
+                if (type === 'VIDEO' || type === 'GIF') {
+                    lq = parts[2] || ""; 
+                } else {
+                    lq = parts[1] || "";
+                }
+
+                return { type, id, lq };
+            }).filter(m => m !== null && m.id);
+            
             res.json({
                 success: true,
                 group: groupRes.rows[0],
