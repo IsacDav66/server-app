@@ -448,7 +448,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 success: true,
                 group: groupRes.rows[0],
                 members: membersWithStatus,
-                media: processedMedia,
+                media: allMediaItems, 
                 isAdmin: membersRes.rows.find(m => m.id === myId)?.role === 'admin'
             });
         } catch (error) {
