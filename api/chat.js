@@ -913,6 +913,11 @@ router.put('/groups/:groupId/details', (req, res, next) => protect(req, res, nex
             'UPDATE groupsapp SET name = $1, description = $2 WHERE id = $3',
             [name, description, req.params.groupId]
         );
+        const io = req.app.get('socketio');
+        io.to(`group_${req.params.groupId}`).emit('group_details_updated', {
+            name: name,
+            description: description
+        });
         res.json({ success: true });
     } catch (e) { res.status(500).json({ success: false }); }
 });
@@ -922,6 +927,10 @@ router.post('/groups/:groupId/update-photo', (req, res, next) => protect(req, re
     try {
         const photoPath = `/uploads/group_photos/${req.file.filename}`;
         await pool.query('UPDATE groupsapp SET photo_url = $1 WHERE id = $2', [photoPath, req.params.groupId]);
+        const io = req.app.get('socketio');
+        io.to(`group_${req.params.groupId}`).emit('group_details_updated', {
+            photoUrl: photoPath
+        });
         res.json({ success: true, photoUrl: photoPath });
     } catch (e) { res.status(500).json({ success: false }); }
 });
