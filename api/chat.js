@@ -411,8 +411,16 @@ module.exports = (pool, JWT_SECRET, io) => {
             `, [groupId]);
 
             const processedMedia = mediaRes.rows.map(m => {
-                const match = m.content.match(/\[MEDIA_(.*?):(.*?)(?:_P_)/);
-                return match ? { type: match[1], id: match[2] } : null;
+                // 🚀 REGEX MEJORADA: Extrae 1.Tipo, 2.ID, 3.Miniatura(LQ)
+                const match = m.content.match(/\[MEDIA_(.*?):(.*?)(?:_P_(.*?))?_P_/);
+                if (match) {
+                    return {
+                        type: match[1],   // 'IMAGE' o 'VIDEO'
+                        id: match[2],     // 'media-xxx'
+                        lq: match[3] || "" // La miniatura Base64 borrosa
+                    };
+                }
+                return null;
             }).filter(m => m !== null);
 
             res.json({
