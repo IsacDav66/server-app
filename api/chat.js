@@ -406,8 +406,14 @@ module.exports = (pool, JWT_SECRET, io) => {
             // Media compartida
             const mediaRes = await pool.query(`
                 SELECT content FROM messagesapp 
-                WHERE group_id = $1 AND (content LIKE '%[MEDIA_%' OR content LIKE '%[MEDIA_GRID:%') 
-                ORDER BY created_at DESC LIMIT 20
+                WHERE group_id = $1 
+                AND (
+                    content LIKE '%[MEDIA_IMAGE:%' OR 
+                    content LIKE '%[MEDIA_VIDEO:%' OR 
+                    content LIKE '%[MEDIA_GIF:%' OR 
+                    content LIKE '%[MEDIA_GRID:%'
+                ) 
+                ORDER BY created_at DESC LIMIT 30
             `, [groupId]);
 
             let allMediaItems = [];
@@ -415,26 +421,29 @@ module.exports = (pool, JWT_SECRET, io) => {
             mediaRes.rows.forEach(m => {
                 const raw = m.content;
                 
-                // 🚀 CASO A: ES UN ÁLBUM (GRID)
                 if (raw.includes('[MEDIA_GRID:')) {
                     const gridContent = raw.match(/\[MEDIA_GRID:(.*?)\]/);
                     if (gridContent) {
                         const items = gridContent[1].split('_I_');
                         items.forEach(itemStr => {
                             const p = itemStr.split('_P_');
-                            // Formato Grid: id_P_type_P_lq_P_size
-                            allMediaItems.push({ id: p[0], type: p[1], lq: p[2] || "" });
+                            // 🚀 FILTRO: Solo añadimos si NO es AUDIO
+                            if (p[1] !== 'AUDIO') {
+                                allMediaItems.push({ id: p[0], type: p[1], lq: p[2] || "" });
+                            }
                         });
                     }
-                } 
-                // 🚀 CASO B: ES UNA IMAGEN/VIDEO INDIVIDUAL
-                else if (raw.includes('[MEDIA_')) {
+                } else {
                     const typeMatch = raw.match(/\[MEDIA_(.*?):/);
-                    const inner = raw.substring(raw.indexOf(':') + 1, raw.lastIndexOf(']'));
-                    const p = inner.split('_P_');
+                    if (!typeMatch) return;
                     const type = typeMatch[1];
                     
-                    // Formato Individual: id_P_lq_P_size o id_P_dur_P_lq_P_size
+                    // 🚀 FILTRO: Ignorar mensajes individuales de AUDIO
+                    if (type === 'AUDIO') return;
+
+                    const inner = raw.substring(raw.indexOf(':') + 1, raw.lastIndexOf(']'));
+                    const p = inner.split('_P_');
+                    
                     let id = p[0];
                     let lq = (type === 'VIDEO' || type === 'GIF') ? p[2] : p[1];
                     allMediaItems.push({ id, type, lq: lq || "" });
