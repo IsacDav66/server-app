@@ -411,32 +411,33 @@ module.exports = (pool, JWT_SECRET, io) => {
             `, [groupId]);
 
             const processedMedia = mediaRes.rows.map(m => {
-                const raw = m.content;
-                if (!raw.includes('[MEDIA_')) return null;
+                try {
+                    const raw = m.content;
+                    // 1. Extraer el tipo (IMAGE/VIDEO)
+                    const typeMatch = raw.match(/\[MEDIA_(.*?):/);
+                    if (!typeMatch) return null;
+                    const type = typeMatch[1];
 
-                // 1. Extraer el Tipo (IMAGE, VIDEO, GIF)
-                const type = raw.split('[MEDIA_')[1].split(':')[0];
+                    // 2. Extraer todo lo que está entre ":" y "]"
+                    const inner = raw.substring(raw.indexOf(':') + 1, raw.lastIndexOf(']'));
+                    const parts = inner.split('_P_');
 
-                // 2. Extraer lo que hay dentro de los dos puntos y el corchete final
-                // Ejemplo: id_P_duracion_P_lq_P_size
-                const inner = raw.substring(raw.indexOf(':') + 1, raw.lastIndexOf(']'));
-                const parts = inner.split('_P_');
+                    // 3. Ubicar ID y LQ (Base64) según el tipo
+                    let id = parts[0];
+                    let lq = (type === 'VIDEO' || type === 'GIF') ? parts[2] : parts[1];
 
-                let id = parts[0];
-                let lq = "";
+                    // Limpiar el Base64 (quitar espacios o saltos de línea)
+                    if (lq) lq = lq.trim();
 
-                // 🚀 LÓGICA DE POSICIÓN:
-                // En las imágenes, la LQ es la parte 1. 
-                // En los videos, la parte 1 es la duración, así que la LQ es la parte 2.
-                if (type === 'VIDEO' || type === 'GIF') {
-                    lq = parts[2] || ""; 
-                } else {
-                    lq = parts[1] || "";
+                    // 🔥 LOG PARA DEPURACIÓN (Míralo en tu terminal de Node)
+                    console.log(`[MEDIA-SQL] Extraído: ${id} | LQ: ${lq ? lq.substring(0, 30) + '...' : 'VACÍO'}`);
+
+                    return { type, id, lq };
+                } catch (err) {
+                    return null;
                 }
-
-                return { type, id, lq };
             }).filter(m => m !== null && m.id);
-            
+
             res.json({
                 success: true,
                 group: groupRes.rows[0],
