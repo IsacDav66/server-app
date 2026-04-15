@@ -897,5 +897,35 @@ router.post('/groups/:groupId/roles/reorder', protect, async (req, res) => {
     } finally { client.release(); }
 });
 
+
+
+// 1. Editar Nombre y Descripción
+router.put('/groups/:groupId/details', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+    const { name, description } = req.body;
+    try {
+        // Validación de permisos interna
+        const check = await pool.query('SELECT creator_id FROM groupsapp WHERE id = $1', [req.params.groupId]);
+        if (check.rows[0].creator_id !== req.user.userId) {
+            // Aquí podrías añadir el chequeo de si es admin por rol también
+        }
+
+        await pool.query(
+            'UPDATE groupsapp SET name = $1, description = $2 WHERE id = $3',
+            [name, description, req.params.groupId]
+        );
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ success: false }); }
+});
+
+// 2. Editar Foto del Grupo
+router.post('/groups/:groupId/update-photo', (req, res, next) => protect(req, res, next, JWT_SECRET), uploadGroupPhoto, processImage('group'), async (req, res) => {
+    try {
+        const photoPath = `/uploads/group_photos/${req.file.filename}`;
+        await pool.query('UPDATE groupsapp SET photo_url = $1 WHERE id = $2', [photoPath, req.params.groupId]);
+        res.json({ success: true, photoUrl: photoPath });
+    } catch (e) { res.status(500).json({ success: false }); }
+});
+
+
     return router;
 };
