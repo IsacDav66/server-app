@@ -607,46 +607,27 @@ module.exports = (pool, JWT_SECRET, io) => {
         const myId = req.user.userId;
         const otherId = parseInt(req.params.otherUserId);
         const { deleteForBoth } = req.query;
+        const roomName = [myId, otherId].sort((a, b) => a - b).join('-');
 
         try {
             if (deleteForBoth === 'true') {
-                // 1. Borramos los mensajes físicamente de la DB
-                const delResult = await pool.query(`
-                    DELETE FROM messagesapp 
-                    WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
-                    AND group_id IS NULL
-                `, [myId, otherId]);
+                // Ejecutamos el borrado
+                await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomName]);
                 
-                console.log(`[BORRADO TOTAL] Filas eliminadas: ${delResult.rowCount}`);
-
-                // 2. 🚀 AVISAR AL OTRO USUARIO EN TIEMPO REAL
+                // 🚀 Enviar aviso por socket (sin await para no bloquear la respuesta HTTP)
                 const io = req.app.get('socketio');
-                if (io) {
-                    // El nombre de la sala que usan ambos en el chat privado
-                    const roomName = [myId, otherId].sort((a, b) => a - b).join('-');
-                    
-                    io.to(roomName).emit('chat_cleared', { 
-                        deletedBy: myId,
-                        targetId: otherId 
-                    });
-                    console.log(`[SOCKET] Aviso de borrado enviado a la sala: ${roomName}`);
-                }
+                if (io) io.to(roomName).emit('chat_cleared', { deletedBy: myId });
+                
+                // Responder de inmediato
+                return res.json({ success: true });
             } else {
-                // 🚀 LOG DE INTENTO
-                console.log(`[BORRADO PARA MI] Usuario ${myId} ocultando chat con ${otherId}`);
-
-                const upResult = await pool.query(`
+                await pool.query(`
                     UPDATE messagesapp 
                     SET hidden_by = array_append(COALESCE(hidden_by, '{}'), $1)
-                    WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
-                    AND group_id IS NULL
-                    AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
-                `, [myId, otherId]);
-
-                // 🔥 MIRA ESTE LOG EN LA TERMINAL
-                console.log(`[RESULTADO] Se han ocultado ${upResult.rowCount} mensajes para el usuario ${myId}`);
+                    WHERE room_name = $2
+                `, [myId, roomName]);
                 
-                res.json({ success: true });
+                return res.json({ success: true });
             }
         } catch (e) {
             console.error(e);
