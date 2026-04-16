@@ -557,6 +557,23 @@ module.exports = (pool, JWT_SECRET, io) => {
     });
 
 
+    router.get('/media/private/:otherUserId', protect, async (req, res) => {
+        const myId = req.user.userId;
+        const otherId = req.params.otherUserId;
+        try {
+            const result = await pool.query(`
+                SELECT content FROM messagesapp 
+                WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
+                AND group_id IS NULL 
+                AND (content LIKE '%[MEDIA_%' OR content LIKE '%[MEDIA_GRID:%')
+                ORDER BY created_at DESC LIMIT 30
+            `, [myId, otherId]);
+
+            // Reutilizamos la misma lógica de procesamiento de Grids/Individual que hicimos para grupos
+            const processed = processMediaRows(result.rows); // Lógica compartida
+            res.json({ success: true, media: processed });
+        } catch (e) { res.status(500).json({ success: false }); }
+    });
 
 
     // --- RUTAS DE ROLES DE GRUPO ---
