@@ -540,8 +540,19 @@ module.exports = (pool, JWT_SECRET, io) => {
     // RUTA PARA INFO DEL CABEZAL DEL CHAT (Nombre y foto del grupo)
     router.get('/groups/info/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         try {
-            const resGroup = await pool.query('SELECT name, photo_url FROM groupsapp WHERE id = $1', [req.params.groupId]);
-            res.json({ success: true, group: resGroup.rows[0] });
+            // 🚀 SQL para obtener info + conteo de miembros
+            const query = `
+                SELECT g.name, g.photo_url, 
+                (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count
+                FROM groupsapp g WHERE g.id = $1
+            `;
+            const resGroup = await pool.query(query, [req.params.groupId]);
+            
+            if (resGroup.rows.length > 0) {
+                res.json({ success: true, group: resGroup.rows[0] });
+            } else {
+                res.status(404).json({ success: false });
+            }
         } catch (e) { res.status(500).json({ success: false }); }
     });
 
