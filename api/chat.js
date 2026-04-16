@@ -125,7 +125,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 LEFT JOIN usersapp AS pu ON p.sender_id = pu.id
                 WHERE (m.sender_id = $1 AND m.receiver_id = $2) 
                 OR (m.sender_id = $2 AND m.receiver_id = $1)
-                AND NOT ($1 = ANY(COALESCE(m.hidden_by, '{}')))
+                AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
                 ORDER BY m.created_at DESC -- Traer los más nuevos primero
                 LIMIT $3 OFFSET $4;
             `;
@@ -621,21 +621,16 @@ module.exports = (pool, JWT_SECRET, io) => {
         const otherId = parseInt(req.params.otherUserId);
         const { deleteForBoth } = req.query;
 
-        // 🚀 IMPORTANTE: Reconstruimos el nombre de la sala (ID-ID ordenado)
+        // 🚀 Generamos el nombre de sala exacto
         const roomName = [myId, otherId].sort((a, b) => a - b).join('-');
 
         try {
             if (deleteForBoth === 'true') {
-                // 🗑️ BORRADO TOTAL: Eliminamos físicamente de la DB
                 await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomName]);
-
-                // 📡 AVISO EN TIEMPO REAL: Le decimos a la sala que limpie la pantalla
                 const io = req.app.get('socketio');
-                if (io) {
-                    io.to(roomName).emit('chat_cleared', { deletedBy: myId });
-                }
+                if (io) io.to(roomName).emit('chat_cleared', { deletedBy: myId });
             } else {
-                // 🙈 BORRADO SOLO PARA MÍ: Actualizamos hidden_by en toda la sala
+                // 🚀 ESTO MARCA TODO EL HISTORIAL (Tus mensajes y los de él)
                 await pool.query(`
                     UPDATE messagesapp 
                     SET hidden_by = array_append(COALESCE(hidden_by, '{}'), $1)
@@ -643,10 +638,8 @@ module.exports = (pool, JWT_SECRET, io) => {
                     AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
                 `, [myId, roomName]);
             }
-
             res.json({ success: true });
         } catch (e) {
-            console.error("Error al eliminar chat:", e);
             res.status(500).json({ success: false });
         }
     });
