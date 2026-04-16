@@ -509,6 +509,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 LEFT JOIN messagesapp p ON m.parent_message_id = p.message_id
                 LEFT JOIN usersapp pu ON p.sender_id = pu.id
                 WHERE m.group_id = $1
+                AND NOT ($myId = ANY(COALESCE(m.hidden_by, '{}')))
                 ORDER BY m.created_at DESC
                 LIMIT $2 OFFSET $3;
             `;
@@ -628,6 +629,46 @@ module.exports = (pool, JWT_SECRET, io) => {
                 `, [myId, roomName]);
                 
                 return res.json({ success: true });
+            }
+        } catch (e) {
+            console.error(e);
+            res.status(500).json({ success: false });
+        }
+    });
+
+
+    // --- 🚀 RUTA: ELIMINAR CHAT DE GRUPO ---
+    router.delete('/group/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const myId = req.user.userId;
+        const { groupId } = req.params;
+        const { deleteForEveryone } = req.query; // 'true' o 'false'
+
+        try {
+            // 1. Verificar si soy el creador
+            const groupCheck = await pool.query('SELECT creator_id FROM groupsapp WHERE id = $1', [groupId]);
+            if (groupCheck.rows.length === 0) return res.status(404).json({ success: false });
+
+            const isCreator = groupCheck.rows[0].creator_id === myId;
+
+            if (isCreator && deleteForEveryone === 'true') {
+                // 🗑️ OPCIÓN A: CREADOR BORRA TODO
+                await pool.query('DELETE FROM messagesapp WHERE group_id = $1', [groupId]);
+                
+                // Avisar por socket para que todos limpien su pantalla
+                const io = req.app.get('socketio');
+                if (io) io.to(`group_${groupId}`).emit('chat_cleared', { deletedBy: myId, isGroup: true });
+                
+                res.json({ success: true, action: 'deleted_all' });
+            } else {
+                // 🙈 OPCIÓN B: MIEMBRO (O CREADOR) OCULTA PARA SÍ MISMO
+                await pool.query(`
+                    UPDATE messagesapp 
+                    SET hidden_by = array_append(COALESCE(hidden_by, '{}'), $1)
+                    WHERE group_id = $2
+                    AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
+                `, [myId, groupId]);
+
+                res.json({ success: true, action: 'hidden_self' });
             }
         } catch (e) {
             console.error(e);
