@@ -610,6 +610,7 @@ module.exports = (pool, JWT_SECRET, io) => {
 
         try {
             if (deleteForBoth === 'true') {
+                // 1. Borramos los mensajes físicamente de la DB
                 const delResult = await pool.query(`
                     DELETE FROM messagesapp 
                     WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
@@ -617,7 +618,19 @@ module.exports = (pool, JWT_SECRET, io) => {
                 `, [myId, otherId]);
                 
                 console.log(`[BORRADO TOTAL] Filas eliminadas: ${delResult.rowCount}`);
-                res.json({ success: true });
+
+                // 2. 🚀 AVISAR AL OTRO USUARIO EN TIEMPO REAL
+                const io = req.app.get('socketio');
+                if (io) {
+                    // El nombre de la sala que usan ambos en el chat privado
+                    const roomName = [myId, otherId].sort((a, b) => a - b).join('-');
+                    
+                    io.to(roomName).emit('chat_cleared', { 
+                        deletedBy: myId,
+                        targetId: otherId 
+                    });
+                    console.log(`[SOCKET] Aviso de borrado enviado a la sala: ${roomName}`);
+                }
             } else {
                 // 🚀 LOG DE INTENTO
                 console.log(`[BORRADO PARA MI] Usuario ${myId} ocultando chat con ${otherId}`);
