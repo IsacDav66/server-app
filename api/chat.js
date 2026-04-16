@@ -472,7 +472,7 @@ module.exports = (pool, JWT_SECRET, io) => {
     // NUEVO: OBTENER HISTORIAL DE GRUPO
     router.get('/history/group/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const groupId = parseInt(req.params.groupId);
-        const myId = req.user.userId;
+        const myId = req.user.userId; // 🚀 Obtenemos tu ID para filtrar
         const limit = parseInt(req.query.limit) || 100;
         const offset = parseInt(req.query.offset) || 0;
 
@@ -484,38 +484,40 @@ module.exports = (pool, JWT_SECRET, io) => {
                     pu.username as parent_username,
                     p.sender_id as parent_author_id,
 
-                    -- 🌈 COLOR E ICONO DEL AUTOR DEL MENSAJE
+                    -- COLOR E ICONO DEL AUTOR
                     (SELECT r.color FROM member_roles_link mrl
-                    JOIN group_roles r ON mrl.role_id = r.id
-                    WHERE mrl.user_id = m.sender_id AND mrl.group_id = m.group_id
-                    ORDER BY r.display_order ASC, r.id DESC LIMIT 1) as author_color,
+                     JOIN group_roles r ON mrl.role_id = r.id
+                     WHERE mrl.user_id = m.sender_id AND mrl.group_id = m.group_id
+                     ORDER BY r.display_order ASC, r.id DESC LIMIT 1) as author_color,
 
                     (SELECT r.icon_url FROM member_roles_link mrl
-                    JOIN group_roles r ON mrl.role_id = r.id
-                    WHERE mrl.user_id = m.sender_id AND mrl.group_id = m.group_id
-                    ORDER BY r.display_order ASC, r.id DESC LIMIT 1) as author_icon,
+                     JOIN group_roles r ON mrl.role_id = r.id
+                     WHERE mrl.user_id = m.sender_id AND mrl.group_id = m.group_id
+                     ORDER BY r.display_order ASC, r.id DESC LIMIT 1) as author_icon,
 
-                    -- 🌈 COLOR E ICONO DEL AUTOR CITADO (PADRE)
+                    -- COLOR E ICONO DEL AUTOR CITADO (PADRE)
                     (SELECT r_p.color FROM member_roles_link mrl_p
-                    JOIN group_roles r_p ON mrl_p.role_id = r_p.id
-                    WHERE mrl_p.user_id = p.sender_id AND mrl_p.group_id = m.group_id
-                    ORDER BY r_p.display_order ASC, r_p.id DESC LIMIT 1) as parent_author_color,
+                     JOIN group_roles r_p ON mrl_p.role_id = r_p.id
+                     WHERE mrl_p.user_id = p.sender_id AND mrl_p.group_id = m.group_id
+                     ORDER BY r_p.display_order ASC, r_p.id DESC LIMIT 1) as parent_author_color,
 
                     (SELECT r_p.icon_url FROM member_roles_link mrl_p
-                    JOIN group_roles r_p ON mrl_p.role_id = r_p.id
-                    WHERE mrl_p.user_id = p.sender_id AND mrl_p.group_id = m.group_id
-                    ORDER BY r_p.display_order ASC, r_p.id DESC LIMIT 1) as parent_author_icon
+                     JOIN group_roles r_p ON mrl_p.role_id = r_p.id
+                     WHERE mrl_p.user_id = p.sender_id AND mrl_p.group_id = m.group_id
+                     ORDER BY r_p.display_order ASC, r_p.id DESC LIMIT 1) as parent_author_icon
 
                 FROM messagesapp m
                 JOIN usersapp u ON m.sender_id = u.id
                 LEFT JOIN messagesapp p ON m.parent_message_id = p.message_id
                 LEFT JOIN usersapp pu ON p.sender_id = pu.id
                 WHERE m.group_id = $1
-                AND NOT ($myId = ANY(COALESCE(m.hidden_by, '{}')))
+                -- 🚀 FILTRO DE PRIVACIDAD CORREGIDO ($4)
+                AND NOT ($4 = ANY(COALESCE(m.hidden_by, '{}')))
                 ORDER BY m.created_at DESC
                 LIMIT $2 OFFSET $3;
             `;
-            
+
+            // 🚀 IMPORTANTE: Pasamos 4 parámetros: groupId, limit, offset y myId
             const result = await pool.query(query, [groupId, limit, offset, myId]);
             
             res.json({ 
