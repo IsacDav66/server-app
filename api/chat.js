@@ -557,10 +557,12 @@ module.exports = (pool, JWT_SECRET, io) => {
     });
 
 
-    router.get('/media/private/:otherUserId', protect, async (req, res) => {
+    router.get('/media/private/:otherUserId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const myId = req.user.userId;
-        const otherId = req.params.otherUserId;
+        const otherId = parseInt(req.params.otherUserId);
+
         try {
+            // 1. Buscamos mensajes que contengan media entre tú y el otro usuario
             const result = await pool.query(`
                 SELECT content FROM messagesapp 
                 WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
@@ -569,10 +571,64 @@ module.exports = (pool, JWT_SECRET, io) => {
                 ORDER BY created_at DESC LIMIT 30
             `, [myId, otherId]);
 
-            // Reutilizamos la misma lógica de procesamiento de Grids/Individual que hicimos para grupos
-            const processed = processMediaRows(result.rows); // Lógica compartida
-            res.json({ success: true, media: processed });
-        } catch (e) { res.status(500).json({ success: false }); }
+            let allMediaItems = [];
+
+            // 2. Procesamos el texto de los mensajes para extraer los objetos de imagen/video
+            result.rows.forEach(m => {
+                const raw = m.content;
+                
+                if (raw.includes('[MEDIA_GRID:')) {
+                    const gridContent = raw.match(/\[MEDIA_GRID:(.*?)\]/);
+                    if (gridContent) {
+                        const items = gridContent[1].split('_I_');
+                        items.forEach(itemStr => {
+                            const p = itemStr.split('_P_');
+                            if (p[1] !== 'AUDIO') {
+                                allMediaItems.push({ id: p[0], type: p[1], lq: p[2] || "" });
+                            }
+                        });
+                    }
+                } else {
+                    const typeMatch = raw.match(/\[MEDIA_(.*?):/);
+                    if (!typeMatch) return;
+                    const type = typeMatch[1];
+                    if (type === 'AUDIO') return;
+
+                    const inner = raw.substring(raw.indexOf(':') + 1, raw.lastIndexOf(']'));
+                    const p = inner.split('_P_');
+                    
+                    let id = p[0];
+                    let lq = (type === 'VIDEO' || type === 'GIF') ? p[2] : p[1];
+                    allMediaItems.push({ id, type, lq: lq || "" });
+                }
+            });
+
+            res.json({ success: true, media: allMediaItems });
+
+        } catch (e) {
+            console.error("❌ Error en media/private:", e.message);
+            res.status(500).json({ success: false });
+        }
+    });
+
+
+    // --- 🚀 RUTA: ELIMINAR CHAT PRIVADO ---
+    router.delete('/private/:otherUserId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const myId = req.user.userId;
+        const otherId = req.params.otherUserId;
+
+        try {
+            // Borramos todos los mensajes donde participen ambos
+            await pool.query(`
+                DELETE FROM messagesapp 
+                WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
+                AND group_id IS NULL
+            `, [myId, otherId]);
+
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ success: false });
+        }
     });
 
 
