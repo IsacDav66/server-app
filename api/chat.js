@@ -125,7 +125,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 LEFT JOIN usersapp AS pu ON p.sender_id = pu.id
                 WHERE (m.sender_id = $1 AND m.receiver_id = $2) 
                 OR (m.sender_id = $2 AND m.receiver_id = $1)
-                AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
+                AND NOT ($1 = ANY(COALESCE(m.hidden_by, '{}')))
                 ORDER BY m.created_at DESC -- Traer los más nuevos primero
                 LIMIT $3 OFFSET $4;
             `;
