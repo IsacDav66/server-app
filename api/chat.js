@@ -619,31 +619,34 @@ module.exports = (pool, JWT_SECRET, io) => {
     router.delete('/private/:otherUserId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const myId = req.user.userId;
         const otherId = parseInt(req.params.otherUserId);
-        const { deleteForBoth } = req.query; // 'true' o 'false'
+        const { deleteForBoth } = req.query;
+
+        // 🚀 IMPORTANTE: Reconstruimos el nombre de la sala (ID-ID ordenado)
+        const roomName = [myId, otherId].sort((a, b) => a - b).join('-');
 
         try {
             if (deleteForBoth === 'true') {
-                // 🚀 OPCIÓN A: BORRADO TOTAL (Para ambos)
-                await pool.query(`
-                    DELETE FROM messagesapp 
-                    WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
-                    AND group_id IS NULL
-                `, [myId, otherId]);
+                // 🗑️ BORRADO TOTAL: Eliminamos físicamente de la DB
+                await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomName]);
+
+                // 📡 AVISO EN TIEMPO REAL: Le decimos a la sala que limpie la pantalla
+                const io = req.app.get('socketio');
+                if (io) {
+                    io.to(roomName).emit('chat_cleared', { deletedBy: myId });
+                }
             } else {
-                // 🚀 OPCIÓN B: BORRADO SOLO PARA MÍ
-                // Agregamos mi ID a la lista 'hidden_by' de todos los mensajes de este chat
+                // 🙈 BORRADO SOLO PARA MÍ: Actualizamos hidden_by en toda la sala
                 await pool.query(`
                     UPDATE messagesapp 
-                    SET hidden_by = array_append(hidden_by, $1)
-                    WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
-                    AND group_id IS NULL
-                    AND NOT ($1 = ANY(hidden_by))
-                `, [myId, otherId]);
+                    SET hidden_by = array_append(COALESCE(hidden_by, '{}'), $1)
+                    WHERE room_name = $2
+                    AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
+                `, [myId, roomName]);
             }
 
             res.json({ success: true });
         } catch (e) {
-            console.error(e);
+            console.error("Error al eliminar chat:", e);
             res.status(500).json({ success: false });
         }
     });
