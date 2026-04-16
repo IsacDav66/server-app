@@ -620,25 +620,39 @@ module.exports = (pool, JWT_SECRET, io) => {
         const myId = req.user.userId;
         const otherId = parseInt(req.params.otherUserId);
         const { deleteForBoth } = req.query;
-        const roomName = [myId, otherId].sort((a, b) => a - b).join('-');
 
         try {
             if (deleteForBoth === 'true') {
-                await pool.query('DELETE FROM messagesapp WHERE room_name = $1', [roomName]);
+                // 🗑️ BORRADO TOTAL
+                // Usamos la lógica de IDs cruzados para asegurar que borre todo
+                await pool.query(`
+                    DELETE FROM messagesapp 
+                    WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
+                    AND group_id IS NULL
+                `, [myId, otherId]);
+
+                // Avisar al socket (opcionalmente puedes usar el roomName aquí para el emit)
+                const roomName = [myId, otherId].sort((a, b) => a - b).join('-');
                 const io = req.app.get('socketio');
                 if (io) io.to(roomName).emit('chat_cleared', { deletedBy: myId });
+
             } else {
-                // 🚀 USAMOS 'array_set' o lógica de filtrado para evitar duplicados
-                // Esta consulta añade el ID solo si NO está ya presente
+                // 🙈 BORRADO SOLO PARA MÍ (OCULTAR)
+                // 🚀 CAMBIO CLAVE: Buscamos por la relación de IDs, no por room_name
                 await pool.query(`
                     UPDATE messagesapp 
                     SET hidden_by = array_append(COALESCE(hidden_by, '{}'), $1)
-                    WHERE room_name = $2
-                    AND NOT ($1 = ANY (COALESCE(hidden_by, '{}')))
-                `, [myId, roomName]);
+                    WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
+                    AND group_id IS NULL
+                    AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
+                `, [myId, otherId]);
+                
+                console.log(`[PRIVACIDAD] Mensajes ocultados para el usuario ${myId} en chat con ${otherId}`);
             }
+
             res.json({ success: true });
         } catch (e) {
+            console.error("Error al eliminar chat:", e);
             res.status(500).json({ success: false });
         }
     });
