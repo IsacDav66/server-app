@@ -125,7 +125,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 LEFT JOIN usersapp AS pu ON p.sender_id = pu.id
                 WHERE (m.sender_id = $1 AND m.receiver_id = $2) 
                 OR (m.sender_id = $2 AND m.receiver_id = $1)
-                AND NOT ($1 = ANY(COALESCE(m.hidden_by, '{}')))
+                AND NOT ($1 = ANY (COALESCE(m.hidden_by, '{}')))
                 ORDER BY m.created_at DESC -- Traer los más nuevos primero
                 LIMIT $3 OFFSET $4;
             `;
@@ -620,8 +620,6 @@ module.exports = (pool, JWT_SECRET, io) => {
         const myId = req.user.userId;
         const otherId = parseInt(req.params.otherUserId);
         const { deleteForBoth } = req.query;
-
-        // 🚀 Generamos el nombre de sala exacto
         const roomName = [myId, otherId].sort((a, b) => a - b).join('-');
 
         try {
@@ -630,12 +628,13 @@ module.exports = (pool, JWT_SECRET, io) => {
                 const io = req.app.get('socketio');
                 if (io) io.to(roomName).emit('chat_cleared', { deletedBy: myId });
             } else {
-                // 🚀 ESTO MARCA TODO EL HISTORIAL (Tus mensajes y los de él)
+                // 🚀 USAMOS 'array_set' o lógica de filtrado para evitar duplicados
+                // Esta consulta añade el ID solo si NO está ya presente
                 await pool.query(`
                     UPDATE messagesapp 
                     SET hidden_by = array_append(COALESCE(hidden_by, '{}'), $1)
                     WHERE room_name = $2
-                    AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
+                    AND NOT ($1 = ANY (COALESCE(hidden_by, '{}')))
                 `, [myId, roomName]);
             }
             res.json({ success: true });
@@ -643,7 +642,6 @@ module.exports = (pool, JWT_SECRET, io) => {
             res.status(500).json({ success: false });
         }
     });
-
 
     // --- RUTAS DE ROLES DE GRUPO ---
 
