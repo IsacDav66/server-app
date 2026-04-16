@@ -1085,11 +1085,11 @@ const safeInt = (id) => {
 // --- EVENTO SOCKET ---
 socket.on('send_media_relay', async (data) => {
     // 1. Extraer datos básicos
-    const { roomName, sender_id, group_id, isNew, isGrid, tempId, parent_message_id, message_id } = data;
+    const { roomName, sender_id, receiver_id, group_id, isNew, isGrid, tempId, parent_message_id, message_id } = data;
     
     // 🛡️ DETECCIÓN ROBUSTA DE GRUPO
     const isGroup = !!group_id || (roomName && roomName.startsWith('group_'));
-    const finalReceiverId = isGroup ? null : receiver_id;
+    const finalReceiverId = isGroup ? null : receiver_id; // Ahora receiver_id ya existe ✅
     const finalGroupId = isGroup ? (group_id || roomName.split('_')[1]) : null;
 
     // ==========================================================
