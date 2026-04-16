@@ -38,6 +38,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                         FROM messagesapp m
                         JOIN group_members gm ON m.group_id = gm.group_id
                         WHERE gm.user_id = $1
+                        AND NOT ($1 = ANY(COALESCE(m.hidden_by, '{}')))
                         ORDER BY m.group_id, m.created_at DESC
                     )
                 )
@@ -471,6 +472,7 @@ module.exports = (pool, JWT_SECRET, io) => {
     // NUEVO: OBTENER HISTORIAL DE GRUPO
     router.get('/history/group/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const groupId = parseInt(req.params.groupId);
+        const myId = req.user.userId;
         const limit = parseInt(req.query.limit) || 100;
         const offset = parseInt(req.query.offset) || 0;
 
@@ -514,7 +516,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 LIMIT $2 OFFSET $3;
             `;
             
-            const result = await pool.query(query, [groupId, limit, offset]);
+            const result = await pool.query(query, [groupId, limit, offset, myId]);
             
             res.json({ 
                 success: true, 
