@@ -25,6 +25,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                         WHERE (m.sender_id = $1 OR m.receiver_id = $1) 
                         AND m.group_id IS NULL
                         AND (m.room_name IS NULL OR m.room_name NOT LIKE 'match_%')
+                        AND NOT ($1 = ANY(COALESCE(m.hidden_by, '{}')))
                         ORDER BY other_user_id, m.created_at DESC
                     )
                     UNION ALL
@@ -124,6 +125,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 LEFT JOIN usersapp AS pu ON p.sender_id = pu.id
                 WHERE (m.sender_id = $1 AND m.receiver_id = $2) 
                 OR (m.sender_id = $2 AND m.receiver_id = $1)
+                AND NOT ($1 = ANY(COALESCE(m.hidden_by, '{}')))
                 ORDER BY m.created_at DESC -- Traer los más nuevos primero
                 LIMIT $3 OFFSET $4;
             `;
@@ -566,7 +568,8 @@ module.exports = (pool, JWT_SECRET, io) => {
             const result = await pool.query(`
                 SELECT content FROM messagesapp 
                 WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
-                AND group_id IS NULL 
+                AND group_id IS NULL
+                AND NOT ($1 = ANY(COALESCE(hidden_by, '{}'))) 
                 AND (content LIKE '%[MEDIA_%' OR content LIKE '%[MEDIA_GRID:%')
                 ORDER BY created_at DESC LIMIT 30
             `, [myId, otherId]);
@@ -615,18 +618,32 @@ module.exports = (pool, JWT_SECRET, io) => {
     // --- 🚀 RUTA: ELIMINAR CHAT PRIVADO ---
     router.delete('/private/:otherUserId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const myId = req.user.userId;
-        const otherId = req.params.otherUserId;
+        const otherId = parseInt(req.params.otherUserId);
+        const { deleteForBoth } = req.query; // 'true' o 'false'
 
         try {
-            // Borramos todos los mensajes donde participen ambos
-            await pool.query(`
-                DELETE FROM messagesapp 
-                WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
-                AND group_id IS NULL
-            `, [myId, otherId]);
+            if (deleteForBoth === 'true') {
+                // 🚀 OPCIÓN A: BORRADO TOTAL (Para ambos)
+                await pool.query(`
+                    DELETE FROM messagesapp 
+                    WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
+                    AND group_id IS NULL
+                `, [myId, otherId]);
+            } else {
+                // 🚀 OPCIÓN B: BORRADO SOLO PARA MÍ
+                // Agregamos mi ID a la lista 'hidden_by' de todos los mensajes de este chat
+                await pool.query(`
+                    UPDATE messagesapp 
+                    SET hidden_by = array_append(hidden_by, $1)
+                    WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
+                    AND group_id IS NULL
+                    AND NOT ($1 = ANY(hidden_by))
+                `, [myId, otherId]);
+            }
 
             res.json({ success: true });
         } catch (e) {
+            console.error(e);
             res.status(500).json({ success: false });
         }
     });
