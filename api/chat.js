@@ -104,43 +104,30 @@ module.exports = (pool, JWT_SECRET, io) => {
 
     // 2. OBTENER HISTORIAL (DENTRO DEL CHAT)
     router.get('/history/:otherUserId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const loggedInUserId = req.user.userId;
-        const otherUserId = parseInt(req.params.otherUserId);
-        
-        // 1. Obtener paginación de la query string (por defecto 100)
+        const myId = req.user.userId;
+        const otherId = parseInt(req.params.otherUserId);
         const limit = parseInt(req.query.limit) || 100;
         const offset = parseInt(req.query.offset) || 0;
 
         try {
-            // 2. Modificamos la query para usar LIMIT y OFFSET
-            // IMPORTANTE: Ordenamos por DESC para traer los ULTIMOS 100 primero
             const query = `
-                SELECT 
-                    m.message_id, m.sender_id, m.receiver_id, m.content, m.created_at, 
-                    m.is_read, m.parent_message_id, m.sticker_pack, m.emoji_pack,
-                    p.content as parent_content,
-                    pu.username as parent_username
+                SELECT m.*, u.username, u.profile_pic_url
                 FROM messagesapp AS m
-                LEFT JOIN messagesapp AS p ON m.parent_message_id = p.message_id
-                LEFT JOIN usersapp AS pu ON p.sender_id = pu.id
-                WHERE (m.sender_id = $1 AND m.receiver_id = $2) 
-                OR (m.sender_id = $2 AND m.receiver_id = $1)
-                AND NOT ($1 = ANY (COALESCE(m.hidden_by, '{}')))
-                ORDER BY m.created_at DESC -- Traer los más nuevos primero
+                JOIN usersapp u ON m.sender_id = u.id
+                WHERE ((m.sender_id = $1 AND m.receiver_id = $2) OR (m.sender_id = $2 AND m.receiver_id = $1))
+                AND m.group_id IS NULL
+                AND NOT ($1 = ANY(COALESCE(m.hidden_by, '{}')))
+                ORDER BY m.created_at DESC
                 LIMIT $3 OFFSET $4;
             `;
-            const result = await pool.query(query, [loggedInUserId, otherUserId, limit, offset]);
-            
-            // 3. Los devolvemos al revés (ASC) para que el frontend los dibuje en orden cronológico
-            const messages = result.rows.reverse();
-            
-            res.status(200).json({ 
-                success: true, 
-                messages: messages,
-                hasMore: result.rows.length === limit // Si trajo 100, es probable que haya más
-            });
+            const result = await pool.query(query, [myId, otherId, limit, offset]);
+
+            // 🔥 LOG DE DEPURACIÓN EN TERMINAL
+            console.log(`[HISTORIAL] Enviando ${result.rows.length} mensajes al usuario ${myId}. (Ocultos filtrados por SQL)`);
+
+            res.json({ success: true, messages: result.rows.reverse() });
         } catch (error) {
-            console.error("Error history:", error);
+            console.error(error);
             res.status(500).json({ success: false });
         }
     });
@@ -623,36 +610,33 @@ module.exports = (pool, JWT_SECRET, io) => {
 
         try {
             if (deleteForBoth === 'true') {
-                // 🗑️ BORRADO TOTAL
-                // Usamos la lógica de IDs cruzados para asegurar que borre todo
-                await pool.query(`
+                const delResult = await pool.query(`
                     DELETE FROM messagesapp 
                     WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
                     AND group_id IS NULL
                 `, [myId, otherId]);
-
-                // Avisar al socket (opcionalmente puedes usar el roomName aquí para el emit)
-                const roomName = [myId, otherId].sort((a, b) => a - b).join('-');
-                const io = req.app.get('socketio');
-                if (io) io.to(roomName).emit('chat_cleared', { deletedBy: myId });
-
+                
+                console.log(`[BORRADO TOTAL] Filas eliminadas: ${delResult.rowCount}`);
+                res.json({ success: true });
             } else {
-                // 🙈 BORRADO SOLO PARA MÍ (OCULTAR)
-                // 🚀 CAMBIO CLAVE: Buscamos por la relación de IDs, no por room_name
-                await pool.query(`
+                // 🚀 LOG DE INTENTO
+                console.log(`[BORRADO PARA MI] Usuario ${myId} ocultando chat con ${otherId}`);
+
+                const upResult = await pool.query(`
                     UPDATE messagesapp 
                     SET hidden_by = array_append(COALESCE(hidden_by, '{}'), $1)
                     WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
                     AND group_id IS NULL
                     AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
                 `, [myId, otherId]);
-                
-                console.log(`[PRIVACIDAD] Mensajes ocultados para el usuario ${myId} en chat con ${otherId}`);
-            }
 
-            res.json({ success: true });
+                // 🔥 MIRA ESTE LOG EN LA TERMINAL
+                console.log(`[RESULTADO] Se han ocultado ${upResult.rowCount} mensajes para el usuario ${myId}`);
+                
+                res.json({ success: true });
+            }
         } catch (e) {
-            console.error("Error al eliminar chat:", e);
+            console.error(e);
             res.status(500).json({ success: false });
         }
     });
