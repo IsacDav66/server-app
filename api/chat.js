@@ -321,6 +321,26 @@ module.exports = (pool, JWT_SECRET, io) => {
                 );
             }
 
+
+            try {
+                // 1. Obtener nombre del que invita y de los invitados
+                const namesRes = await pool.query('SELECT username FROM usersapp WHERE id = ANY($1)', [[myId, ...memberIds]]);
+                const adminName = namesRes.rows.find(u => u.username !== null && namesRes.rows.length > 0).username; // Simplificado
+                const newNames = namesRes.rows.filter(u => memberIds.includes(u.id)).map(u => u.username).join(', ');
+
+                // 2. Insertar mensaje de sistema 🚀
+                const systemMsg = `🚀 ${adminName} reclutó a: ${newNames}.`;
+                const msgResult = await pool.query(
+                    `INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
+                    VALUES ($1, $2, $3, $4) RETURNING *`,
+                    [myId, groupId, systemMsg, `group_${groupId}`]
+                );
+
+                // 3. Emitir por Socket para que todos lo vean en vivo
+                const savedMsg = msgResult.rows[0];
+                io.to(`group_${groupId}`).emit('receive_message', savedMsg);
+            } catch (err) { console.error("Error aviso reclutar:", err); }
+
             // 📡 3. LÓGICA DE SOCKETS: Forzar a los nuevos miembros a unirse a la sala
             // Esto es vital para que empiecen a recibir mensajes en tiempo real sin reiniciar la App
             const io = req.app.get('socketio');
@@ -689,18 +709,22 @@ module.exports = (pool, JWT_SECRET, io) => {
 
             // 2. LÓGICA DE ABANDONAR GRUPO
             if (leaveGroup === 'true') {
+                // Obtener nombre antes de borrarlo de la tabla miembros
+                const userRes = await pool.query('SELECT username FROM usersapp WHERE id = $1', [myId]);
+                const userName = userRes.rows[0].username;
+
                 await pool.query('DELETE FROM group_members WHERE group_id = $1 AND user_id = $2', [groupId, myId]);
                 
-                // 📡 AVISAR AL SOCKET PARA QUE SAQUE AL USUARIO DE LA SALA
+                // 🚀 INSERTAR AVISO DE SALIDA
+                const leaveMsg = `🏃 ${userName} ha abandonado la tripulación.`;
+                const msgResult = await pool.query(
+                    `INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
+                    VALUES ($1, $2, $3, $4) RETURNING *`,
+                    [myId, groupId, leaveMsg, `group_${groupId}`]
+                );
+
                 const io = req.app.get('socketio');
-                if (io) {
-                    // Notificar al grupo que alguien salió
-                    io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
-                    // El usuario debe dejar de estar en la habitación group_X
-                    const userSockets = await io.in(`user-${myId}`).fetchSockets();
-                    userSockets.forEach(s => s.leave(`group_${groupId}`));
-                }
-                console.log(`🏃 Usuario ${myId} abandonó el grupo ${groupId}`);
+                if (io) io.to(`group_${groupId}`).emit('receive_message', msgResult.rows[0]);
             }
 
             res.json({ success: true });
@@ -748,6 +772,20 @@ module.exports = (pool, JWT_SECRET, io) => {
 
             // 4. Asegurar que el nuevo dueño sea Administrador en la tabla de miembros
             await client.query('UPDATE group_members SET role = \'admin\' WHERE group_id = $1 AND user_id = $2', [groupId, newOwnerId]);
+            
+            const namesRes = await client.query('SELECT id, username FROM usersapp WHERE id IN ($1, $2)', [myId, newOwnerId]);
+            const oldOwner = namesRes.rows.find(u => u.id === myId).username;
+            const newOwner = namesRes.rows.find(u => u.id === newOwnerId).username;
+
+            const transferMsg = `👑 ${oldOwner} cedió el mando a ${newOwner} y salió del grupo.`;
+            const msgResult = await client.query(
+                `INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
+                VALUES ($1, $2, $3, $4) RETURNING *`,
+                [myId, groupId, transferMsg, `group_${groupId}`]
+            );
+
+            const io = req.app.get('socketio');
+            if (io) io.to(`group_${groupId}`).emit('receive_message', msgResult.rows[0]);
 
             // 5. Sacar al antiguo creador del grupo
             await client.query('DELETE FROM group_members WHERE group_id = $1 AND user_id = $2', [groupId, myId]);
