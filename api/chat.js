@@ -744,30 +744,53 @@ module.exports = (pool, JWT_SECRET, io) => {
         const myId = req.user.userId;
 
         try {
-            // 1. Verificar si el que ejecuta tiene permiso (Admin o Creador)
-            const checkPerms = await pool.query(
-                'SELECT role FROM group_members WHERE group_id = $1 AND user_id = $2',
-                [groupId, myId]
+            // 1. Verificación de Poder (Creador, Admin de tabla, o Rol con is_admin)
+            const checkPerms = await pool.query(`
+                SELECT gm.role as base_role, g.creator_id,
+                    json_agg(r.permissions) as all_role_perms
+                FROM group_members gm
+                JOIN groupsapp g ON g.id = gm.group_id
+                LEFT JOIN member_roles_link mrl ON mrl.user_id = gm.user_id AND mrl.group_id = gm.group_id
+                LEFT JOIN group_roles r ON mrl.role_id = r.id
+                WHERE gm.group_id = $1 AND gm.user_id = $2
+                GROUP BY gm.role, g.creator_id
+            `, [groupId, myId]);
+
+            if (checkPerms.rows.length === 0) {
+                return res.status(403).json({ success: false, message: "No perteneces a este grupo." });
+            }
+
+            const userStatus = checkPerms.rows[0];
+            
+            // 🛡️ Lógica de permisos avanzada
+            const isGod = (
+                userStatus.base_role === 'admin' || 
+                String(userStatus.creator_id) === String(myId) ||
+                (userStatus.all_role_perms && userStatus.all_role_perms.some(p => p && p.is_admin === true))
             );
 
-            if (checkPerms.rows.length === 0 || checkPerms.rows[0].role !== 'admin') {
+            if (!isGod) {
                 return res.status(403).json({ success: false, message: "No tienes rango de administrador." });
             }
 
-            // 2. Eliminar al miembro
+            // 2. Seguridad Extra: No puedes expulsar al creador del grupo
+            const targetCheck = await pool.query('SELECT creator_id FROM groupsapp WHERE id = $1', [groupId]);
+            if (String(targetCheck.rows[0].creator_id) === String(targetId)) {
+                return res.status(403).json({ success: false, message: "No puedes expulsar al Capitán de la tripulación." });
+            }
+
+            // 3. Ejecutar la expulsión
             const kickRes = await pool.query(
                 'DELETE FROM group_members WHERE group_id = $1 AND user_id = $2 RETURNING *',
                 [groupId, targetId]
             );
 
             if (kickRes.rowCount > 0) {
-                // 3. Obtener nombres para el mensaje de sistema
-                const nameRes = await pool.query('SELECT id, username FROM usersapp WHERE id = $1 OR id = $2', [myId, targetId]);
-
+                // Obtener nombres para el mensaje del sistema
+                const nameRes = await pool.query('SELECT id, username FROM usersapp WHERE id IN ($1, $2)', [myId, targetId]);
                 const adminName = nameRes.rows.find(u => String(u.id) === String(myId))?.username || "Admin";
                 const targetName = nameRes.rows.find(u => String(u.id) === String(targetId))?.username || "Usuario";
 
-                // 4. Insertar mensaje de sistema en el chat 🏃
                 const systemMsg = `🚫 ${targetName} ha sido expulsado por ${adminName}.`;
                 const msgResult = await pool.query(
                     `INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
@@ -775,20 +798,17 @@ module.exports = (pool, JWT_SECRET, io) => {
                     [myId, groupId, systemMsg, `group_${groupId}`]
                 );
 
-                // 5. Notificar a la sala por Socket
                 const io = req.app.get('socketio');
                 io.to(`group_${groupId}`).emit('receive_message', msgResult.rows[0]);
-                
-                // Forzar recarga de permisos para todos (por si el expulsado estaba viendo el chat)
                 io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
 
                 return res.json({ success: true });
             }
 
-            res.status(404).json({ success: false, message: "El usuario no pertenece a este grupo." });
+            res.status(404).json({ success: false, message: "El usuario no está en el grupo." });
 
         } catch (e) {
-            console.error(e);
+            console.error("❌ Error en KICK:", e);
             res.status(500).json({ success: false });
         }
     });
