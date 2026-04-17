@@ -86,10 +86,9 @@ if (!process.env.DATABASE_URL) {
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    // 🚀 AÑADE ESTO PARA EVITAR BLOQUEOS:
-    max: 15,                  // Máximo 15 conexiones simultáneas
-    idleTimeoutMillis: 10000, // Cerrar conexiones inactivas tras 10 segundos
-    connectionTimeoutMillis: 2000, // Si no conecta en 2 seg, dar error
+    max: 10,                       // Bajamos a 10 para ser más conservadores
+    idleTimeoutMillis: 30000,      // Cerramos conexiones inactivas tras 30 seg
+    connectionTimeoutMillis: 20000, // 🚀 SUBIMOS A 20 SEGUNDOS (VITAL)
 });
 pool.connect()
     .then(client => {
@@ -522,38 +521,44 @@ io.on('connection', (socket) => {
      * Busca a los amigos del usuario que acaba de conectar y le envía su estado actual.
      */
     const syncActiveFriendsToSocket = async (socket, myUserId) => {
-        // 🚀 RECOMENDACIÓN: Usa pool.query DIRECTAMENTE. 
-        // pool.query es automático: abre, consulta y CIERRA la conexión por ti.
         try {
+            // 🚀 USAMOS pool.query DIRECTAMENTE: 
+            // Esta función pide una conexión, hace la consulta y la devuelve al pool al instante.
             const query = `
                 SELECT f1.follower_id as friend_id
                 FROM followersapp f1
                 INNER JOIN followersapp f2 ON f1.follower_id = f2.following_id AND f1.following_id = f2.follower_id
                 WHERE f1.following_id = $1;
             `;
-            // Ejecución directa
+            
             const result = await pool.query(query, [myUserId]);
             const friends = result.rows;
 
             if (friends.length === 0) return;
 
-            const currentOnlineEntries = Array.from(onlineUsers.values());
+            // Extraer los IDs para una búsqueda más rápida en el Map de onlineUsers
+            const friendIds = friends.map(f => f.friend_id);
 
-            friends.forEach(friend => {
-                const activeData = currentOnlineEntries.find(u => u.userId === friend.friend_id);
-                if (activeData) {
+            // Buscamos en el mapa de usuarios conectados solo a los que son nuestros amigos
+            for (const [socketId, data] of onlineUsers.entries()) {
+                if (friendIds.includes(data.userId)) {
+                    // Enviamos el estado del amigo al socket que se acaba de conectar
                     socket.emit('friend_status_update', {
-                        userId: friend.friend_id,
+                        userId: data.userId,
                         isOnline: true,
-                        currentApp: activeData.currentApp ? activeData.currentApp.name : null,
-                        currentAppIcon: activeData.currentApp ? activeData.currentApp.icon : null
+                        currentApp: data.currentApp ? data.currentApp.name : null,
+                        currentAppIcon: data.currentApp ? data.currentApp.icon : null,
+                        lastSeenAt: new Date() // Sincronización de hora
                     });
                 }
-            });
+            }
+            
+            console.log(`✅ [SINC] Estado de amigos enviado al usuario ${myUserId}`);
+
         } catch (error) {
-            console.error("❌ Error en syncActiveFriendsToSocket:", error);
+            // Capturamos el error para que el servidor no se caiga
+            console.error("❌ Error en syncActiveFriendsToSocket:", error.message);
         }
-        // NOTA: Al usar pool.query en lugar de pool.connect, NO necesitas liberar nada.
     };
 
     socket.on('authenticate', async (token) => {
