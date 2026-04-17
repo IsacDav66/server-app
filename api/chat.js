@@ -690,6 +690,49 @@ module.exports = (pool, JWT_SECRET, io) => {
         }
     });
 
+
+
+    // --- 🚀 RUTA: TRASPASAR MANDO Y SALIR DEL GRUPO ---
+    router.post('/group/:groupId/transfer-and-leave', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const myId = req.user.userId;
+        const { groupId } = req.params;
+        const { newOwnerId } = req.body;
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            // 1. Verificar que soy el creador actual
+            const check = await client.query('SELECT creator_id FROM groupsapp WHERE id = $1', [groupId]);
+            if (check.rows[0].creator_id !== myId) {
+                throw new Error("No tienes permiso para transferir el mando.");
+            }
+
+            // 2. Cambiar el creador en la tabla de grupos
+            await client.query('UPDATE groupsapp SET creator_id = $1 WHERE id = $2', [newOwnerId, groupId]);
+
+            // 3. Asegurar que el nuevo dueño sea Administrador en la tabla de miembros
+            await client.query('UPDATE group_members SET role = \'admin\' WHERE group_id = $1 AND user_id = $2', [groupId, newOwnerId]);
+
+            // 4. Sacar al antiguo creador del grupo
+            await client.query('DELETE FROM group_members WHERE group_id = $1 AND user_id = $2', [groupId, myId]);
+
+            await client.query('COMMIT');
+
+            // 📡 AVISO AL SOCKET
+            const io = req.app.get('socketio');
+            if (io) {
+                io.to(`group_${groupId}`).emit('group_details_updated', { groupId, newOwnerId });
+                io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
+            }
+
+            res.json({ success: true });
+        } catch (e) {
+            await client.query('ROLLBACK');
+            res.status(500).json({ success: false, message: e.message });
+        } finally { client.release(); }
+    });
+
     // --- RUTAS DE ROLES DE GRUPO ---
 
     // 1. Obtener roles del grupo
