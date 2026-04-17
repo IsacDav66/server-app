@@ -38,7 +38,6 @@ module.exports = (pool, JWT_SECRET, io) => {
                         FROM messagesapp m
                         JOIN group_members gm ON m.group_id = gm.group_id
                         WHERE gm.user_id = $1
-                        AND NOT ($1 = ANY(COALESCE(m.hidden_by, '{}')))
                         ORDER BY m.group_id, m.created_at DESC
                     )
                 )
@@ -472,7 +471,6 @@ module.exports = (pool, JWT_SECRET, io) => {
     // NUEVO: OBTENER HISTORIAL DE GRUPO
     router.get('/history/group/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const groupId = parseInt(req.params.groupId);
-        const myId = req.user.userId; // 🚀 Obtenemos tu ID para filtrar
         const limit = parseInt(req.query.limit) || 100;
         const offset = parseInt(req.query.offset) || 0;
 
@@ -484,41 +482,39 @@ module.exports = (pool, JWT_SECRET, io) => {
                     pu.username as parent_username,
                     p.sender_id as parent_author_id,
 
-                    -- COLOR E ICONO DEL AUTOR
+                    -- 🌈 COLOR E ICONO DEL AUTOR DEL MENSAJE
                     (SELECT r.color FROM member_roles_link mrl
-                     JOIN group_roles r ON mrl.role_id = r.id
-                     WHERE mrl.user_id = m.sender_id AND mrl.group_id = m.group_id
-                     ORDER BY r.display_order ASC, r.id DESC LIMIT 1) as author_color,
+                    JOIN group_roles r ON mrl.role_id = r.id
+                    WHERE mrl.user_id = m.sender_id AND mrl.group_id = m.group_id
+                    ORDER BY r.display_order ASC, r.id DESC LIMIT 1) as author_color,
 
                     (SELECT r.icon_url FROM member_roles_link mrl
-                     JOIN group_roles r ON mrl.role_id = r.id
-                     WHERE mrl.user_id = m.sender_id AND mrl.group_id = m.group_id
-                     ORDER BY r.display_order ASC, r.id DESC LIMIT 1) as author_icon,
+                    JOIN group_roles r ON mrl.role_id = r.id
+                    WHERE mrl.user_id = m.sender_id AND mrl.group_id = m.group_id
+                    ORDER BY r.display_order ASC, r.id DESC LIMIT 1) as author_icon,
 
-                    -- COLOR E ICONO DEL AUTOR CITADO (PADRE)
+                    -- 🌈 COLOR E ICONO DEL AUTOR CITADO (PADRE)
                     (SELECT r_p.color FROM member_roles_link mrl_p
-                     JOIN group_roles r_p ON mrl_p.role_id = r_p.id
-                     WHERE mrl_p.user_id = p.sender_id AND mrl_p.group_id = m.group_id
-                     ORDER BY r_p.display_order ASC, r_p.id DESC LIMIT 1) as parent_author_color,
+                    JOIN group_roles r_p ON mrl_p.role_id = r_p.id
+                    WHERE mrl_p.user_id = p.sender_id AND mrl_p.group_id = m.group_id
+                    ORDER BY r_p.display_order ASC, r_p.id DESC LIMIT 1) as parent_author_color,
 
                     (SELECT r_p.icon_url FROM member_roles_link mrl_p
-                     JOIN group_roles r_p ON mrl_p.role_id = r_p.id
-                     WHERE mrl_p.user_id = p.sender_id AND mrl_p.group_id = m.group_id
-                     ORDER BY r_p.display_order ASC, r_p.id DESC LIMIT 1) as parent_author_icon
+                    JOIN group_roles r_p ON mrl_p.role_id = r_p.id
+                    WHERE mrl_p.user_id = p.sender_id AND mrl_p.group_id = m.group_id
+                    ORDER BY r_p.display_order ASC, r_p.id DESC LIMIT 1) as parent_author_icon
 
                 FROM messagesapp m
                 JOIN usersapp u ON m.sender_id = u.id
                 LEFT JOIN messagesapp p ON m.parent_message_id = p.message_id
                 LEFT JOIN usersapp pu ON p.sender_id = pu.id
                 WHERE m.group_id = $1
-                -- 🚀 FILTRO DE PRIVACIDAD CORREGIDO ($4)
-                AND NOT ($4 = ANY(COALESCE(m.hidden_by, '{}')))
+                AND NOT ($myId = ANY(COALESCE(m.hidden_by, '{}')))
                 ORDER BY m.created_at DESC
                 LIMIT $2 OFFSET $3;
             `;
-
-            // 🚀 IMPORTANTE: Pasamos 4 parámetros: groupId, limit, offset y myId
-            const result = await pool.query(query, [groupId, limit, offset, myId]);
+            
+            const result = await pool.query(query, [groupId, limit, offset]);
             
             res.json({ 
                 success: true, 
@@ -645,92 +641,39 @@ module.exports = (pool, JWT_SECRET, io) => {
     router.delete('/group/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const myId = req.user.userId;
         const { groupId } = req.params;
-        const { deleteForEveryone, leaveGroup } = req.query; // 'true' o 'false'
+        const { deleteForEveryone } = req.query; // 'true' o 'false'
 
         try {
+            // 1. Verificar si soy el creador
             const groupCheck = await pool.query('SELECT creator_id FROM groupsapp WHERE id = $1', [groupId]);
             if (groupCheck.rows.length === 0) return res.status(404).json({ success: false });
 
             const isCreator = groupCheck.rows[0].creator_id === myId;
 
-            // 1. LÓGICA DE HISTORIAL
-            if (deleteForEveryone === 'true' && isCreator) {
-                // CREADOR: Borra físicamente para todos
+            if (isCreator && deleteForEveryone === 'true') {
+                // 🗑️ OPCIÓN A: CREADOR BORRA TODO
                 await pool.query('DELETE FROM messagesapp WHERE group_id = $1', [groupId]);
-                const io = req.app.get('socketio');
-                if (io) io.to(`group_${groupId}`).emit('chat_cleared', { isGroup: true });
-            } else if (deleteForEveryone === 'true' || deleteForEveryone === 'false') {
-                // MIEMBRO: Oculta para sí mismo
-                await pool.query(`
-                    UPDATE messagesapp SET hidden_by = array_append(COALESCE(hidden_by, '{}'), $1)
-                    WHERE group_id = $2 AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
-                `, [myId, groupId]);
-            }
-
-            // 2. LÓGICA DE ABANDONAR GRUPO
-            if (leaveGroup === 'true') {
-                await pool.query('DELETE FROM group_members WHERE group_id = $1 AND user_id = $2', [groupId, myId]);
                 
-                // 📡 AVISAR AL SOCKET PARA QUE SAQUE AL USUARIO DE LA SALA
+                // Avisar por socket para que todos limpien su pantalla
                 const io = req.app.get('socketio');
-                if (io) {
-                    // Notificar al grupo que alguien salió
-                    io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
-                    // El usuario debe dejar de estar en la habitación group_X
-                    const userSockets = await io.in(`user-${myId}`).fetchSockets();
-                    userSockets.forEach(s => s.leave(`group_${groupId}`));
-                }
-                console.log(`🏃 Usuario ${myId} abandonó el grupo ${groupId}`);
-            }
+                if (io) io.to(`group_${groupId}`).emit('chat_cleared', { deletedBy: myId, isGroup: true });
+                
+                res.json({ success: true, action: 'deleted_all' });
+            } else {
+                // 🙈 OPCIÓN B: MIEMBRO (O CREADOR) OCULTA PARA SÍ MISMO
+                await pool.query(`
+                    UPDATE messagesapp 
+                    SET hidden_by = array_append(COALESCE(hidden_by, '{}'), $1)
+                    WHERE group_id = $2
+                    AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
+                `, [myId, groupId]);
 
-            res.json({ success: true });
+                res.json({ success: true, action: 'hidden_self' });
+            }
         } catch (e) {
             console.error(e);
             res.status(500).json({ success: false });
         }
-    });
-
-
-
-    // --- 🚀 RUTA: TRASPASAR MANDO Y SALIR DEL GRUPO ---
-    router.post('/group/:groupId/transfer-and-leave', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const myId = req.user.userId;
-        const { groupId } = req.params;
-        const { newOwnerId } = req.body;
-
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-
-            // 1. Verificar que soy el creador actual
-            const check = await client.query('SELECT creator_id FROM groupsapp WHERE id = $1', [groupId]);
-            if (check.rows[0].creator_id !== myId) {
-                throw new Error("No tienes permiso para transferir el mando.");
-            }
-
-            // 2. Cambiar el creador en la tabla de grupos
-            await client.query('UPDATE groupsapp SET creator_id = $1 WHERE id = $2', [newOwnerId, groupId]);
-
-            // 3. Asegurar que el nuevo dueño sea Administrador en la tabla de miembros
-            await client.query('UPDATE group_members SET role = \'admin\' WHERE group_id = $1 AND user_id = $2', [groupId, newOwnerId]);
-
-            // 4. Sacar al antiguo creador del grupo
-            await client.query('DELETE FROM group_members WHERE group_id = $1 AND user_id = $2', [groupId, myId]);
-
-            await client.query('COMMIT');
-
-            // 📡 AVISO AL SOCKET
-            const io = req.app.get('socketio');
-            if (io) {
-                io.to(`group_${groupId}`).emit('group_details_updated', { groupId, newOwnerId });
-                io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
-            }
-
-            res.json({ success: true });
-        } catch (e) {
-            await client.query('ROLLBACK');
-            res.status(500).json({ success: false, message: e.message });
-        } finally { client.release(); }
     });
 
     // --- RUTAS DE ROLES DE GRUPO ---
