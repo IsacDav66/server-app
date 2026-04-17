@@ -738,6 +738,61 @@ module.exports = (pool, JWT_SECRET, io) => {
 
 
 
+    // EXPULSAR MIEMBRO DEL GRUPO
+    router.delete('/groups/:groupId/kick/:targetId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
+        const { groupId, targetId } = req.params;
+        const myId = req.user.userId;
+
+        try {
+            // 1. Verificar si el que ejecuta tiene permiso (Admin o Creador)
+            const checkPerms = await pool.query(
+                'SELECT role FROM group_members WHERE group_id = $1 AND user_id = $2',
+                [groupId, myId]
+            );
+
+            if (checkPerms.rows.length === 0 || checkPerms.rows[0].role !== 'admin') {
+                return res.status(403).json({ success: false, message: "No tienes rango de administrador." });
+            }
+
+            // 2. Eliminar al miembro
+            const kickRes = await pool.query(
+                'DELETE FROM group_members WHERE group_id = $1 AND user_id = $2 RETURNING *',
+                [groupId, targetId]
+            );
+
+            if (kickRes.rowCount > 0) {
+                // 3. Obtener nombres para el mensaje de sistema
+                const nameRes = await pool.query('SELECT username FROM usersapp WHERE id IN ($1, $2)', [myId, targetId]);
+                const adminName = nameRes.rows.find(u => String(u.id) === String(myId))?.username || "Admin";
+                const targetName = nameRes.rows.find(u => String(u.id) === String(targetId))?.username || "Usuario";
+
+                // 4. Insertar mensaje de sistema en el chat 🏃
+                const systemMsg = `🚫 ${targetName} ha sido expulsado por ${adminName}.`;
+                const msgResult = await pool.query(
+                    `INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
+                    VALUES ($1, $2, $3, $4) RETURNING *`,
+                    [myId, groupId, systemMsg, `group_${groupId}`]
+                );
+
+                // 5. Notificar a la sala por Socket
+                const io = req.app.get('socketio');
+                io.to(`group_${groupId}`).emit('receive_message', msgResult.rows[0]);
+                
+                // Forzar recarga de permisos para todos (por si el expulsado estaba viendo el chat)
+                io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
+
+                return res.json({ success: true });
+            }
+
+            res.status(404).json({ success: false, message: "El usuario no pertenece a este grupo." });
+
+        } catch (e) {
+            console.error(e);
+            res.status(500).json({ success: false });
+        }
+    });
+
+
     // --- 🚀 RUTA: TRASPASAR MANDO Y SALIR DEL GRUPO ---
     router.post('/group/:groupId/transfer-and-leave', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const myId = req.user.userId;
