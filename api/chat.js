@@ -670,8 +670,15 @@ module.exports = (pool, JWT_SECRET, io) => {
             if (deleteForEveryone === 'true' && isCreator) {
                 // CREADOR: Borra físicamente para todos
                 await pool.query('DELETE FROM messagesapp WHERE group_id = $1', [groupId]);
+                 const systemContent = `🧹 El Capitán ha reiniciado el historial de mensajes.`;
+                await pool.query(`
+                    INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
+                    VALUES ($1, $2, $3, $4)
+                `, [myId, groupId, systemContent, `group_${groupId}`]);
+
                 const io = req.app.get('socketio');
                 if (io) io.to(`group_${groupId}`).emit('chat_cleared', { isGroup: true });
+
             } else if (deleteForEveryone === 'true' || deleteForEveryone === 'false') {
                 // MIEMBRO: Oculta para sí mismo
                 await pool.query(`
@@ -725,12 +732,15 @@ module.exports = (pool, JWT_SECRET, io) => {
             if (deleteHistory === true || deleteHistory === 'true') {
                 await client.query('DELETE FROM messagesapp WHERE group_id = $1', [groupId]);
                 
-                // Avisar por socket para que a todos se les limpie la pantalla al instante
+                // 🚀 INSERTAR MENSAJE DE SISTEMA: Esto garantiza que el chat sea visible en la lista
+                const systemContent = `🧹 El historial fue eliminado por el antiguo Capitán.`;
+                await client.query(`
+                    INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
+                    VALUES ($1, $2, $3, $4)
+                `, [newOwnerId, groupId, systemContent, `group_${groupId}`]);
+
                 const io = req.app.get('socketio');
-                if (io) {
-                    io.to(`group_${groupId}`).emit('chat_cleared', { isGroup: true });
-                }
-                console.log(`🧹 Historial del grupo ${groupId} eliminado por el creador saliente.`);
+                if (io) io.to(`group_${groupId}`).emit('chat_cleared', { isGroup: true });
             }
 
             // 3. Cambiar el creador en la tabla de grupos
