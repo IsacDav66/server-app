@@ -773,6 +773,9 @@ module.exports = (pool, JWT_SECRET, io) => {
             // 4. Asegurar que el nuevo dueño sea Administrador en la tabla de miembros
             await client.query('UPDATE group_members SET role = \'admin\' WHERE group_id = $1 AND user_id = $2', [groupId, newOwnerId]);
             
+            // 5. Sacar al antiguo creador del grupo
+            await client.query('DELETE FROM group_members WHERE group_id = $1 AND user_id = $2', [groupId, myId]);
+
             const namesRes = await client.query('SELECT id, username FROM usersapp WHERE id IN ($1, $2)', [myId, newOwnerId]);
             const oldOwner = namesRes.rows.find(u => u.id === myId).username;
             const newOwner = namesRes.rows.find(u => u.id === newOwnerId).username;
@@ -787,13 +790,9 @@ module.exports = (pool, JWT_SECRET, io) => {
             const io = req.app.get('socketio');
             if (io) io.to(`group_${groupId}`).emit('receive_message', msgResult.rows[0]);
 
-            // 5. Sacar al antiguo creador del grupo
-            await client.query('DELETE FROM group_members WHERE group_id = $1 AND user_id = $2', [groupId, myId]);
-
             await client.query('COMMIT');
 
             // 📡 AVISO AL SOCKET PARA ACTUALIZAR ROLES E IDENTIDAD
-            const io = req.app.get('socketio');
             if (io) {
                 io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
             }
