@@ -301,89 +301,90 @@ module.exports = (pool, JWT_SECRET, io) => {
     // 🚀 RUTA PARA AÑADIR MIEMBROS A UN GRUPO EXISTENTE
     // 🚀 RUTA PARA AÑADIR MIEMBROS A UN GRUPO (CON SOPORTE DE ROLES)
     router.post('/groups/add-members', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const { groupId, memberIds } = req.body;
-        const myId = req.user.userId;
+    const { groupId, memberIds } = req.body;
+    const myId = req.user.userId;
 
-        try {
-            // 1. Verificar Poder (Creador, Admin base, o Rol con can_add_members / is_admin)
-            const checkPerms = await pool.query(`
-                SELECT gm.role as base_role, g.creator_id,
-                    json_agg(r.permissions) as all_role_perms
-                FROM group_members gm
-                JOIN groupsapp g ON g.id = gm.group_id
-                LEFT JOIN member_roles_link mrl ON mrl.user_id = gm.user_id AND mrl.group_id = gm.group_id
-                LEFT JOIN group_roles r ON mrl.role_id = r.id
-                WHERE gm.group_id = $1 AND gm.user_id = $2
-                GROUP BY gm.role, g.creator_id
-            `, [groupId, myId]);
+    try {
+        // 1. Verificar Poder (Mismo bloque de seguridad de antes...)
+        const checkPerms = await pool.query(`
+            SELECT gm.role as base_role, g.creator_id,
+                   json_agg(r.permissions) as all_role_perms
+            FROM group_members gm
+            JOIN groupsapp g ON g.id = gm.group_id
+            LEFT JOIN member_roles_link mrl ON mrl.user_id = gm.user_id AND mrl.group_id = gm.group_id
+            LEFT JOIN group_roles r ON mrl.role_id = r.id
+            WHERE gm.group_id = $1 AND gm.user_id = $2
+            GROUP BY gm.role, g.creator_id
+        `, [groupId, myId]);
 
-            if (checkPerms.rows.length === 0) {
-                return res.status(403).json({ success: false, message: "No perteneces a este grupo." });
-            }
+        const userStatus = checkPerms.rows[0];
+        const canRecruit = userStatus && (
+            userStatus.base_role === 'admin' || 
+            String(userStatus.creator_id) === String(myId) ||
+            (userStatus.all_role_perms && userStatus.all_role_perms.some(p => p && (p.can_add_members === true || p.is_admin === true)))
+        );
 
-            const userStatus = checkPerms.rows[0];
-            
-            // 🛡️ Lógica de permisos avanzada para Reclutamiento
-            const canRecruit = (
-                userStatus.base_role === 'admin' || 
-                String(userStatus.creator_id) === String(myId) ||
-                (userStatus.all_role_perms && userStatus.all_role_perms.some(p => p && (p.can_add_members === true || p.is_admin === true)))
-            );
+        if (!canRecruit) {
+            return res.status(403).json({ success: false, message: "No tienes permiso para reclutar." });
+        }
 
-            if (!canRecruit) {
-                return res.status(403).json({ success: false, message: "Tu rango no permite reclutar nuevos miembros." });
-            }
+        // 2. ⚡ LÓGICA DE INSERCIÓN O RE-ACTIVACIÓN (UPSERT)
+        for (const uId of memberIds) {
+            await pool.query(`
+                INSERT INTO group_members (group_id, user_id, role, is_active, deactivated_at) 
+                VALUES ($1, $2, 'member', TRUE, NULL)
+                ON CONFLICT (group_id, user_id) 
+                DO UPDATE SET 
+                    is_active = TRUE, 
+                    deactivated_at = NULL, 
+                    role = 'member'
+            `, [groupId, uId]);
+        }
 
-            // 2. Insertar a los nuevos integrantes
-            for (const uId of memberIds) {
-                await pool.query(
-                    'INSERT INTO group_members (group_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-                    [groupId, uId, 'member']
-                );
-            }
+        // 3. Generar mensaje de sistema
+        const idsToSearch = [myId, ...memberIds];
+        const namesRes = await pool.query('SELECT id, username FROM usersapp WHERE id = ANY($1)', [idsToSearch]);
+        const adminName = namesRes.rows.find(u => String(u.id) === String(myId))?.username || "Admin";
+        const recruitedUsers = namesRes.rows.filter(u => String(u.id) !== String(myId));
+        const newNames = recruitedUsers.map(u => u.username).join(', ');
 
-            // 3. Generar mensaje de sistema con nombres reales
-            const idsToSearch = [myId, ...memberIds];
-            const namesRes = await pool.query('SELECT id, username FROM usersapp WHERE id = ANY($1)', [idsToSearch]);
-            
-            const adminRow = namesRes.rows.find(u => String(u.id) === String(myId));
-            const adminName = adminRow ? adminRow.username : "Admin";
-            const recruitedUsers = namesRes.rows.filter(u => String(u.id) !== String(myId));
-            const newNames = recruitedUsers.map(u => u.username).join(', ');
+        const systemMsg = `🚀 ${adminName} reclutó a: ${newNames || "nuevos miembros"}.`;
+        const msgResult = await pool.query(
+            `INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
+             VALUES ($1, $2, $3, $4) RETURNING *`,
+            [myId, groupId, systemMsg, `group_${groupId}`]
+        );
 
-            const systemMsg = `🚀 ${adminName} reclutó a: ${newNames || "nuevos miembros"}.`;
-            
-            const msgResult = await pool.query(
-                `INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
-                VALUES ($1, $2, $3, $4) RETURNING *`,
-                [myId, groupId, systemMsg, `group_${groupId}`]
-            );
-
-            const savedMsg = msgResult.rows[0];
-            savedMsg.username = adminName;
-
-            // 📡 4. Sockets: Unir a los nuevos y avisar a todos
-            const io = req.app.get('socketio');
-            const roomName = `group_${groupId}`;
-            const allSockets = await io.fetchSockets();
-            
-            memberIds.forEach(mId => {
-                const memberSockets = allSockets.filter(s => String(s.userId) === String(mId));
-                memberSockets.forEach(s => s.join(roomName));
-                // Avisar a la sala personal del nuevo para que vea el grupo en su lista
-                io.to(`user-${mId}`).emit('receive_message', savedMsg);
+        // 📡 4. SOCKETS: Re-unir a los usuarios y limpiar su estado de "Kicked"
+        const io = req.app.get('socketio');
+        const roomName = `group_${groupId}`;
+        const allSockets = await io.fetchSockets();
+        
+        memberIds.forEach(mId => {
+            const memberSockets = allSockets.filter(s => String(s.userId) === String(mId));
+            memberSockets.forEach(s => {
+                s.join(roomName); // 👈 Volver a meterlos a la sala de mensajes en vivo
             });
 
-            // Avisar a los que ya estaban
-            io.to(roomName).emit('receive_message', savedMsg);
+            // 🟢 Avisar al usuario re-añadido para que su frontend desbloquee la interfaz
+            io.to(`user-${mId}`).emit('permissions_updated', { 
+                userId: mId,
+                isKicked: false // 👈 AHORA ES FALSE: Esto reactiva el teclado
+            });
+        });
 
-            res.json({ success: true, message: "Miembros reclutados." });
+        // Avisar a todos del nuevo mensaje de sistema
+        io.to(roomName).emit('receive_message', msgResult.rows[0]);
+        // Refrescar lista de miembros para todos
+        io.to(roomName).emit('permissions_updated', { global: true });
 
-        } catch (error) {
-            console.error("❌ Error en ADD MEMBERS:", error);
-            res.status(500).json({ success: false });
-        }
-    });
+        res.json({ success: true, message: "Miembros añadidos." });
+
+    } catch (error) {
+        console.error("❌ Error en ADD MEMBERS (RE-ENTRY):", error);
+        res.status(500).json({ success: false });
+    }
+});
 
     // OBTENER DETALLES COMPLETOS DE UN GRUPO (VERSIÓN CORREGIDA)
     // OBTENER DETALLES COMPLETOS DE UN GRUPO (VERSIÓN DISCORD-PRO)
