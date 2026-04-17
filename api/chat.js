@@ -645,35 +645,45 @@ module.exports = (pool, JWT_SECRET, io) => {
     router.delete('/group/:groupId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const myId = req.user.userId;
         const { groupId } = req.params;
-        const { deleteForEveryone } = req.query; // 'true' o 'false'
+        const { deleteForEveryone, leaveGroup } = req.query; // 'true' o 'false'
 
         try {
-            // 1. Verificar si soy el creador
             const groupCheck = await pool.query('SELECT creator_id FROM groupsapp WHERE id = $1', [groupId]);
             if (groupCheck.rows.length === 0) return res.status(404).json({ success: false });
 
             const isCreator = groupCheck.rows[0].creator_id === myId;
 
-            if (isCreator && deleteForEveryone === 'true') {
-                // 🗑️ OPCIÓN A: CREADOR BORRA TODO
+            // 1. LÓGICA DE HISTORIAL
+            if (deleteForEveryone === 'true' && isCreator) {
+                // CREADOR: Borra físicamente para todos
                 await pool.query('DELETE FROM messagesapp WHERE group_id = $1', [groupId]);
-                
-                // Avisar por socket para que todos limpien su pantalla
                 const io = req.app.get('socketio');
-                if (io) io.to(`group_${groupId}`).emit('chat_cleared', { deletedBy: myId, isGroup: true });
-                
-                res.json({ success: true, action: 'deleted_all' });
-            } else {
-                // 🙈 OPCIÓN B: MIEMBRO (O CREADOR) OCULTA PARA SÍ MISMO
+                if (io) io.to(`group_${groupId}`).emit('chat_cleared', { isGroup: true });
+            } else if (deleteForEveryone === 'true' || deleteForEveryone === 'false') {
+                // MIEMBRO: Oculta para sí mismo
                 await pool.query(`
-                    UPDATE messagesapp 
-                    SET hidden_by = array_append(COALESCE(hidden_by, '{}'), $1)
-                    WHERE group_id = $2
-                    AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
+                    UPDATE messagesapp SET hidden_by = array_append(COALESCE(hidden_by, '{}'), $1)
+                    WHERE group_id = $2 AND NOT ($1 = ANY(COALESCE(hidden_by, '{}')))
                 `, [myId, groupId]);
-
-                res.json({ success: true, action: 'hidden_self' });
             }
+
+            // 2. LÓGICA DE ABANDONAR GRUPO
+            if (leaveGroup === 'true') {
+                await pool.query('DELETE FROM group_members WHERE group_id = $1 AND user_id = $2', [groupId, myId]);
+                
+                // 📡 AVISAR AL SOCKET PARA QUE SAQUE AL USUARIO DE LA SALA
+                const io = req.app.get('socketio');
+                if (io) {
+                    // Notificar al grupo que alguien salió
+                    io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
+                    // El usuario debe dejar de estar en la habitación group_X
+                    const userSockets = await io.in(`user-${myId}`).fetchSockets();
+                    userSockets.forEach(s => s.leave(`group_${groupId}`));
+                }
+                console.log(`🏃 Usuario ${myId} abandonó el grupo ${groupId}`);
+            }
+
+            res.json({ success: true });
         } catch (e) {
             console.error(e);
             res.status(500).json({ success: false });
