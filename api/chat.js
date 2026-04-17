@@ -556,10 +556,15 @@ module.exports = (pool, JWT_SECRET, io) => {
 
                 FROM messagesapp m
                 JOIN usersapp u ON m.sender_id = u.id
+                JOIN group_members gm ON gm.group_id = m.group_id AND gm.user_id = $4
                 LEFT JOIN messagesapp p ON m.parent_message_id = p.message_id
                 LEFT JOIN usersapp pu ON p.sender_id = pu.id
                 WHERE m.group_id = $1
                 -- 🚀 FILTRO DE PRIVACIDAD CORREGIDO ($4)
+                AND (
+                    gm.is_active = TRUE 
+                    OR m.created_at <= gm.deactivated_at
+                )
                 AND NOT ($4 = ANY(COALESCE(m.hidden_by, '{}')))
                 ORDER BY m.created_at DESC
                 LIMIT $2 OFFSET $3;
@@ -728,7 +733,10 @@ module.exports = (pool, JWT_SECRET, io) => {
                 const userRes = await pool.query('SELECT username FROM usersapp WHERE id = $1', [myId]);
                 const userName = userRes.rows[0].username;
 
-                await pool.query('DELETE FROM group_members WHERE group_id = $1 AND user_id = $2', [groupId, myId]);
+                await pool.query(
+                    'UPDATE group_members SET is_active = FALSE WHERE group_id = $1 AND user_id = $2', 
+                    [groupId, myId]
+                );
                 
                 // 🚀 INSERTAR AVISO DE SALIDA
                 const leaveMsg = `🏃 ${userName} ha abandonado la tripulación.`;
@@ -794,26 +802,52 @@ module.exports = (pool, JWT_SECRET, io) => {
 
             // 3. Ejecutar la expulsión
             const kickRes = await pool.query(
-                'DELETE FROM group_members WHERE group_id = $1 AND user_id = $2 RETURNING *',
+                `UPDATE group_members 
+                SET is_active = FALSE, deactivated_at = CURRENT_TIMESTAMP 
+                WHERE group_id = $1 AND user_id = $2 RETURNING *`,
                 [groupId, targetId]
             );
 
             if (kickRes.rowCount > 0) {
-                // Obtener nombres para el mensaje del sistema
+                // 1. Obtener nombres para el mensaje de sistema
                 const nameRes = await pool.query('SELECT id, username FROM usersapp WHERE id IN ($1, $2)', [myId, targetId]);
                 const adminName = nameRes.rows.find(u => String(u.id) === String(myId))?.username || "Admin";
                 const targetName = nameRes.rows.find(u => String(u.id) === String(targetId))?.username || "Usuario";
 
                 const systemMsg = `🚫 ${targetName} ha sido expulsado por ${adminName}.`;
+                
+                // 2. Insertar el mensaje de sistema en la DB
                 const msgResult = await pool.query(
                     `INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
-                    VALUES ($1, $2, $3, $4) RETURNING *`,
+                     VALUES ($1, $2, $3, $4) RETURNING *`,
                     [myId, groupId, systemMsg, `group_${groupId}`]
                 );
 
                 const io = req.app.get('socketio');
-                io.to(`group_${groupId}`).emit('receive_message', msgResult.rows[0]);
-                io.to(`group_${groupId}`).emit('permissions_updated', { global: true });
+                const roomName = `group_${groupId}`;
+
+                // 3. 📢 Avisar a todos los que siguen en el grupo del mensaje de sistema
+                io.to(roomName).emit('receive_message', msgResult.rows[0]);
+
+                // 4. 🏃 LÓGICA DE DESCONEXIÓN DEL EXPULSADO
+                const allSockets = await io.fetchSockets();
+                // Buscamos todos los sockets abiertos del usuario que acaba de ser expulsado
+                const targetSockets = allSockets.filter(s => String(s.userId) === String(targetId));
+                
+                targetSockets.forEach(s => {
+                    s.leave(roomName); // 👈 Deja de recibir mensajes en tiempo real de esta sala
+                    console.log(`🔌 Socket ${s.id} del usuario ${targetId} removido de la sala ${roomName}`);
+                });
+
+                // 5. 🧱 Bloqueo inmediato de interfaz para el expulsado
+                // Le enviamos un evento directo a su sala personal
+                io.to(`user-${targetId}`).emit('permissions_updated', { 
+                    userId: targetId,
+                    isKicked: true 
+                });
+
+                // 6. Actualizar permisos generales para el resto (para refrescar la lista de miembros)
+                io.to(roomName).emit('permissions_updated', { global: true });
 
                 return res.json({ success: true });
             }
@@ -964,21 +998,41 @@ router.post('/groups/:groupId/roles',
             const groupId = parseInt(req.params.groupId);
             const userId = req.user.userId;
 
-            // 1. Obtener rango base, creador y roles asignados
+            // 1. Modificamos la query para traer gm.is_active 🚩
             const query = `
-                SELECT gm.role as base_rank, g.creator_id,
+                SELECT gm.role as base_rank, g.creator_id, gm.is_active,
                     json_agg(r.permissions) as all_role_perms
                 FROM group_members gm
                 JOIN groupsapp g ON g.id = gm.group_id
                 LEFT JOIN member_roles_link mrl ON mrl.user_id = gm.user_id AND mrl.group_id = gm.group_id
                 LEFT JOIN group_roles r ON mrl.role_id = r.id
                 WHERE gm.group_id = $1 AND gm.user_id = $2
-                GROUP BY gm.role, g.creator_id
+                GROUP BY gm.role, g.creator_id, gm.is_active
             `;
             const result = await pool.query(query, [groupId, userId]);
             if (result.rows.length === 0) return res.status(403).json({ success: false });
 
             const data = result.rows[0];
+
+            // ==========================================================
+            // 🛡️ BLOQUE DE CONTROL PARA EXPULSADOS / SALIDAS (PASO 4)
+            // ==========================================================
+            if (data.is_active === false) {
+                return res.json({
+                    success: true,
+                    permissions: {
+                        can_send_messages: false,
+                        can_send_photos: false,
+                        can_send_voice: false,
+                        can_use_emojis: false,
+                        can_use_stickers: false,
+                        can_use_music: false,
+                        is_kicked: true // 🚩 Bandera para el frontend
+                    }
+                });
+            }
+            // ==========================================================
+
             const roles = data.all_role_perms[0] === null ? [] : data.all_role_perms;
 
             // --- 🚀 REGLA DE ORO: ADMINISTRADORES Y CREADORES ---
@@ -997,8 +1051,6 @@ router.post('/groups/:groupId/roles',
             }
 
             // --- 🛡️ LÓGICA DE MIEMBROS COMUNES ---
-            
-            // Estado inicial: Todo permitido (se usará si no hay roles ni por defecto)
             let finalPerms = {
                 can_send_messages: true,
                 can_send_photos: true,
@@ -1009,8 +1061,6 @@ router.post('/groups/:groupId/roles',
             };
 
             if (roles.length > 0) {
-                // CASO A: El usuario tiene roles específicos asignados.
-                // Aplicamos el peso del "NO" (Si uno prohíbe, se bloquea).
                 roles.forEach(role => {
                     if (role) {
                         if (role.can_send_messages === false) finalPerms.can_send_messages = false;
@@ -1022,15 +1072,11 @@ router.post('/groups/:groupId/roles',
                     }
                 });
             } else {
-                // 🚀 CASO B: El usuario NO tiene roles asignados.
-                // Buscamos los permisos del rol "Miembro" (is_default) de este grupo.
                 const defaultRoleRes = await pool.query(
                     'SELECT permissions FROM group_roles WHERE group_id = $1 AND is_default = TRUE',
                     [groupId]
                 );
-
                 if (defaultRoleRes.rows.length > 0) {
-                    // Si existe el rol base, heredamos sus permisos directamente
                     finalPerms = defaultRoleRes.rows[0].permissions;
                 }
             }
