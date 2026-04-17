@@ -105,30 +105,43 @@ module.exports = (pool, JWT_SECRET, io) => {
 
     // 2. OBTENER HISTORIAL (DENTRO DEL CHAT)
     router.get('/history/:otherUserId', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
-        const myId = req.user.userId;
-        const otherId = parseInt(req.params.otherUserId);
+        const loggedInUserId = req.user.userId;
+        const otherUserId = parseInt(req.params.otherUserId);
         const limit = parseInt(req.query.limit) || 100;
         const offset = parseInt(req.query.offset) || 0;
 
         try {
             const query = `
-                SELECT m.*, u.username, u.profile_pic_url
+                SELECT 
+                    m.*, u.username, u.profile_pic_url,
+                    p.content as parent_content,
+                    pu.username as parent_username,
+                    p.sender_id as parent_author_id,
+                    
+                    -- 🌈 COLOR DEL AUTOR (En privado usamos el color base o un fallback)
+                    'var(--color-accent)' as author_color, 
+                    'var(--color-accent)' as parent_author_color
+                    
                 FROM messagesapp AS m
-                JOIN usersapp u ON m.sender_id = u.id
+                JOIN usersapp AS u ON m.sender_id = u.id
+                LEFT JOIN messagesapp AS p ON m.parent_message_id = p.message_id
+                LEFT JOIN usersapp AS pu ON p.sender_id = pu.id
                 WHERE ((m.sender_id = $1 AND m.receiver_id = $2) OR (m.sender_id = $2 AND m.receiver_id = $1))
                 AND m.group_id IS NULL
                 AND NOT ($1 = ANY(COALESCE(m.hidden_by, '{}')))
                 ORDER BY m.created_at DESC
                 LIMIT $3 OFFSET $4;
             `;
-            const result = await pool.query(query, [myId, otherId, limit, offset]);
-
-            // 🔥 LOG DE DEPURACIÓN EN TERMINAL
-            console.log(`[HISTORIAL] Enviando ${result.rows.length} mensajes al usuario ${myId}. (Ocultos filtrados por SQL)`);
-
-            res.json({ success: true, messages: result.rows.reverse() });
+            
+            const result = await pool.query(query, [loggedInUserId, otherUserId, limit, offset]);
+            
+            res.status(200).json({ 
+                success: true, 
+                messages: result.rows.reverse(),
+                hasMore: result.rows.length === limit 
+            });
         } catch (error) {
-            console.error(error);
+            console.error("❌ Error en historial privado:", error.message);
             res.status(500).json({ success: false });
         }
     });
