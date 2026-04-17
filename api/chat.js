@@ -298,12 +298,13 @@ module.exports = (pool, JWT_SECRET, io) => {
         }
     });
     // 🚀 RUTA PARA AÑADIR MIEMBROS A UN GRUPO EXISTENTE
+    // 🚀 RUTA PARA AÑADIR MIEMBROS A UN GRUPO EXISTENTE
     router.post('/groups/add-members', (req, res, next) => protect(req, res, next, JWT_SECRET), async (req, res) => {
         const { groupId, memberIds } = req.body; 
         const myId = req.user.userId;
 
         try {
-            // 1. Verificar Seguridad: ¿Quien pide esto es el ADMIN del grupo?
+            // 1. Verificar Seguridad
             const checkAdmin = await pool.query(
                 'SELECT role FROM group_members WHERE group_id = $1 AND user_id = $2',
                 [groupId, myId]
@@ -313,7 +314,7 @@ module.exports = (pool, JWT_SECRET, io) => {
                 return res.status(403).json({ success: false, message: "Solo el administrador puede reclutar miembros." });
             }
 
-            // 2. Insertar a los nuevos integrantes
+            // 2. Insertar a los nuevos integrantes en la DB
             for (const uId of memberIds) {
                 await pool.query(
                     'INSERT INTO group_members (group_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
@@ -321,54 +322,47 @@ module.exports = (pool, JWT_SECRET, io) => {
                 );
             }
 
-            // --- 🛠️ BLOQUE CORREGIDO PARA MOSTRAR NOMBRES ---
-            try {
-                // Buscamos los datos de todos los involucrados (el admin y los nuevos)
-                const idsToSearch = [myId, ...memberIds];
-                const namesRes = await pool.query('SELECT id, username FROM usersapp WHERE id = ANY($1)', [idsToSearch]);
-                
-                // Buscamos el nombre del admin de forma segura
-                const adminRow = namesRes.rows.find(u => String(u.id) === String(myId));
-                const adminName = adminRow ? adminRow.username : "El Capitán";
+            // 3. Obtener nombres para el mensaje de sistema
+            const idsToSearch = [myId, ...memberIds];
+            const namesRes = await pool.query('SELECT id, username FROM usersapp WHERE id = ANY($1)', [idsToSearch]);
+            
+            const adminRow = namesRes.rows.find(u => String(u.id) === String(myId));
+            const adminName = adminRow ? adminRow.username : "El Capitán";
+            const recruitedUsers = namesRes.rows.filter(u => String(u.id) !== String(myId));
+            const newNames = recruitedUsers.map(u => u.username).join(', ');
 
-                // Filtramos los nombres de los reclutados comparando como Strings para evitar errores de tipo
-                const recruitedUsers = namesRes.rows.filter(u => String(u.id) !== String(myId));
-                const newNames = recruitedUsers.map(u => u.username).join(', ');
+            const systemMsg = `🚀 ${adminName} reclutó a: ${newNames || "nuevos miembros"}.`;
+            
+            // 4. Guardar mensaje en la DB
+            const msgResult = await pool.query(
+                `INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
+                VALUES ($1, $2, $3, $4) RETURNING *`,
+                [myId, groupId, systemMsg, `group_${groupId}`]
+            );
 
-                // Si por alguna razón no hay nombres (ej. IDs inválidos), ponemos un fallback
-                const finalNamesDisplay = newNames || "nuevos miembros";
+            const savedMsg = msgResult.rows[0];
+            savedMsg.username = adminName; // Importante para la UI
 
-                // 2. Insertar mensaje de sistema 🚀
-                const systemMsg = `🚀 ${adminName} reclutó a: ${finalNamesDisplay}.`;
-                const msgResult = await pool.query(
-                    `INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
-                    VALUES ($1, $2, $3, $4) RETURNING *`,
-                    [myId, groupId, systemMsg, `group_${groupId}`]
-                );
-
-                // 3. Emitir por Socket para que todos lo vean en vivo
-                const io = req.app.get('socketio');
-                const savedMsg = msgResult.rows[0];
-                savedMsg.username = adminName; // Para que la lista de chats sepa quién "envió" el sistema
-                io.to(`group_${groupId}`).emit('receive_message', savedMsg);
-
-            } catch (err) { 
-                console.error("❌ Error al generar el aviso de reclutamiento:", err); 
-            }
-            // --- 🛠️ FIN DEL BLOQUE CORREGIDO ---
-
-            // 📡 LÓGICA DE SOCKETS PARA UNIR A LOS NUEVOS
+            // 📡 --- LÓGICA DE SOCKETS MEJORADA ---
             const io = req.app.get('socketio');
             const roomName = `group_${groupId}`;
             const allSockets = await io.fetchSockets();
             
+            // A. Forzar a los nuevos usuarios a unirse a la sala del grupo
             memberIds.forEach(mId => {
                 const memberSockets = allSockets.filter(s => String(s.userId) === String(mId));
                 memberSockets.forEach(s => {
                     s.join(roomName);
-                    console.log(`🔌 Forzando al usuario ${mId} a unirse a la sala ${roomName}`);
                 });
+
+                // B. ENVIAR DIRECTAMENTE A LA SALA PERSONAL DEL NUEVO USUARIO
+                // Esto garantiza que el mensaje aparezca en su lista de chats (chat_list.html)
+                // aunque el proceso de s.join(roomName) sea lento.
+                io.to(`user-${mId}`).emit('receive_message', savedMsg);
             });
+
+            // C. Enviar a los que ya estaban en el grupo
+            io.to(roomName).emit('receive_message', savedMsg);
 
             res.json({ success: true, message: "Miembros reclutados con éxito." });
 
