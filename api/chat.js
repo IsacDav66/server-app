@@ -762,7 +762,8 @@ module.exports = (pool, JWT_SECRET, io) => {
 
             if (kickRes.rowCount > 0) {
                 // 3. Obtener nombres para el mensaje de sistema
-                const nameRes = await pool.query('SELECT username FROM usersapp WHERE id IN ($1, $2)', [myId, targetId]);
+                const nameRes = await pool.query('SELECT id, username FROM usersapp WHERE id = $1 OR id = $2', [myId, targetId]);
+
                 const adminName = nameRes.rows.find(u => String(u.id) === String(myId))?.username || "Admin";
                 const targetName = nameRes.rows.find(u => String(u.id) === String(targetId))?.username || "Usuario";
 
