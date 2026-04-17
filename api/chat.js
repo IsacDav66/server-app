@@ -396,7 +396,7 @@ module.exports = (pool, JWT_SECRET, io) => {
             if (groupRes.rows.length === 0) return res.status(404).json({ success: false, message: "Grupo no encontrado" });
 
             const membersRes = await pool.query(`
-                SELECT u.id, u.username, u.profile_pic_url, gm.role,
+                SELECT u.id, u.username, u.profile_pic_url, gm.role, gm.is_active,
                     -- 🌈 1. COLOR DEL NOMBRE (Mantiene tu jerarquía actual)
                     (SELECT r2.color 
                         FROM member_roles_link mrl2
@@ -441,7 +441,8 @@ module.exports = (pool, JWT_SECRET, io) => {
                 FROM group_members gm
                 JOIN usersapp u ON gm.user_id = u.id
                 WHERE gm.group_id = $1
-                GROUP BY u.id, gm.role
+                AND gm.is_active = TRUE
+                GROUP BY u.id, gm.role, gm.is_active
                 ORDER BY (CASE WHEN gm.role = 'admin' THEN 1 ELSE 2 END) ASC, u.username ASC
             `, [groupId]);
             
@@ -764,9 +765,12 @@ module.exports = (pool, JWT_SECRET, io) => {
         const { groupId, targetId } = req.params;
         const myId = req.user.userId;
 
+        // 1. Abrimos conexión para la Transacción
+        const client = await pool.connect();
+
         try {
-            // 1. Verificación de Poder (Creador, Admin de tabla, o Rol con is_admin)
-            const checkPerms = await pool.query(`
+            // --- INICIO DE VERIFICACIÓN DE PERMISOS ---
+            const checkPerms = await client.query(`
                 SELECT gm.role as base_role, g.creator_id,
                     json_agg(r.permissions) as all_role_perms
                 FROM group_members gm
@@ -778,12 +782,11 @@ module.exports = (pool, JWT_SECRET, io) => {
             `, [groupId, myId]);
 
             if (checkPerms.rows.length === 0) {
+                client.release();
                 return res.status(403).json({ success: false, message: "No perteneces a este grupo." });
             }
 
             const userStatus = checkPerms.rows[0];
-            
-            // 🛡️ Lógica de permisos avanzada
             const isGod = (
                 userStatus.base_role === 'admin' || 
                 String(userStatus.creator_id) === String(myId) ||
@@ -791,71 +794,83 @@ module.exports = (pool, JWT_SECRET, io) => {
             );
 
             if (!isGod) {
+                client.release();
                 return res.status(403).json({ success: false, message: "No tienes rango de administrador." });
             }
 
-            // 2. Seguridad Extra: No puedes expulsar al creador del grupo
-            const targetCheck = await pool.query('SELECT creator_id FROM groupsapp WHERE id = $1', [groupId]);
+            const targetCheck = await client.query('SELECT creator_id FROM groupsapp WHERE id = $1', [groupId]);
             if (String(targetCheck.rows[0].creator_id) === String(targetId)) {
-                return res.status(403).json({ success: false, message: "No puedes expulsar al Capitán de la tripulación." });
+                client.release();
+                return res.status(403).json({ success: false, message: "No puedes expulsar al Capitán." });
             }
+            // --- FIN DE VERIFICACIÓN ---
 
-            // 3. Ejecutar la expulsión
-            const kickRes = await pool.query(
+            await client.query('BEGIN'); // 🚀 INICIAMOS TRANSACCIÓN
+
+            // ⚡ ACCIÓN 1: Eliminar todos los roles del usuario expulsado en este grupo
+            await client.query(
+                'DELETE FROM member_roles_link WHERE group_id = $1 AND user_id = $2',
+                [groupId, targetId]
+            );
+
+            // ⚡ ACCIÓN 2: Desactivar al miembro (Is Active = False) y quitarle el rango admin si lo tenía
+            const kickRes = await client.query(
                 `UPDATE group_members 
-                SET is_active = FALSE, deactivated_at = CURRENT_TIMESTAMP 
+                SET is_active = FALSE, deactivated_at = CURRENT_TIMESTAMP, role = 'member' 
                 WHERE group_id = $1 AND user_id = $2 RETURNING *`,
                 [groupId, targetId]
             );
 
             if (kickRes.rowCount > 0) {
-                // 1. Obtener nombres para el mensaje de sistema
-                const nameRes = await pool.query('SELECT id, username FROM usersapp WHERE id IN ($1, $2)', [myId, targetId]);
+                // Obtener nombres para el aviso
+                const nameRes = await client.query('SELECT id, username FROM usersapp WHERE id IN ($1, $2)', [myId, targetId]);
                 const adminName = nameRes.rows.find(u => String(u.id) === String(myId))?.username || "Admin";
                 const targetName = nameRes.rows.find(u => String(u.id) === String(targetId))?.username || "Usuario";
 
                 const systemMsg = `🚫 ${targetName} ha sido expulsado por ${adminName}.`;
                 
-                // 2. Insertar el mensaje de sistema en la DB
-                const msgResult = await pool.query(
+                // ⚡ ACCIÓN 3: Guardar mensaje de sistema
+                const msgResult = await client.query(
                     `INSERT INTO messagesapp (sender_id, group_id, content, room_name) 
-                     VALUES ($1, $2, $3, $4) RETURNING *`,
+                    VALUES ($1, $2, $3, $4) RETURNING *`,
                     [myId, groupId, systemMsg, `group_${groupId}`]
                 );
 
+                await client.query('COMMIT'); // ✅ TODO OK: Guardamos cambios en la DB
+                client.release();
+
+                // --- 📡 EMISIONES DE SOCKET (Fuera de la transacción para mayor velocidad) ---
                 const io = req.app.get('socketio');
                 const roomName = `group_${groupId}`;
 
-                // 3. 📢 Avisar a todos los que siguen en el grupo del mensaje de sistema
+                // A. Mensaje al chat
                 io.to(roomName).emit('receive_message', msgResult.rows[0]);
 
-                // 4. 🏃 LÓGICA DE DESCONEXIÓN DEL EXPULSADO
+                // B. Sacar al expulsado de la sala de escucha
                 const allSockets = await io.fetchSockets();
-                // Buscamos todos los sockets abiertos del usuario que acaba de ser expulsado
                 const targetSockets = allSockets.filter(s => String(s.userId) === String(targetId));
-                
-                targetSockets.forEach(s => {
-                    s.leave(roomName); // 👈 Deja de recibir mensajes en tiempo real de esta sala
-                    console.log(`🔌 Socket ${s.id} del usuario ${targetId} removido de la sala ${roomName}`);
-                });
+                targetSockets.forEach(s => s.leave(roomName));
 
-                // 5. 🧱 Bloqueo inmediato de interfaz para el expulsado
-                // Le enviamos un evento directo a su sala personal
+                // C. Bloquear interfaz del expulsado
                 io.to(`user-${targetId}`).emit('permissions_updated', { 
                     userId: targetId,
                     isKicked: true 
                 });
 
-                // 6. Actualizar permisos generales para el resto (para refrescar la lista de miembros)
+                // D. Actualizar lista de miembros y roles para los que se quedan
                 io.to(roomName).emit('permissions_updated', { global: true });
 
                 return res.json({ success: true });
+            } else {
+                await client.query('ROLLBACK');
+                client.release();
+                return res.status(404).json({ success: false, message: "Usuario no encontrado." });
             }
 
-            res.status(404).json({ success: false, message: "El usuario no está en el grupo." });
-
         } catch (e) {
-            console.error("❌ Error en KICK:", e);
+            await client.query('ROLLBACK'); // ❌ ERROR: Revertimos todo
+            client.release();
+            console.error("❌ Error en KICK PRO:", e);
             res.status(500).json({ success: false });
         }
     });
