@@ -355,25 +355,36 @@ module.exports = (pool, JWT_SECRET, io) => {
             [myId, groupId, systemMsg, `group_${groupId}`]
         );
 
-        // 📡 4. SOCKETS: Re-unir a los usuarios y limpiar su estado de "Kicked"
+        // 📡 4. SOCKETS: Sincronización instantánea
         const io = req.app.get('socketio');
         const roomName = `group_${groupId}`;
-        const allSockets = await io.fetchSockets();
         
+        // Obtenemos los datos completos de los nuevos miembros (necesario para el frontend)
+        const fullNewMembersRes = await pool.query(`
+            SELECT u.id, u.username, u.profile_pic_url, gm.role, gm.is_active,
+            '[]'::json as roles -- Por defecto entran sin roles extra
+            FROM group_members gm
+            JOIN usersapp u ON u.id = gm.user_id
+            WHERE gm.group_id = $1 AND gm.user_id = ANY($2)
+        `, [groupId, memberIds]);
+
+        const allSockets = await io.fetchSockets();
         memberIds.forEach(mId => {
             const memberSockets = allSockets.filter(s => String(s.userId) === String(mId));
-            memberSockets.forEach(s => {
-                s.join(roomName); // 👈 Volver a meterlos a la sala de mensajes en vivo
-            });
+            memberSockets.forEach(s => s.join(roomName));
 
-            // 🟢 Avisar al usuario re-añadido para que su frontend desbloquee la interfaz
             io.to(`user-${mId}`).emit('permissions_updated', { 
                 userId: mId,
-                isKicked: false // 👈 AHORA ES FALSE: Esto reactiva el teclado
+                isKicked: false 
             });
         });
 
-        // Avisar a todos del nuevo mensaje de sistema
+        // 🚀 ENVIAR EL CAMBIO A TODOS EN EL GRUPO
+        io.to(roomName).emit('member_status_change', {
+            action: 'join',
+            newMembers: fullNewMembersRes.rows
+        });
+
         io.to(roomName).emit('receive_message', msgResult.rows[0]);
         // Refrescar lista de miembros para todos
         io.to(roomName).emit('permissions_updated', { global: true });
@@ -860,6 +871,11 @@ module.exports = (pool, JWT_SECRET, io) => {
 
                 // D. Actualizar lista de miembros y roles para los que se quedan
                 io.to(roomName).emit('permissions_updated', { global: true });
+
+                io.to(roomName).emit('member_status_change', {
+                    action: 'kick',
+                    userId: targetId
+                });
 
                 return res.json({ success: true });
             } else {
